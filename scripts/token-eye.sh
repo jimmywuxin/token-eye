@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # <bitbar.title>Token Eye</bitbar.title>
-# <bitbar.version>v0.3.0</bitbar.version>
+# <bitbar.version>v0.4.0</bitbar.version>
 # <bitbar.author>wuxin</bitbar.author>
 # <bitbar.desc>LLM Token usage monitor — config-driven</bitbar.desc>
 # <bitbar.refreshTime>60</bitbar.refreshTime>
@@ -19,7 +19,7 @@ if [ ! -f "$CONFIG_FILE" ]; then
 fi
 
 RESULTS=$(CONFIG_FILE="$CONFIG_FILE" python3 << 'PYEOF'
-import json, subprocess, sys, os
+import json, subprocess, os
 
 config_path = os.environ["CONFIG_FILE"]
 with open(config_path) as f:
@@ -42,14 +42,10 @@ def resolve_field(obj, path):
         if obj is None:
             return None
         if isinstance(obj, list):
-            try:
-                part = int(part)
-            except ValueError:
-                return None
-        try:
-            obj = obj[part]
-        except (KeyError, IndexError, TypeError):
-            return None
+            try: part = int(part)
+            except ValueError: return None
+        try: obj = obj[part]
+        except (KeyError, IndexError, TypeError): return None
     return obj
 
 def format_ms(ms):
@@ -71,11 +67,8 @@ def fetch_api(url, method, auth_header, auth_prefix, key):
 
 results = []
 for p in config.get("providers", []):
-    pid = p["id"]
-    name = p["name"]
-    keychain = p["keychainService"]
-    api = p["api"]
-    parser = p["parser"]
+    pid, name = p["id"], p["name"]
+    keychain, api, parser = p["keychainService"], p["api"], p["parser"]
     display = p.get("display", {})
 
     key = get_key(keychain)
@@ -92,9 +85,9 @@ for p in config.get("providers", []):
         continue
 
     ptype = parser["type"]
-    fields = parser.get("fields", {})
 
     if ptype == "balance":
+        fields = parser.get("fields", {})
         balance = resolve_field(data, fields.get("balance", ""))
         currency = resolve_field(data, fields.get("currency", "CNY")) or "CNY"
         symbol = "$" if currency == "USD" else "¥"
@@ -107,13 +100,27 @@ for p in config.get("providers", []):
             "colors": ["#ffffff", "#2ecc71" if avail else "#e74c3c"],
         })
 
+    elif ptype == "status":
+        ok_field = parser.get("okField", "")
+        ok_value = parser.get("okValue", "")
+        actual = resolve_field(data, ok_field) if ok_field else data
+        is_ok = (str(actual) == str(ok_value)) if ok_value else (actual is not None)
+        label = display.get("label", "可用")
+        icon = "✅" if is_ok else "🔴"
+        color = "#2ecc71" if is_ok else "#e74c3c"
+        results.append({
+            "id": pid, "name": name, "status": "ok" if is_ok else "error",
+            "menu_bar": f"{label}",
+            "lines": [f"{name}: {label}", "API Key 有效" if is_ok else "API Key 无效"],
+            "colors": [color, "#888888"],
+        })
+
     elif ptype == "plan_usage":
+        fields = parser.get("fields", {})
         raw = resolve_field(data, parser.get("arrayPath", "")) or []
         show = parser.get("showModels")
         labels = parser.get("modelLabels", {})
-        item_lines = []
-        item_colors = []
-        menu_parts = []
+        item_lines, item_colors, menu_parts = [], [], []
         for item in raw:
             mname = str(resolve_field(item, fields.get("model", "")) or "")
             if show and not any(mname.startswith(s.replace("*", "")) for s in show):
@@ -132,11 +139,7 @@ for p in config.get("providers", []):
             elif pct < 20: color = "#f39c12"
             icon = "✅" if pct >= 20 else ("⚠️" if pct >= 10 else "🔴")
             menu_parts.append(f"{icon} {label} {remaining}/{total}")
-            item_lines.extend([
-                f"{label}: {remaining}/{total}次",
-                f"  重置: {reset}",
-                f"  {bar} {pct}%",
-            ])
+            item_lines.extend([f"{label}: {remaining}/{total}次", f"  重置: {reset}", f"  {bar} {pct}%"])
             item_colors.extend(["#ffffff", "#888888", color])
 
         if menu_parts:
@@ -172,7 +175,7 @@ for r in results:
     icon = '🔑' if r['status'] == 'no_key' else ('⚠️' if r['status'] in ('warn','error') else '✅')
     parts.append(f\"{icon} {r.get('menu_bar', r['name'])}\")
 print('  |  '.join(parts))
-" 2>/dev/null || echo "👁")
+" 2>/dev/null || echo "👁 ⚠️")
 
 echo "👁"
 echo "---"

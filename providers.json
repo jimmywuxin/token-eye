@@ -24,6 +24,25 @@
       }
     },
     {
+      "id": "mimo",
+      "name": "MiMo",
+      "keychainService": "MIMO_API_KEY",
+      "api": {
+        "url": "https://api.xiaomimimo.com/v1/models",
+        "method": "GET",
+        "authHeader": "Authorization",
+        "authPrefix": "Bearer "
+      },
+      "parser": {
+        "type": "status",
+        "okField": "object",
+        "okValue": "list"
+      },
+      "display": {
+        "label": "免费"
+      }
+    },
+    {
       "id": "minimax",
       "name": "MiniMax",
       "keychainService": "MINIMAX_CN_API_KEY",
