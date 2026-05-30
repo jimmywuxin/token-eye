@@ -11,7 +11,7 @@
 - 📊 MiniMax 用量监控（M2.7 剩余次数 + 进度条 + 重置倒计时）
 - 🆓 MiMo 可用性检测
 - 🔑 所有 API Key 统一从 macOS Keychain 读取，安全且变更无需重启
-- ⚙️ 配置驱动 — 添加新平台只需编辑 `providers.json`，零代码
+- ⚙️ 配置驱动 — 添加新平台只需编辑项目里的 `providers.json`，零代码
 - 🔄 每 60 秒自动刷新，支持手动刷新
 - 🪶 零依赖、零后台进程，仅一个 Shell 脚本
 
@@ -31,7 +31,7 @@
 brew install --cask swiftbar
 ```
 
-安装后启动 SwiftBar，它会出现在菜单栏。首次运行需要选择一个插件目录，选择 `~/SwiftBar/` 即可。
+启动 SwiftBar，首次运行选择一个插件目录，选 `~/SwiftBar/`。
 
 ### 2. 添加 API Key 到 Keychain
 
@@ -41,30 +41,41 @@ security add-generic-password -s "MINIMAX_CN_API_KEY" -a "" -w "你的key"
 security add-generic-password -s "MIMO_API_KEY" -a "" -w "你的key"
 ```
 
-Keychain 服务名约定：`<平台名大写>_API_KEY`，脚本会自动按此规则查找。
+Keychain 服务名约定：`<平台名大写>_API_KEY`。
 
-### 3. 安装脚本
+### 3. 将脚本放入 SwiftBar 插件目录
+
+只需复制 `token-eye.sh` 到 `~/SwiftBar/` 即可，**不需要复制 `providers.json`** — 脚本会自动从项目目录读取：
 
 ```bash
 cp swiftbar/token-eye.sh ~/SwiftBar/
 chmod +x ~/SwiftBar/token-eye.sh
 ```
 
-SwiftBar 会自动检测新脚本，菜单栏立即出现 👁 图标。
+SwiftBar 自动检测新脚本，菜单栏出现 👁 图标即完成。
 
-> **注意**：只需复制 `token-eye.sh`。`providers.json` 直接从项目目录读取，不需要复制到 `~/SwiftBar/`。
+### 工作原理
 
-### 4. 更新
+```
+~/SwiftBar/token-eye.sh          →  SwiftBar 每 60 秒执行
+       ↓ 自动探测项目路径
+$HOME/dev/token-eye/providers.json  →  脚本直接读取项目里的配置
+```
+
+脚本按优先级自动查找 `providers.json`：
+1. 脚本同目录（`~/SwiftBar/`）
+2. 上一级目录（项目根目录）
+3. `~/dev/token-eye/`（默认路径）
+
+### 更新
 
 ```bash
 cp swiftbar/token-eye.sh ~/SwiftBar/
 ```
 
-修改 `providers.json` 无需重启，下次刷新时自动生效。
-
 ## 添加新平台
 
-编辑项目根目录的 `providers.json`，在 `providers` 数组中追加一段配置，无需改脚本。
+编辑**项目根目录**的 `providers.json`（`~/dev/token-eye/providers.json`），在 `providers` 数组中追加配置，无需改脚本，无需复制文件。脚本下次刷新时自动加载。
 
 ### Parser 类型
 
@@ -75,6 +86,8 @@ cp swiftbar/token-eye.sh ~/SwiftBar/
 | `status` | 无用量 API | 验证 Key 有效性，显示自定义标签 |
 
 ### balance 配置示例
+
+在 `providers.json` 的 `"providers": [...]` 中追加：
 
 ```json
 {
@@ -127,8 +140,8 @@ cp swiftbar/token-eye.sh ~/SwiftBar/
 }
 ```
 
-- `fields` 支持 `.` 分隔的嵌套路径（如 `balance_infos.0.total_balance`）和数组数字索引
-- `showModels` 过滤只展示特定模型名称（支持 `*` 通配符前缀匹配）
+- `fields` 支持 `.` 分隔的嵌套路径和数组数字索引（如 `balance_infos.0.total_balance`）
+- `showModels` 过滤模型名称（支持 `MiniMax-M*` 通配符）
 - `modelLabels` 给原始模型名起别名
 
 ### status 配置示例
@@ -158,8 +171,8 @@ cp swiftbar/token-eye.sh ~/SwiftBar/
 ```
 token-eye/
 ├── swiftbar/
-│   └── token-eye.sh       ← SwiftBar 插件脚本
-├── providers.json         ← API 配置（核心扩展点，脚本从项目目录读取）
+│   └── token-eye.sh       ← 复制到 ~/SwiftBar/，SwiftBar 运行它
+├── providers.json         ← 核心配置，脚本从项目目录自动读取
 ├── DESIGN.md              ← 设计文档
 ├── CHANGELOG.md
 └── README.md
