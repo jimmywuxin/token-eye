@@ -45,7 +45,9 @@
         "modelLabels": {
           "MiniMax-M*": "M2.7"
         },
-        "showModels": ["MiniMax-M*"]
+        "showModels": [
+          "MiniMax-M*"
+        ]
       },
       "display": {
         "unit": "次",

@@ -1,17 +1,22 @@
 # Changelog
 
+## [0.3.0] - 2026-05-30
+
+### Changed
+- 重构为配置驱动：providers.json 定义所有平台，脚本自动读取并调用
+- 添加新平台只需编辑 JSON，无需改脚本代码
+- 修复 resolve_field 对数组索引的支持（DeepSeek balance_infos.0.total_balance）
+
+## [0.2.0] - 2026-05-30
+
+### Changed
+- 迁移到 SwiftBar 方案，去掉 Electron + menubar
+- 纯 Shell + Python 脚本实现，零依赖
+- 菜单栏显示紧凑摘要，下拉菜单显示详情 + 进度条
+
 ## [0.1.0] - 2026-05-30
 
 ### Added
-- macOS 菜单栏常驻应用，不占 Dock 位
-- DeepSeek 余额监控（调用 `/v1/user/balance` API）
-- MiniMax 用量监控（M2.7 模型剩余次数 + 进度条 + 重置倒计时）
-- 所有 API Key 统一从 macOS Keychain 读取，每次轮询重新读取，变更无需重启
-- 配置驱动的 Provider 引擎，添加新平台只需编辑 `providers.json`，零代码
-- 60 秒自动轮询，打开面板时自动触发刷新
-- 暗色主题 UI，支持 status 色标（绿/黄/红/灰）
-- 无 Key 时显示 Keychain 添加命令提示
-
-### Known Issues
-- 仅支持 macOS（依赖 `security` 命令读取 Keychain）
-- DeepSeek balance API 返回字段可能随版本变化，需关注
+- macOS 菜单栏常驻应用（Electron + menubar）
+- DeepSeek 余额监控 + MiniMax 用量监控
+- macOS Keychain 统一管理 API Key
