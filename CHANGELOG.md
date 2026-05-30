@@ -1,14 +1,20 @@
 # Changelog
 
+## [0.5.0] - 2026-05-30
+
+### Changed
+- `providers.json` 移出 swiftbar 目录，放在项目根目录
+
+### Added
+- 完善 README：项目介绍、支持平台表格、parser 类型说明
+- GitHub About：添加项目简介和 topics 标签
+
 ## [0.4.0] - 2026-05-30
 
 ### Added
 - MiMo provider：通过 `/v1/models` 验证 Key 有效性，显示"免费"状态
 - 支持 `status` parser 类型（验证 API 可用性，无用量数据的平台）
 - 菜单栏只显示 👁 图标，详情全部在下拉菜单
-
-### Changed
-- 菜单栏从 `👁 + 数据` 改为只显示 `👁`，更简洁
 
 ## [0.3.0] - 2026-05-30
 
