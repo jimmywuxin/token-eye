@@ -8,15 +8,24 @@
 set -euo pipefail
 
 # ---------------------------------------------------------------------------
-# Config: reads providers.json from project root
-# No need to copy providers.json to ~/SwiftBar/
+# Auto-detect project directory
 # ---------------------------------------------------------------------------
-CONFIG_FILE="/Users/wuxin/dev/token-eye/providers.json"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+if [ -f "$SCRIPT_DIR/providers.json" ]; then
+    PROJECT_DIR="$SCRIPT_DIR"
+elif [ -f "$(dirname "$SCRIPT_DIR")/providers.json" ]; then
+    PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+else
+    PROJECT_DIR="$HOME/dev/token-eye"
+fi
+
+CONFIG_FILE="$PROJECT_DIR/providers.json"
 
 if [ ! -f "$CONFIG_FILE" ]; then
   echo "👁"
   echo "---"
   echo "providers.json not found | color=#e74c3c"
+  echo "Expected: $CONFIG_FILE | color=#888888 size=11"
   exit 0
 fi
 
