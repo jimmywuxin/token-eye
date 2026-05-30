@@ -12,7 +12,7 @@ CONFIG_FILE="${SCRIPT_DIR}/providers.json"
 [ -f "$CONFIG_FILE" ] || CONFIG_FILE="${SCRIPT_DIR}/../providers.json"
 
 if [ ! -f "$CONFIG_FILE" ]; then
-  echo "👁 ⚠️"
+  echo "👁"
   echo "---"
   echo "providers.json not found | color=#e74c3c"
   exit 0
@@ -172,9 +172,9 @@ for r in results:
     icon = '🔑' if r['status'] == 'no_key' else ('⚠️' if r['status'] in ('warn','error') else '✅')
     parts.append(f\"{icon} {r.get('menu_bar', r['name'])}\")
 print('  |  '.join(parts))
-" 2>/dev/null || echo "👁 ⚠️")
+" 2>/dev/null || echo "👁")
 
-echo "👁 ${MENU_BAR}"
+echo "👁"
 echo "---"
 echo "Token Eye | color=#888888"
 
