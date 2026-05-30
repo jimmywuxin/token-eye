@@ -42,7 +42,8 @@ security add-generic-password -s "MINIMAX_CN_API_KEY" -a "" -w "你的key"
 security add-generic-password -s "MIMO_API_KEY" -a "" -w "你的key"
 
 # 3. 复制脚本和配置到 SwiftBar 插件目录
-cp swiftbar/* ~/SwiftBar/
+cp swiftbar/token-eye.sh ~/SwiftBar/
+cp providers.json ~/SwiftBar/
 chmod +x ~/SwiftBar/token-eye.sh
 ```
 
@@ -51,7 +52,8 @@ chmod +x ~/SwiftBar/token-eye.sh
 ### 更新
 
 ```bash
-cp swiftbar/* ~/SwiftBar/
+cp swiftbar/token-eye.sh ~/SwiftBar/
+cp providers.json ~/SwiftBar/
 ```
 
 ## 添加新平台
