@@ -1,15 +1,17 @@
 #!/usr/bin/env bash
 # <bitbar.title>Token Eye</bitbar.title>
-# <bitbar.version>v0.4.0</bitbar.version>
+# <bitbar.version>v0.6.0</bitbar.version>
 # <bitbar.author>wuxin</bitbar.author>
 # <bitbar.desc>LLM Token usage monitor — config-driven</bitbar.desc>
 # <bitbar.refreshTime>60</bitbar.refreshTime>
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-CONFIG_FILE="${SCRIPT_DIR}/providers.json"
-[ -f "$CONFIG_FILE" ] || CONFIG_FILE="${SCRIPT_DIR}/../providers.json"
+# ---------------------------------------------------------------------------
+# Config: reads providers.json from project root
+# No need to copy providers.json to ~/SwiftBar/
+# ---------------------------------------------------------------------------
+CONFIG_FILE="/Users/wuxin/dev/token-eye/providers.json"
 
 if [ ! -f "$CONFIG_FILE" ]; then
   echo "👁"
@@ -106,7 +108,6 @@ for p in config.get("providers", []):
         actual = resolve_field(data, ok_field) if ok_field else data
         is_ok = (str(actual) == str(ok_value)) if ok_value else (actual is not None)
         label = display.get("label", "可用")
-        icon = "✅" if is_ok else "🔴"
         color = "#2ecc71" if is_ok else "#e74c3c"
         results.append({
             "id": pid, "name": name, "status": "ok" if is_ok else "error",
@@ -167,16 +168,6 @@ PYEOF
 # ---------------------------------------------------------------------------
 # Output SwiftBar format
 # ---------------------------------------------------------------------------
-MENU_BAR=$(echo "$RESULTS" | python3 -c "
-import sys, json
-results = json.load(sys.stdin)
-parts = []
-for r in results:
-    icon = '🔑' if r['status'] == 'no_key' else ('⚠️' if r['status'] in ('warn','error') else '✅')
-    parts.append(f\"{icon} {r.get('menu_bar', r['name'])}\")
-print('  |  '.join(parts))
-" 2>/dev/null || echo "👁 ⚠️")
-
 echo "👁"
 echo "---"
 echo "Token Eye | color=#888888"
