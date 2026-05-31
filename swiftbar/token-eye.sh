@@ -25,7 +25,7 @@ if [ ! -f "$CONFIG_FILE" ]; then
   echo "👁"
   echo "---"
   echo "providers.json not found | color=#e74c3c"
-  echo "Expected: $CONFIG_FILE | color=#888888 size=11"
+  echo "Expected: $CONFIG_FILE | color=#aaaaaa size=11"
   exit 0
 fi
 
@@ -179,7 +179,7 @@ PYEOF
 # ---------------------------------------------------------------------------
 echo "👁"
 echo "---"
-echo "Token Eye | color=#888888"
+echo "Token Eye | color=#aaaaaa"
 
 echo "$RESULTS" | python3 -c "
 import sys, json
@@ -191,7 +191,7 @@ for r in results:
     if status == 'no_key':
         print(f'🔑 {name}: 未配置 Key | color=#f39c12')
         svc = name.upper().replace(' ','_') + '_API_KEY'
-        print(f'  security add-generic-password -s {svc} -w your-key | font=Menlo size=11 color=#888888')
+        print(f'  security add-generic-password -s {svc} -w your-key | font=Menlo size=11 color=#aaaaaa')
     elif status == 'error':
         print(f'🔴 {name}: 请求失败 | color=#e74c3c')
     else:
