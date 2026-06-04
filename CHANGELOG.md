@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.7.0] - 2026-06-04
+
+### Changed
+- MiniMax `token_plan/remains` 接口改为百分比制（`current_interval_remaining_percent` / `current_weekly_remaining_percent`），适配 M3 上线后的新字段
+- 替换已废弃的 `current_interval_total_count` / `current_interval_usage_count` 字段
+- `showModels` 从通配符匹配改为精确匹配
+
+### Added
+- 5 小时窗口与周窗口分别显示剩余百分比 + 状态语义（可用 / 耗尽临近 / 耗尽）
+- 限时加成标识 `🔥x2.0`（`interval_boost_permille` / `weekly_boost_permille` > 1000 时显示）
+- README 同步更新 API URL 与展示示例
+
 ## [0.6.0] - 2026-05-30
 
 ### Changed

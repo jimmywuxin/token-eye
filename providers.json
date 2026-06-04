@@ -38,20 +38,29 @@
         "arrayPath": "model_remains",
         "fields": {
           "model": "model_name",
-          "total": "current_interval_total_count",
-          "used": "current_interval_usage_count",
+          "intervalPct": "current_interval_remaining_percent",
+          "intervalStatus": "current_interval_status",
+          "weeklyPct": "current_weekly_remaining_percent",
+          "weeklyStatus": "current_weekly_status",
+          "intervalBoost": "interval_boost_permille",
+          "weeklyBoost": "weekly_boost_permille",
           "resetMs": "remains_time"
         },
         "modelLabels": {
-          "MiniMax-M*": "M2.7"
+          "general": "M2.7/M3 通用",
+          "video": "视频",
+          "speech-hd": "语音",
+          "image-01": "图片",
+          "music-2.5": "音乐"
         },
         "showModels": [
-          "MiniMax-M*"
+          "general",
+          "video"
         ]
       },
       "display": {
-        "unit": "次",
-        "label": "剩余次数"
+        "unit": "%",
+        "label": "剩余"
       }
     },
     {

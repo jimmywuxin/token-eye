@@ -20,7 +20,7 @@
 | 平台 | 展示内容 | API |
 |------|---------|-----|
 | DeepSeek | 余额 ¥9.67 | `/v1/user/balance` |
-| MiniMax | M2.7 0/600次 · 重置 2h | `/v1/api/openplatform/coding_plan/remains` |
+| MiniMax | M2.7/M3 71% · 周窗 100% · 🔥x2.0 加成中 | `/v1/token_plan/remains` |
 | MiMo | 免费 · API Key 有效 | `/v1/models` |
 
 ## 使用方法
@@ -129,20 +129,25 @@ cp swiftbar/token-eye.sh ~/SwiftBar/
     "arrayPath": "model_remains",
     "fields": {
       "model": "model_name",
-      "total": "current_interval_total_count",
-      "used": "current_interval_usage_count",
+      "intervalPct": "current_interval_remaining_percent",
+      "intervalStatus": "current_interval_status",
+      "weeklyPct": "current_weekly_remaining_percent",
+      "weeklyStatus": "current_weekly_status",
+      "intervalBoost": "interval_boost_permille",
+      "weeklyBoost": "weekly_boost_permille",
       "resetMs": "remains_time"
     },
-    "modelLabels": { "MiniMax-M*": "M2.7" },
-    "showModels": ["MiniMax-M*"]
+    "modelLabels": { "general": "M2.7/M3 通用" },
+    "showModels": ["general", "video"]
   },
-  "display": { "unit": "次", "label": "剩余次数" }
+  "display": { "unit": "%", "label": "剩余" }
 }
 ```
 
 - `fields` 支持 `.` 分隔的嵌套路径和数组数字索引（如 `balance_infos.0.total_balance`）
-- `showModels` 过滤模型名称（支持 `MiniMax-M*` 通配符）
+- `showModels` 精确匹配模型名（如 `general`、`video`）
 - `modelLabels` 给原始模型名起别名
+- 百分比接口（`intervalPct` / `weeklyPct`）直接使用 0-100 的整数；旧版按次数计的 `total` / `used` 字段已废弃
 
 ### status 配置示例
 

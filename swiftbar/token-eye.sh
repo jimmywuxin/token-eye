@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # <bitbar.title>Token Eye</bitbar.title>
-# <bitbar.version>v0.6.0</bitbar.version>
+# <bitbar.version>v0.7.0</bitbar.version>
 # <bitbar.author>wuxin</bitbar.author>
 # <bitbar.desc>LLM Token usage monitor — config-driven</bitbar.desc>
 # <bitbar.refreshTime>60</bitbar.refreshTime>
@@ -130,27 +130,45 @@ for p in config.get("providers", []):
         raw = resolve_field(data, parser.get("arrayPath", "")) or []
         show = parser.get("showModels")
         labels = parser.get("modelLabels", {})
-        item_lines, item_colors, menu_parts = [], [], []
+        item_lines, item_colors, menu_parts, boost_texts = [], [], [], []
         for item in raw:
             mname = str(resolve_field(item, fields.get("model", "")) or "")
-            if show and not any(mname.startswith(s.replace("*", "")) for s in show):
+            if show and mname not in show:
                 continue
-            total = int(resolve_field(item, fields.get("total", "")) or 0)
-            used = int(resolve_field(item, fields.get("used", "")) or 0)
-            remaining = total - used
-            pct = round(remaining / total * 100) if total > 0 else 0
+            # 新接口：直接读取剩余百分比
+            interval_pct = int(resolve_field(item, fields.get("intervalPct", "")) or 0)
+            interval_status = int(resolve_field(item, fields.get("intervalStatus", "")) or 0)
+            weekly_pct = int(resolve_field(item, fields.get("weeklyPct", "")) or 0)
+            weekly_status = int(resolve_field(item, fields.get("weeklyStatus", "")) or 0)
+            interval_boost = int(resolve_field(item, fields.get("intervalBoost", "")) or 1000)
+            weekly_boost = int(resolve_field(item, fields.get("weeklyBoost", "")) or 1000)
             reset_ms = int(resolve_field(item, fields.get("resetMs", "")) or 0)
             reset = format_ms(reset_ms)
             label = labels.get(mname, mname)
+            pct = interval_pct
             filled = pct // 5
             bar = "█" * filled + "░" * (20 - filled)
             color = "#2ecc71"
             if pct < 10: color = "#e74c3c"
             elif pct < 20: color = "#f39c12"
             icon = "✅" if pct >= 20 else ("⚠️" if pct >= 10 else "🔴")
-            menu_parts.append(f"{icon} {label} {remaining}/{total}")
-            item_lines.extend([f"{label}: {remaining}/{total}次", f"  重置: {reset}", f"  {bar} {pct}%"])
-            item_colors.extend(["#ffffff", "#888888", color])
+            # 限时加成识别
+            max_boost = max(interval_boost, weekly_boost)
+            boost_tag = f" 🔥x{max_boost/1000:.1f}" if max_boost > 1000 else ""
+            if boost_tag and boost_tag not in boost_texts:
+                boost_texts.append(boost_tag)
+            # 状态语义
+            status_map = {1: "可用", 2: "耗尽临近", 3: "耗尽"}
+            interval_state = status_map.get(interval_status, "未知")
+            weekly_state = status_map.get(weekly_status, "未知")
+            menu_parts.append(f"{icon} {label} {pct}%{boost_tag}")
+            item_lines.extend([
+                f"{label}: 5小时窗口 {pct}%（{interval_state}）",
+                f"  周窗口 {weekly_pct}%（{weekly_state}）",
+                f"  重置: {reset}",
+                f"  {bar} {pct}%",
+            ])
+            item_colors.extend(["#ffffff", "#888888", "#888888", color])
 
         if menu_parts:
             results.append({
