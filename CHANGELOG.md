@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.7.1] - 2026-06-05
+
+### Added
+- `display.nameColor` 字段：每个 provider 可在下拉菜单名称行使用独立强调色（默认 `#ffffff`）
+- 下拉菜单标题 `Token Eye` 配色从灰 `#aaaaaa` 改为亮黄 `#FFD60A`
+
+### Changed
+- `balance` / `plan_usage` parser 渲染时优先读取 `display.nameColor`，缺失时回退到白
+
 ## [0.7.0] - 2026-06-04
 
 ### Changed

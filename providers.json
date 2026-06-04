@@ -20,7 +20,8 @@
       },
       "display": {
         "unit": "¥",
-        "label": "余额"
+        "label": "余额",
+        "nameColor": "#5AC8FA"
       }
     },
     {
@@ -60,7 +61,8 @@
       },
       "display": {
         "unit": "%",
-        "label": "剩余"
+        "label": "剩余",
+        "nameColor": "#BF5AF2"
       }
     },
     {
@@ -79,7 +81,8 @@
         "okValue": "list"
       },
       "display": {
-        "label": "免费"
+        "label": "免费",
+        "nameColor": "#FF9F0A"
       }
     }
   ]

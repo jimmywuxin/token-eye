@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # <bitbar.title>Token Eye</bitbar.title>
-# <bitbar.version>v0.7.0</bitbar.version>
+# <bitbar.version>v0.7.1</bitbar.version>
 # <bitbar.author>wuxin</bitbar.author>
 # <bitbar.desc>LLM Token usage monitor — config-driven</bitbar.desc>
 # <bitbar.refreshTime>60</bitbar.refreshTime>
@@ -108,7 +108,7 @@ for p in config.get("providers", []):
             "id": pid, "name": name, "status": status,
             "menu_bar": f"{symbol}{balance}",
             "lines": [f"{name}: {symbol}{balance}", "可用" if avail else "不可用"],
-            "colors": ["#ffffff", "#2ecc71" if avail else "#e74c3c"],
+            "colors": [display.get("nameColor", "#ffffff"), "#2ecc71" if avail else "#e74c3c"],
         })
 
     elif ptype == "status":
@@ -168,7 +168,7 @@ for p in config.get("providers", []):
                 f"  重置: {reset}",
                 f"  {bar} {pct}%",
             ])
-            item_colors.extend(["#ffffff", "#888888", "#888888", color])
+            item_colors.extend([display.get("nameColor", "#ffffff"), "#888888", "#888888", color])
 
         if menu_parts:
             results.append({
@@ -197,7 +197,7 @@ PYEOF
 # ---------------------------------------------------------------------------
 echo "👁"
 echo "---"
-echo "Token Eye | color=#aaaaaa"
+echo "Token Eye | color=#FFD60A"
 
 echo "$RESULTS" | python3 -c "
 import sys, json
@@ -223,4 +223,3 @@ for r in results:
 echo "---"
 echo "刷新 | refresh=true"
 echo "上次更新: $(date '+%H:%M:%S') | color=#666666 size=11"
-
