@@ -175,7 +175,7 @@ for p in config.get("providers", []):
                 "id": pid, "name": name, "status": "ok",
                 "menu_bar": " | ".join(menu_parts),
                 "lines": [f"{name}:"] + item_lines,
-                "colors": ["#ffffff"] + item_colors,
+                "colors": [display.get("nameColor", "#ffffff")] + item_colors,
             })
         else:
             results.append({"id": pid, "name": name, "status": "warn", "menu_bar": "无数据", "lines": ["无数据"], "colors": ["#888888"]})
