@@ -9,6 +9,9 @@
 ### Changed
 - `balance` / `plan_usage` parser 渲染时优先读取 `display.nameColor`，缺失时回退到白
 
+### Fixed
+- `plan_usage` parser 的首行（`{name}:` 标题行）原本硬编码为白色，会忽略 `display.nameColor`；现在统一读取 `display.nameColor`，与 `balance` parser 行为一致
+
 ## [0.7.0] - 2026-06-04
 
 ### Changed
