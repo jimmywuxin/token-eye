@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.7.2] - 2026-06-05
+
+### Fixed
+- DeepSeek 余额 API URL 移除多余的 /v1/ 前缀，适配官方文档 GET /user/balance 端点
+
+### Changed
+- 移除未使用的 spent 配置字段
+- fetch_api: 去掉 curl -sf 中的 -f 标志，改为通过 -w %{http_code} 捕获 HTTP 状态码，出错时展示具体错误信息
+- except: 裸捕获改为 except Exception:，避免吞掉 KeyboardInterrupt 等系统异常
+- 余额解析增加 None 防护：余额缺失时显示 ? 而非 ¥None
+- 并发化：ThreadPoolExecutor 并行获取所有 provider
+- refreshTime 从 60s 调整至 30s，curl --max-time 从 10s 降至 5s
+
 ## [0.7.1] - 2026-06-05
 
 ### Added

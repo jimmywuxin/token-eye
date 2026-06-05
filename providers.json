@@ -5,7 +5,7 @@
       "name": "DeepSeek",
       "keychainService": "DEEPSEEK_API_KEY",
       "api": {
-        "url": "https://api.deepseek.com/v1/user/balance",
+        "url": "https://api.deepseek.com/user/balance",
         "method": "GET",
         "authHeader": "Authorization",
         "authPrefix": "Bearer "
@@ -14,7 +14,6 @@
         "type": "balance",
         "fields": {
           "balance": "balance_infos.0.total_balance",
-          "spent": "balance_infos.0.granted_balance",
           "currency": "balance_infos.0.currency"
         }
       },
