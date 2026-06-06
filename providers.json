@@ -20,7 +20,7 @@
       "display": {
         "unit": "¥",
         "label": "余额",
-        "nameColor": "#5AC8FA"
+        "nameColor": "#0A84FF"
       }
     },
     {
@@ -84,5 +84,19 @@
         "nameColor": "#FF9F0A"
       }
     }
-  ]
+  ],
+  "colors": {
+    "dark": {
+      "default": "#ffffff",
+      "secondary": "#aaaaaa",
+      "muted": "#888888",
+      "header": "#FFD60A"
+    },
+    "light": {
+      "default": "#000000",
+      "secondary": "#3a3a3c",
+      "muted": "#48484a",
+      "header": "#DAA520"
+    }
+  }
 }

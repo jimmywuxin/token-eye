@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.7.3] - 2026-06-06
+
+### Added
+- 自适应配色：脚本检测 macOS 浅色/深色模式，自动切换全局文字色和标题色
+- providers.json 新增 colors 段：colors.dark / colors.light 分别定义深浅模式下的 default、secondary、muted、header 四色
+- docs/providers-config.html：providers.json 完整配置参考文档，含 23 色色板速查
+
+### Changed
+- 浅色模式下默认文字改为纯黑 #000000，解决白字在浅色菜单栏不可见的问题
+- 浅色模式次要文字调深为 #3a3a3c，弱化文字调深为 #48484a
+- DeepSeek nameColor #5AC8FA -> #0A84FF（iOS 系统蓝），深浅模式均清晰
+- 配色从脚本硬编码移至 providers.json，修改 colors 无需改脚本
+
+### Fixed
+- set -o pipefail + set -e 导致 inline Python pipe 异常时脚本提前退出，加 || true 兜底
+- ThreadPoolExecutor(max_workers=0) 当 providers 数组为空时抛 ValueError，改为 max(1, len(...))
+- display.nameColor 未设置时使用自适应 default 色而非固定 #ffffff
 ## [0.7.2] - 2026-06-05
 
 ### Fixed

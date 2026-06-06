@@ -1,12 +1,28 @@
 #!/usr/bin/env bash
 # <bitbar.title>Token Eye</bitbar.title>
-# <bitbar.version>v0.7.2</bitbar.version>
+# <bitbar.version>v0.7.3</bitbar.version>
 # <bitbar.author>wuxin</bitbar.author>
 # <bitbar.desc>LLM Token usage monitor — config-driven</bitbar.desc>
 # <bitbar.refreshTime>30</bitbar.refreshTime>
 
 set -euo pipefail
 
+
+# Detect appearance for adaptive colors
+if [ "$(defaults read -g AppleInterfaceStyle 2>/dev/null)" = "Dark" ]; then
+    APPEARANCE="dark"
+    C_DEFAULT="#ffffff"    # fallback: white on dark menu bar
+    C_SECONDARY="#aaaaaa"  # fallback: light gray
+    C_MUTED="#888888"      # fallback: medium gray
+    C_HEADER="#FFD60A"     # fallback: bright yellow
+else
+    APPEARANCE="light"
+    C_DEFAULT="#1d1d1f"    # fallback: near-black on light menu bar
+    C_SECONDARY="#6e6e73"  # fallback: dark gray
+    C_MUTED="#8e8e93"      # fallback: tertiary gray
+    C_HEADER="#9a7600"     # fallback: dark gold
+fi
+export APPEARANCE C_DEFAULT C_SECONDARY C_MUTED C_HEADER
 # ---------------------------------------------------------------------------
 # Auto-detect project directory
 # ---------------------------------------------------------------------------
@@ -25,7 +41,7 @@ if [ ! -f "$CONFIG_FILE" ]; then
   echo "👁"
   echo "---"
   echo "providers.json not found | color=#e74c3c"
-  echo "Expected: $CONFIG_FILE | color=#aaaaaa size=11"
+  echo "Expected: $CONFIG_FILE | color=$C_MUTED size=11"
   exit 0
 fi
 
@@ -36,6 +52,18 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 config_path = os.environ["CONFIG_FILE"]
 with open(config_path) as f:
     config = json.load(f)
+
+# Adaptive colors from appearance detection
+# Falls back to env vars if providers.json has no "colors" section
+APPEARANCE = os.environ.get("APPEARANCE", "dark")
+C_DEFAULT = os.environ.get("C_DEFAULT", "#ffffff")
+C_SECONDARY = os.environ.get("C_SECONDARY", "#aaaaaa")
+C_MUTED = os.environ.get("C_MUTED", "#888888")
+_cfg_colors = config.get("colors", {}).get(APPEARANCE)
+if _cfg_colors:
+    C_DEFAULT = _cfg_colors.get("default", C_DEFAULT)
+    C_SECONDARY = _cfg_colors.get("secondary", C_SECONDARY)
+    C_MUTED = _cfg_colors.get("muted", C_MUTED)
 
 def get_key(service):
     try:
@@ -126,7 +154,7 @@ def process_provider(p):
             "id": pid, "name": name, "status": status,
             "menu_bar": f"{symbol}{balance_str}",
             "lines": [f"{name}: {symbol}{balance_str}", "可用" if avail else "不可用"],
-            "colors": [display.get("nameColor", "#ffffff"), "#2ecc71" if avail else "#e74c3c"],
+            "colors": [display.get("nameColor", C_DEFAULT), "#2ecc71" if avail else "#e74c3c"],
         }
 
     elif ptype == "status":
@@ -140,7 +168,7 @@ def process_provider(p):
             "id": pid, "name": name, "status": "ok" if is_ok else "error",
             "menu_bar": f"{label}",
             "lines": [f"{name}: {label}", "API Key 有效" if is_ok else "API Key 无效"],
-            "colors": [color, "#888888"],
+            "colors": [color, C_SECONDARY],
         }
 
     elif ptype == "plan_usage":
@@ -183,24 +211,24 @@ def process_provider(p):
                 f"  重置: {reset}",
                 f"  {bar} {pct}%",
             ])
-            item_colors.extend([display.get("nameColor", "#ffffff"), "#888888", "#888888", color])
+            item_colors.extend([display.get("nameColor", C_DEFAULT), C_SECONDARY, C_SECONDARY, color])
 
         if menu_parts:
             return {
                 "id": pid, "name": name, "status": "ok",
                 "menu_bar": " | ".join(menu_parts),
                 "lines": [f"{name}:"] + item_lines,
-                "colors": [display.get("nameColor", "#ffffff")] + item_colors,
+                "colors": [display.get("nameColor", C_DEFAULT)] + item_colors,
             }
         else:
-            return {"id": pid, "name": name, "status": "warn", "menu_bar": "无数据", "lines": ["无数据"], "colors": ["#888888"]}
+            return {"id": pid, "name": name, "status": "warn", "menu_bar": "无数据", "lines": ["无数据"], "colors": [C_SECONDARY]}
 
     else:
         return {
             "id": pid, "name": name, "status": "ok",
             "menu_bar": "raw",
             "lines": [json.dumps(data, ensure_ascii=False)[:200]],
-            "colors": ["#888888"],
+            "colors": [C_SECONDARY],
         }
 
 providers_list = config.get("providers", [])
@@ -221,7 +249,7 @@ ENDOFPYTHON
 # ---------------------------------------------------------------------------
 echo "👁"
 echo "---"
-echo "Token Eye | color=#FFD60A"
+echo "Token Eye | color=$C_HEADER"
 
 echo "$RESULTS" | python3 -c "
 import sys, json
@@ -234,17 +262,17 @@ for r in results:
     if status == 'no_key':
         print(f'🔑 {name}: 未配置 Key | color=#f39c12')
         svc = name.upper().replace(' ','_') + '_API_KEY'
-        print(f'  security add-generic-password -s {svc} -w your-key | font=Menlo size=11 color=#aaaaaa')
+        print(f'  security add-generic-password -s {svc} -w your-key | font=Menlo size=11 color=$C_MUTED')
     elif status == 'error':
         msg = lines[0] if lines else '请求失败'
         print(f'🔴 {name}: {msg} | color=#e74c3c')
     else:
         colors = r.get('colors', [])
         for i, line in enumerate(lines):
-            c = colors[i] if i < len(colors) else '#ffffff'
+            c = colors[i] if i < len(colors) else C_DEFAULT
             print(f'{line} | color={c}')
-" 2>/dev/null
+" 2>/dev/null || true
 
 echo "---"
 echo "刷新 | refresh=true"
-echo "上次更新: $(date '+%H:%M:%S') | color=#666666 size=11"
+echo "上次更新: $(date '+%H:%M:%S') | color=$C_MUTED size=11"
