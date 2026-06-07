@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.7.6] - 2026-06-07
+
+### Fixed
+- providers.json 里的 `colors.light.header` / `colors.dark.header` 实际从未被读取，现已修复
+- 状态色 C_OK/C_WARN/C_ERR 此前硬编码在脚本中，无法通过 providers.json 自定义
+
+### Changed
+- providers.json colors 段新增 `ok` / `warn` / `err` 三个字段，支持自定义状态色
+- 脚本 fallback 颜色（C_OK/C_WARN/C_ERR）也按浅色/深色分别导出，env 链路打通
+- "Token Eye" 标题改由 Python 输出，colors.header 现在真正生效
+- 第一个 Python 脚本输出结构化 JSON `{colors, providers}`，第二个脚本从 JSON 读色
+- 任意颜色字段缺失时自动 fallback 到 env 值，向后兼容旧 providers.json
+
 ## [0.7.5] - 2026-06-07
 
 ### Changed

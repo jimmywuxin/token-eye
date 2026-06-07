@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # <bitbar.title>Token Eye</bitbar.title>
-# <bitbar.version>v0.7.5</bitbar.version>
+# <bitbar.version>v0.7.6</bitbar.version>
 # <bitbar.author>wuxin</bitbar.author>
 # <bitbar.desc>LLM Token usage monitor — config-driven</bitbar.desc>
 # <bitbar.refreshTime>30</bitbar.refreshTime>
@@ -15,14 +15,20 @@ if [ "$(defaults read -g AppleInterfaceStyle 2>/dev/null)" = "Dark" ]; then
     C_SECONDARY="#aaaaaa"  # fallback: light gray
     C_MUTED="#888888"      # fallback: medium gray
     C_HEADER="#FFD60A"     # fallback: bright yellow
+    C_OK="#56B4E9"         # fallback: sky blue (Wong palette, color-blind safe)
+    C_WARN="#E69F00"       # fallback: orange
+    C_ERR="#CC79A7"        # fallback: reddish purple
 else
     APPEARANCE="light"
     C_DEFAULT="#000000"    # pure black for max contrast on light menu bar
     C_SECONDARY="#2c2c2e"  # dark gray, readable on light bg
     C_MUTED="#48484a"      # medium gray
     C_HEADER="#0066CC"     # deep blue, replaces gold for better visibility
+    C_OK="#0072B2"         # deep blue (Wong palette)
+    C_WARN="#B86E00"       # dark orange
+    C_ERR="#8E1A4A"        # dark magenta
 fi
-export APPEARANCE C_DEFAULT C_SECONDARY C_MUTED C_HEADER
+export APPEARANCE C_DEFAULT C_SECONDARY C_MUTED C_HEADER C_OK C_WARN C_ERR
 # ---------------------------------------------------------------------------
 # Auto-detect project directory
 # ---------------------------------------------------------------------------
@@ -66,11 +72,19 @@ APPEARANCE = os.environ.get("APPEARANCE", "dark")
 C_DEFAULT = os.environ.get("C_DEFAULT", "#ffffff")
 C_SECONDARY = os.environ.get("C_SECONDARY", "#aaaaaa")
 C_MUTED = os.environ.get("C_MUTED", "#888888")
+C_HEADER = os.environ.get("C_HEADER", "#FFD60A")
+C_OK = os.environ.get("C_OK", "#2ecc71")
+C_WARN = os.environ.get("C_WARN", "#f39c12")
+C_ERR = os.environ.get("C_ERR", "#e74c3c")
 _cfg_colors = config.get("colors", {}).get(APPEARANCE)
 if _cfg_colors:
     C_DEFAULT = _cfg_colors.get("default", C_DEFAULT)
     C_SECONDARY = _cfg_colors.get("secondary", C_SECONDARY)
     C_MUTED = _cfg_colors.get("muted", C_MUTED)
+    C_HEADER = _cfg_colors.get("header", C_HEADER)
+    C_OK = _cfg_colors.get("ok", C_OK)
+    C_WARN = _cfg_colors.get("warn", C_WARN)
+    C_ERR = _cfg_colors.get("err", C_ERR)
 
 def get_key(service):
     try:
@@ -128,10 +142,6 @@ def fetch_api(url, method, auth_header, auth_prefix, key):
         return json.loads(body) if body.strip() else None
     except Exception:
         return None
-
-C_OK = "#0072B2"
-C_WARN = "#B86E00"
-C_ERR = "#8E1A4A"
 
 def process_provider(p):
     pid, name = p["id"], p["name"]
@@ -279,7 +289,19 @@ if providers_list:
             idx = futures[future]
             results[idx] = future.result()
 
-print(json.dumps(results, ensure_ascii=False))
+output = {
+    "colors": {
+        "default": C_DEFAULT,
+        "secondary": C_SECONDARY,
+        "muted": C_MUTED,
+        "header": C_HEADER,
+        "ok": C_OK,
+        "warn": C_WARN,
+        "err": C_ERR,
+    },
+    "providers": results,
+}
+print(json.dumps(output, ensure_ascii=False))
 
 ENDOFPYTHON
 )
@@ -289,12 +311,20 @@ ENDOFPYTHON
 # ---------------------------------------------------------------------------
 echo "👁"
 echo "---"
-echo "Token Eye | color=$C_HEADER"
 
 echo "$RESULTS" | python3 -c "
 import sys, json
-C_OK = '#2ecc71'; C_WARN = '#f39c12'; C_ERR = '#e74c3c'
-results = json.load(sys.stdin)
+data = json.load(sys.stdin)
+_c = data.get('colors', {})
+C_DEFAULT = _c.get('default', '#000000')
+C_SECONDARY = _c.get('secondary', '#aaaaaa')
+C_MUTED = _c.get('muted', '#888888')
+HEADER = _c.get('header', '#FFD60A')
+C_OK = _c.get('ok', '#2ecc71')
+C_WARN = _c.get('warn', '#f39c12')
+C_ERR = _c.get('err', '#e74c3c')
+results = data.get('providers', [])
+print(f'Token Eye | color={HEADER}')
 for r in results:
     print('---')
     name = r['name']

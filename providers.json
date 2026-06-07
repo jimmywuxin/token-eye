@@ -90,13 +90,19 @@
       "default": "#ffffff",
       "secondary": "#aaaaaa",
       "muted": "#888888",
-      "header": "#FFD60A"
+      "header": "#FFD60A",
+      "ok": "#56B4E9",
+      "warn": "#E69F00",
+      "err": "#CC79A7"
     },
     "light": {
       "default": "#000000",
       "secondary": "#2c2c2e",
       "muted": "#48484a",
-      "header": "#0066CC"
+      "header": "#0066CC",
+      "ok": "#0072B2",
+      "warn": "#B86E00",
+      "err": "#8E1A4A"
     }
   }
 }
