@@ -12,7 +12,7 @@
 - 🆓 MiMo 可用性检测
 - 🔑 所有 API Key 统一从 macOS Keychain 读取，安全且变更无需重启
 - ⚙️ 配置驱动 — 添加新平台只需编辑项目里的 `providers.json`，零代码
-- 🔄 每 60 秒自动刷新，支持手动刷新
+- 🔄 每 30 秒自动刷新，支持手动刷新
 - 🪶 零依赖、零后台进程，仅一个 Shell 脚本
 
 ## 支持平台
@@ -57,7 +57,7 @@ SwiftBar 自动检测新脚本，菜单栏出现 👁 图标即完成。
 ### 工作原理
 
 ```
-~/SwiftBar/token-eye.sh          →  SwiftBar 每 60 秒执行
+~/SwiftBar/token-eye.sh          →  SwiftBar 每 30 秒执行
        ↓ 自动探测项目路径
 $HOME/dev/token-eye/providers.json  →  脚本直接读取项目里的配置
 ```

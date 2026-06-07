@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.7.4] - 2026-06-07
+
+### Fixed
+- 进度条 pct < 5% 时不显示填充字符，现至少显示 1 格
+- HTTP 响应解析：body 中含换行时状态码提取失败
+- 余额浮点精度：`round(balance, 2)` 避免显示多余小数
+- `int()` 转换未加 try-except，非数字值导致崩溃
+- `ThreadPoolExecutor(max_workers=0)` 当所有 provider 被禁用时崩溃
+- providers.json JSON 格式错误时无友好提示，现展示具体错误信息
+
+### Changed
+- 新增 `"enabled": false` 支持，可临时禁用 provider 而不删除配置
+- 新增颜色常量 `C_OK`/`C_WARN`/`C_ERR`，消除散落的硬编码色值
+- 统一 refreshTime 文档（30s），README/AGENTS.md 与脚本保持一致
+- .gitignore 清理 Electron 时代残留条目
+- DESIGN.md 标注为早期方案参考
+
 ## [0.7.3] - 2026-06-06
 
 ### Added

@@ -58,7 +58,7 @@ security find-generic-password -s DEEPSEEK_API_KEY -w
 ## 工作原理
 
 ```
-SwiftBar（每60秒执行）
+SwiftBar（每30秒执行）
     ↓
 ~/SwiftBar/token-eye.sh（自动查找项目目录）
     ↓
@@ -99,5 +99,5 @@ Python 内嵌脚本：
 
 - 脚本使用 `set -euo pipefail`，任何命令失败都会退出
 - API 超时时间：curl 10s，整体 15s
-- SwiftBar 刷新间隔：60 秒（脚本内 `# <bitbar.refreshTime>60</bitbar.refreshTime>` 声明）
+- SwiftBar 刷新间隔：30 秒（脚本内 `# <bitbar.refreshTime>30</bitbar.refreshTime>` 声明）
 - Python 代码通过 `CONFIG_FILE="..." python3 << 'PYEOF'` 内嵌在 Bash 中

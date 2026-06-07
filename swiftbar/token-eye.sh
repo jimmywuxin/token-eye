@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # <bitbar.title>Token Eye</bitbar.title>
-# <bitbar.version>v0.7.3</bitbar.version>
+# <bitbar.version>v0.7.4</bitbar.version>
 # <bitbar.author>wuxin</bitbar.author>
 # <bitbar.desc>LLM Token usage monitor — config-driven</bitbar.desc>
 # <bitbar.refreshTime>30</bitbar.refreshTime>
@@ -46,12 +46,19 @@ if [ ! -f "$CONFIG_FILE" ]; then
 fi
 
 RESULTS=$(CONFIG_FILE="$CONFIG_FILE" python3 << 'ENDOFPYTHON'
-import json, subprocess, os
+import json, subprocess, os, sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 config_path = os.environ["CONFIG_FILE"]
-with open(config_path) as f:
-    config = json.load(f)
+try:
+    with open(config_path) as f:
+        config = json.load(f)
+except json.JSONDecodeError as e:
+    print(json.dumps([{"id":"_error","name":"配置错误","status":"error","lines":[f"providers.json 解析失败: {e}"],"menu_bar":"错误","colors":["#e74c3c"]}]))
+    sys.exit(0)
+except FileNotFoundError:
+    print(json.dumps([{"id":"_error","name":"配置错误","status":"error","lines":[f"文件不存在: {config_path}"],"menu_bar":"错误","colors":["#e74c3c"]}]))
+    sys.exit(0)
 
 # Adaptive colors from appearance detection
 # Falls back to env vars if providers.json has no "colors" section
@@ -104,11 +111,13 @@ def fetch_api(url, method, auth_header, auth_prefix, key):
         )
         if r.returncode != 0:
             return None
-        parts = r.stdout.rsplit("\n", 1)
-        if len(parts) != 2:
+        output = r.stdout.rstrip("\n")
+        last_line = output.rsplit("\n", 1)[-1] if "\n" in output else output
+        try:
+            status_code = int(last_line.strip())
+        except (ValueError, TypeError):
             return None
-        body, status_code = parts
-        status_code = int(status_code.strip())
+        body = output[:output.rfind("\n")] if "\n" in output else ""
         if status_code >= 400:
             try:
                 err = json.loads(body)
@@ -119,6 +128,10 @@ def fetch_api(url, method, auth_header, auth_prefix, key):
         return json.loads(body) if body.strip() else None
     except Exception:
         return None
+
+C_OK = "#2ecc71"
+C_WARN = "#f39c12"
+C_ERR = "#e74c3c"
 
 def process_provider(p):
     pid, name = p["id"], p["name"]
@@ -149,12 +162,18 @@ def process_provider(p):
         symbol = "$" if currency == "USD" else "¥"
         avail = data.get("is_available", True)
         status = "ok" if avail else "warn"
-        balance_str = str(balance) if balance is not None else "?"
+        if balance is not None:
+            try:
+                balance_str = str(round(float(balance), 2))
+            except (ValueError, TypeError):
+                balance_str = str(balance)
+        else:
+            balance_str = "?"
         return {
             "id": pid, "name": name, "status": status,
             "menu_bar": f"{symbol}{balance_str}",
             "lines": [f"{name}: {symbol}{balance_str}", "可用" if avail else "不可用"],
-            "colors": [display.get("nameColor", C_DEFAULT), "#2ecc71" if avail else "#e74c3c"],
+            "colors": [display.get("nameColor", C_DEFAULT), C_OK if avail else C_ERR],
         }
 
     elif ptype == "status":
@@ -163,7 +182,7 @@ def process_provider(p):
         actual = resolve_field(data, ok_field) if ok_field else data
         is_ok = (str(actual) == str(ok_value)) if ok_value else (actual is not None)
         label = display.get("label", "可用")
-        color = "#2ecc71" if is_ok else "#e74c3c"
+        color = C_OK if is_ok else C_ERR
         return {
             "id": pid, "name": name, "status": "ok" if is_ok else "error",
             "menu_bar": f"{label}",
@@ -181,21 +200,41 @@ def process_provider(p):
             mname = str(resolve_field(item, fields.get("model", "")) or "")
             if show and mname not in show:
                 continue
-            interval_pct = int(resolve_field(item, fields.get("intervalPct", "")) or 0)
-            interval_status = int(resolve_field(item, fields.get("intervalStatus", "")) or 0)
-            weekly_pct = int(resolve_field(item, fields.get("weeklyPct", "")) or 0)
-            weekly_status = int(resolve_field(item, fields.get("weeklyStatus", "")) or 0)
-            interval_boost = int(resolve_field(item, fields.get("intervalBoost", "")) or 1000)
-            weekly_boost = int(resolve_field(item, fields.get("weeklyBoost", "")) or 1000)
-            reset_ms = int(resolve_field(item, fields.get("resetMs", "")) or 0)
+            try:
+                pct = int(resolve_field(item, fields.get("intervalPct", "")) or 0)
+            except (ValueError, TypeError):
+                pct = 0
+            try:
+                interval_status = int(resolve_field(item, fields.get("intervalStatus", "")) or 0)
+            except (ValueError, TypeError):
+                interval_status = 0
+            try:
+                weekly_pct = int(resolve_field(item, fields.get("weeklyPct", "")) or 0)
+            except (ValueError, TypeError):
+                weekly_pct = 0
+            try:
+                weekly_status = int(resolve_field(item, fields.get("weeklyStatus", "")) or 0)
+            except (ValueError, TypeError):
+                weekly_status = 0
+            try:
+                interval_boost = int(resolve_field(item, fields.get("intervalBoost", "")) or 1000)
+            except (ValueError, TypeError):
+                interval_boost = 1000
+            try:
+                weekly_boost = int(resolve_field(item, fields.get("weeklyBoost", "")) or 1000)
+            except (ValueError, TypeError):
+                weekly_boost = 1000
+            try:
+                reset_ms = int(resolve_field(item, fields.get("resetMs", "")) or 0)
+            except (ValueError, TypeError):
+                reset_ms = 0
             reset = format_ms(reset_ms)
             label = labels.get(mname, mname)
-            pct = interval_pct
-            filled = pct // 5
+            filled = max(1, pct // 5) if pct > 0 else 0
             bar = "█" * filled + "░" * (20 - filled)
-            color = "#2ecc71"
-            if pct < 10: color = "#e74c3c"
-            elif pct < 20: color = "#f39c12"
+            color = C_OK
+            if pct < 10: color = C_ERR
+            elif pct < 20: color = C_WARN
             icon = "✅" if pct >= 20 else ("⚠️" if pct >= 10 else "🔴")
             max_boost = max(interval_boost, weekly_boost)
             boost_tag = f" 🔥x{max_boost/1000:.1f}" if max_boost > 1000 else ""
@@ -231,13 +270,14 @@ def process_provider(p):
             "colors": [C_SECONDARY],
         }
 
-providers_list = config.get("providers", [])
+providers_list = [p for p in config.get("providers", []) if p.get("enabled", True)]
 results = [None] * len(providers_list)
-with ThreadPoolExecutor(max_workers=len(providers_list)) as executor:
-    futures = {executor.submit(process_provider, p): i for i, p in enumerate(providers_list)}
-    for future in as_completed(futures):
-        idx = futures[future]
-        results[idx] = future.result()
+if providers_list:
+    with ThreadPoolExecutor(max_workers=len(providers_list)) as executor:
+        futures = {executor.submit(process_provider, p): i for i, p in enumerate(providers_list)}
+        for future in as_completed(futures):
+            idx = futures[future]
+            results[idx] = future.result()
 
 print(json.dumps(results, ensure_ascii=False))
 
@@ -253,6 +293,7 @@ echo "Token Eye | color=$C_HEADER"
 
 echo "$RESULTS" | python3 -c "
 import sys, json
+C_OK = '#2ecc71'; C_WARN = '#f39c12'; C_ERR = '#e74c3c'
 results = json.load(sys.stdin)
 for r in results:
     print('---')
@@ -260,12 +301,12 @@ for r in results:
     status = r['status']
     lines = r.get('lines', [])
     if status == 'no_key':
-        print(f'🔑 {name}: 未配置 Key | color=#f39c12')
+        print(f'🔑 {name}: 未配置 Key | color={C_WARN}')
         svc = name.upper().replace(' ','_') + '_API_KEY'
         print(f'  security add-generic-password -s {svc} -w your-key | font=Menlo size=11 color=$C_MUTED')
     elif status == 'error':
         msg = lines[0] if lines else '请求失败'
-        print(f'🔴 {name}: {msg} | color=#e74c3c')
+        print(f'🔴 {name}: {msg} | color={C_ERR}')
     else:
         colors = r.get('colors', [])
         for i, line in enumerate(lines):
