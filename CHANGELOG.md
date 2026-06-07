@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.7.5] - 2026-06-07
+
+### Changed
+- 浅色模式配色优化（红绿色弱友好）：
+  - `colors.light.header`: `#DAA520` → `#0066CC`（深蓝替代金色，浅色菜单栏上更醒目）
+  - `colors.light.secondary`: `#3a3a3c` → `#2c2c2e`（更深，次要文字更清晰）
+  - 脚本浅色 fallback 同步更新（C_HEADER / C_SECONDARY / C_MUTED / C_DEFAULT）
+- 状态色改为色弱安全调色板（蓝/橙/紫，Wong 2011）：
+  - `C_OK`: `#2ecc71`（绿）→ `#0072B2`（蓝）
+  - `C_WARN`: `#f39c12`（亮橙）→ `#B86E00`（深橙）
+  - `C_ERR`: `#e74c3c`（红）→ `#8E1A4A`（深紫红）
+  - 红绿色弱用户可清晰区分三种状态，不再混淆红/绿
+
 ## [0.7.4] - 2026-06-07
 
 ### Fixed

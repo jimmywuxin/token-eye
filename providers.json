@@ -94,9 +94,9 @@
     },
     "light": {
       "default": "#000000",
-      "secondary": "#3a3a3c",
+      "secondary": "#2c2c2e",
       "muted": "#48484a",
-      "header": "#DAA520"
+      "header": "#0066CC"
     }
   }
 }

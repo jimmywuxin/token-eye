@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # <bitbar.title>Token Eye</bitbar.title>
-# <bitbar.version>v0.7.4</bitbar.version>
+# <bitbar.version>v0.7.5</bitbar.version>
 # <bitbar.author>wuxin</bitbar.author>
 # <bitbar.desc>LLM Token usage monitor — config-driven</bitbar.desc>
 # <bitbar.refreshTime>30</bitbar.refreshTime>
@@ -17,10 +17,10 @@ if [ "$(defaults read -g AppleInterfaceStyle 2>/dev/null)" = "Dark" ]; then
     C_HEADER="#FFD60A"     # fallback: bright yellow
 else
     APPEARANCE="light"
-    C_DEFAULT="#1d1d1f"    # fallback: near-black on light menu bar
-    C_SECONDARY="#6e6e73"  # fallback: dark gray
-    C_MUTED="#8e8e93"      # fallback: tertiary gray
-    C_HEADER="#9a7600"     # fallback: dark gold
+    C_DEFAULT="#000000"    # pure black for max contrast on light menu bar
+    C_SECONDARY="#2c2c2e"  # dark gray, readable on light bg
+    C_MUTED="#48484a"      # medium gray
+    C_HEADER="#0066CC"     # deep blue, replaces gold for better visibility
 fi
 export APPEARANCE C_DEFAULT C_SECONDARY C_MUTED C_HEADER
 # ---------------------------------------------------------------------------
@@ -129,9 +129,9 @@ def fetch_api(url, method, auth_header, auth_prefix, key):
     except Exception:
         return None
 
-C_OK = "#2ecc71"
-C_WARN = "#f39c12"
-C_ERR = "#e74c3c"
+C_OK = "#0072B2"
+C_WARN = "#B86E00"
+C_ERR = "#8E1A4A"
 
 def process_provider(p):
     pid, name = p["id"], p["name"]
