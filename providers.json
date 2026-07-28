@@ -4,6 +4,7 @@
       "id": "deepseek",
       "name": "DeepSeek",
       "keychainService": "DEEPSEEK_API_KEY",
+      "consoleUrl": "https://platform.deepseek.com/usage",
       "api": {
         "url": "https://api.deepseek.com/user/balance",
         "method": "GET",
@@ -20,13 +21,17 @@
       "display": {
         "unit": "¥",
         "label": "余额",
-        "nameColor": "#0A84FF"
+        "nameColor": "#FF375F"
+      },
+      "alert": {
+        "minBalance": 5.0
       }
     },
     {
       "id": "minimax",
       "name": "MiniMax",
       "keychainService": "MINIMAX_CN_API_KEY",
+      "consoleUrl": "https://platform.minimaxi.com/user-center/billing/bill-overview",
       "api": {
         "url": "https://www.minimaxi.com/v1/token_plan/remains",
         "method": "GET",
@@ -56,18 +61,25 @@
         "showModels": [
           "general",
           "video"
-        ]
+        ],
+        "statusMap": {
+          "1": "可用",
+          "2": "耗尽临近",
+          "3": "耗尽"
+        },
+        "barLength": 20
       },
       "display": {
         "unit": "%",
         "label": "剩余",
-        "nameColor": "#BF5AF2"
+        "nameColor": "#AC8E68"
       }
     },
     {
       "id": "mimo",
       "name": "MiMo",
       "keychainService": "MIMO_API_KEY",
+      "consoleUrl": "https://platform.xiaomimimo.com/console/balance?userId=8012371",
       "api": {
         "url": "https://api.xiaomimimo.com/v1/models",
         "method": "GET",
@@ -103,6 +115,19 @@
       "ok": "#0072B2",
       "warn": "#B86E00",
       "err": "#8E1A4A"
+    }
+  },
+  "cache": {
+    "balance": 300,
+    "plan_usage": 30,
+    "status": 60
+  },
+  "menuBar": {
+    "showSummary": false
+  },
+  "alerts": {
+    "deepseek": {
+      "minBalance": 5.0
     }
   }
 }

@@ -21,10 +21,29 @@ td{color:var(--muted)}
 td code{font-size:.85em}
 td:first-child{white-space:nowrap}
 sup{font-size:.75em;color:#e74c3c}
-.palette{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:8px;margin:12px 0 20px}
-.swatch{border-radius:6px;padding:12px 10px;text-align:center;font-family:"SF Mono",Menlo,monospace;font-size:.78em;border:1px solid var(--border)}
-.swatch .name{font-weight:600;margin-bottom:2px}
-.swatch .hex{opacity:.7}
+
+/* color swatch grid */
+.palette{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px;margin:16px 0 24px}
+.swatch{border-radius:8px;padding:16px 10px;text-align:center;font-family:"SF Mono",Menlo,monospace;font-size:.82em;border:1px solid var(--border);transition:transform .1s}
+.swatch:hover{transform:scale(1.04)}
+.swatch .name{font-weight:600;margin-bottom:3px;font-size:1.05em}
+.swatch .hex{opacity:.7;font-size:.9em}
+.swatch .usage{opacity:.6;font-size:.78em;margin-top:4px}
+
+/* UI mapping diagram */
+.ui-diagram{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:16px 20px;margin:12px 0 20px;font-family:"SF Mono",Menlo,monospace;font-size:.82em;line-height:1.7;overflow-x:auto}
+.ui-diagram .menu-icon{color:var(--accent);font-size:1.2em}
+.ui-diagram .sep{color:var(--border)}
+.ui-diagram .line{white-space:pre}
+.ui-diagram .tag{display:inline-block;background:var(--code-bg);border:1px solid #444;border-radius:3px;padding:0 5px;font-size:.82em;margin-left:6px;vertical-align:middle;color:#ddd}
+.ui-diagram .tag-config{color:#BF5AF2}
+.ui-diagram .tag-status{color:#5AC8FA}
+.ui-diagram .tag-text{color:#aaa}
+.ui-diagram .highlight{background:rgba(90,200,250,.1);border-left:2px solid #5AC8FA;padding-left:6px}
+
+/* color-blind safe badge */
+.badge{display:inline-block;background:#2d2d2d;border:1px solid #555;border-radius:4px;font-size:.75em;padding:0 6px;margin-left:4px;cursor:default}
+.badge-cb{color:#56B4E9}
 </style>
 </head>
 <body>
@@ -32,24 +51,143 @@ sup{font-size:.75em;color:#e74c3c}
 <h1>providers.json</h1>
 <p>Token Eye 核心配置文件。定义所有监控平台的 API 端点、解析规则、显示样式和自适应配色。</p>
 
-<h2>1. 顶层结构</h2>
-<pre>{
-  "<span class="key">providers</span>": [ ... ],   <span class="cmt">// 平台列表（必填）</span>
-  "<span class="key">colors</span>": { ... }       <span class="cmt">// 自适应配色（可选，有兜底）</span>
-}</pre>
+<!-- ================================================================== -->
+<h2>1. 配置 → 界面映射</h2>
+<p>每段 JSON 配置对应 SwiftBar 下拉菜单的什么位置：</p>
 
-<h2>2. Provider 配置</h2>
+<div class="ui-diagram">
+<div class="line"><span class="menu-icon">👁</span><span class="tag tag-config">menu bar 图标，固定</span></div>
+<div class="line"><span class="sep">───</span></div>
+<div class="line"><span class="highlight">Token Eye<span class="tag tag-config">colors.{theme}.header</span></span></div>
+<div class="line"><span class="sep">───</span></div>
+<div class="line"><span style="color:#0A84FF">DeepSeek: ¥9.67</span><span class="tag tag-config">display.nameColor <span class="tag-text">兜底</span> colors.{theme}.default</span></div>
+<div class="line"><span style="color:#0072B2">  可用</span><span class="tag tag-status">balance parser: C_OK / C_ERR</span></div>
+<div class="line"><span class="sep">───</span></div>
+<div class="line"><span style="color:#BF5AF2">MiniMax:</span><span class="tag tag-config">display.nameColor</span></div>
+<div class="line"><span style="color:#2c2c2e">  M2.7/M3 通用: ✅ 71%</span><span class="tag tag-text">menu_bar 行</span></div>
+<div class="line"><span style="color:#0072B2">    5小时窗口 71%（可用）</span><span class="tag tag-status">secondary / C_OK / C_WARN / C_ERR</span></div>
+<div class="line"><span style="color:#2c2c2e">    周窗口 100%（可用）</span></div>
+<div class="line"><span style="color:#2c2c2e">    重置: 0h0m</span></div>
+<div class="line"><span style="color:#0072B2">    ████████████████░ 71%</span></div>
+<div class="line"><span class="sep">───</span></div>
+<div class="line"><span style="color:#2c2c2e">MiMo: 免费</span><span class="tag tag-config">display.nameColor + display.label</span></div>
+<div class="line"><span style="color:#0072B2">  API Key 有效</span><span class="tag tag-status">C_OK / C_ERR</span></div>
+<div class="line"><span class="sep">───</span></div>
+<div class="line"><span style="color:#2c2c2e">刷新</span></div>
+<div class="line"><span style="color:#48484a">上次更新: 14:30:00</span><span class="tag tag-config">colors.{theme}.muted</span></div>
+</div>
+
+<table>
+<tr><th>配置字段</th><th>精确 UI 位置</th></tr>
+<tr><td><code>colors.{theme}.default</code></td><td>所有未设 <code>nameColor</code> 的 provider 名称行、菜单项默认文字</td></tr>
+<tr><td><code>colors.{theme}.secondary</code></td><td>plan_usage 的子行描述（"5小时窗口 71%"、"周窗口 100%"、"重置: 0h0m"）</td></tr>
+<tr><td><code>colors.{theme}.muted</code></td><td>"上次更新" 时间戳、配置错误时的路径提示</td></tr>
+<tr><td><code>colors.{theme}.header</code></td><td>下拉菜单第一行 <span style="color:#0066CC">Token Eye</span> 标题</td></tr>
+<tr><td><code>display.nameColor</code></td><td>每个 provider 的<span style="color:#0A84FF">名称行</span>（如 "DeepSeek: ¥9.67"）</td></tr>
+<tr><td><code>colors.{theme}.ok</code></td><td>可用/正常/有效状态文字（蓝色）</td></tr>
+<tr><td><code>colors.{theme}.warn</code></td><td>警告/临近耗尽状态文字（橙色）</td></tr>
+<tr><td><code>colors.{theme}.err</code></td><td>错误/不可用/无效状态文字（紫红）</td></tr>
+</table>
+
+<!-- ================================================================== -->
+<h2>2. 颜色色板（<span class="badge badge-cb">🟦🟧🟪 红绿色弱安全</span>）</h2>
+
+<h3>2.1 浅色模式默认值</h3>
+<div class="palette">
+<div class="swatch" style="background:#000000;color:#fff"><div class="name">default</div><div class="hex">#000000</div><div class="usage">主文字色</div></div>
+<div class="swatch" style="background:#2c2c2e;color:#fff"><div class="name">secondary</div><div class="hex">#2c2c2e</div><div class="usage">子行文字</div></div>
+<div class="swatch" style="background:#48484a;color:#fff"><div class="name">muted</div><div class="hex">#48484a</div><div class="usage">时间戳等弱化</div></div>
+<div class="swatch" style="background:#0066CC;color:#fff"><div class="name">header</div><div class="hex">#0066CC</div><div class="usage">Token Eye 标题</div></div>
+<div class="swatch" style="background:#0072B2;color:#fff"><div class="name">ok</div><div class="hex">#0072B2</div><div class="usage">可用 / 有效</div></div>
+<div class="swatch" style="background:#B86E00;color:#fff"><div class="name">warn</div><div class="hex">#B86E00</div><div class="usage">警告 / 临近耗尽</div></div>
+<div class="swatch" style="background:#8E1A4A;color:#fff"><div class="name">err</div><div class="hex">#8E1A4A</div><div class="usage">错误 / 不可用</div></div>
+</div>
+
+<h3>2.2 深色模式默认值</h3>
+<div class="palette">
+<div class="swatch" style="background:#ffffff;color:#000"><div class="name">default</div><div class="hex">#ffffff</div><div class="usage">主文字色</div></div>
+<div class="swatch" style="background:#aaaaaa;color:#000"><div class="name">secondary</div><div class="hex">#aaaaaa</div><div class="usage">子行文字</div></div>
+<div class="swatch" style="background:#888888;color:#000"><div class="name">muted</div><div class="hex">#888888</div><div class="usage">时间戳等弱化</div></div>
+<div class="swatch" style="background:#FFD60A;color:#000"><div class="name">header</div><div class="hex">#FFD60A</div><div class="usage">Token Eye 标题</div></div>
+<div class="swatch" style="background:#56B4E9;color:#000"><div class="name">ok</div><div class="hex">#56B4E9</div><div class="usage">可用 / 有效</div></div>
+<div class="swatch" style="background:#E69F00;color:#000"><div class="name">warn</div><div class="hex">#E69F00</div><div class="usage">警告 / 临近耗尽</div></div>
+<div class="swatch" style="background:#CC79A7;color:#000"><div class="name">err</div><div class="hex">#CC79A7</div><div class="usage">错误 / 不可用</div></div>
+</div>
+
+<h3>2.3 平台强调色（<code>display.nameColor</code>）</h3>
+<div class="palette">
+<div class="swatch" style="background:#0A84FF;color:#fff"><div class="name">iOS Blue</div><div class="hex">#0A84FF</div><div class="usage">DeepSeek</div></div>
+<div class="swatch" style="background:#BF5AF2;color:#fff"><div class="name">iOS Purple</div><div class="hex">#BF5AF2</div><div class="usage">MiniMax</div></div>
+<div class="swatch" style="background:#FF9F0A;color:#000"><div class="name">iOS Orange</div><div class="hex">#FF9F0A</div><div class="usage">MiMo</div></div>
+<div class="swatch" style="background:#30D158;color:#000"><div class="name">iOS Green</div><div class="hex">#30D158</div></div>
+<div class="swatch" style="background:#64D2FF;color:#000"><div class="name">iOS Cyan</div><div class="hex">#64D2FF</div></div>
+<div class="swatch" style="background:#FF375F;color:#fff"><div class="name">iOS Pink</div><div class="hex">#FF375F</div></div>
+<div class="swatch" style="background:#5E5CE6;color:#fff"><div class="name">iOS Indigo</div><div class="hex">#5E5CE6</div></div>
+<div class="swatch" style="background:#AC8E68;color:#fff"><div class="name">iOS Brown</div><div class="hex">#AC8E68</div></div>
+</div>
+
+<h3>2.4 其他颜色</h3>
+<div class="palette">
+<div class="swatch" style="background:#FFD60A;color:#000"><div class="name">iOS Yellow</div><div class="hex">#FFD60A</div><div class="usage">深色标题</div></div>
+<div class="swatch" style="background:#0066CC;color:#fff"><div class="name">Deep Blue</div><div class="hex">#0066CC</div><div class="usage">浅色标题</div></div>
+<div class="swatch" style="background:#56B4E9;color:#000"><div class="name">Sky Blue</div><div class="hex">#56B4E9</div></div>
+<div class="swatch" style="background:#E69F00;color:#000"><div class="name">Orange</div><div class="hex">#E69F00</div></div>
+<div class="swatch" style="background:#CC79A7;color:#000"><div class="name">Reddish Purple</div><div class="hex">#CC79A7</div></div>
+<div class="swatch" style="background:#8E1A4A;color:#fff"><div class="name">Dark Magenta</div><div class="hex">#8E1A4A</div></div>
+</div>
+
+<!-- ================================================================== -->
+<h2>3. colors — 自适应配色</h2>
+<p><code>colors</code> 段定义浅色/深色模式的全局配色。脚本检测到外观后自动选用对应模式。内置兜底值，此段可选。</p>
+<pre>{
+  "<span class="key">colors</span>": {
+    "<span class="key">dark</span>": {
+      "<span class="key">default</span>":   "<span class="str">#ffffff</span>",
+      "<span class="key">secondary</span>": "<span class="str">#aaaaaa</span>",
+      "<span class="key">muted</span>":     "<span class="str">#888888</span>",
+      "<span class="key">header</span>":    "<span class="str">#FFD60A</span>",
+      "<span class="key">ok</span>":        "<span class="str">#56B4E9</span>",
+      "<span class="key">warn</span>":      "<span class="str">#E69F00</span>",
+      "<span class="key">err</span>":       "<span class="str">#CC79A7</span>"
+    },
+    "<span class="key">light</span>": {
+      "<span class="key">default</span>":   "<span class="str">#000000</span>",
+      "<span class="key">secondary</span>": "<span class="str">#2c2c2e</span>",
+      "<span class="key">muted</span>":     "<span class="str">#48484a</span>",
+      "<span class="key">header</span>":    "<span class="str">#0066CC</span>",
+      "<span class="key">ok</span>":        "<span class="str">#0072B2</span>",
+      "<span class="key">warn</span>":      "<span class="str">#B86E00</span>",
+      "<span class="key">err</span>":       "<span class="str">#8E1A4A</span>"
+    }
+  }
+}</pre>
+<table>
+<tr><th>字段</th><th>适用界面位置</th><th>色弱安全？</th></tr>
+<tr><td><code>default</code></td><td>所有未设 <code>nameColor</code> 的 provider 名称行、菜单项默认文字</td><td>—</td></tr>
+<tr><td><code>secondary</code></td><td>子行描述文字（plan_usage 的"5小时窗口/周窗口/重置"）</td><td>—</td></tr>
+<tr><td><code>muted</code></td><td>"上次更新" 时间戳、文件路径提示</td><td>—</td></tr>
+<tr><td><code>header</code></td><td>下拉菜单顶部 "Token Eye" 标题行</td><td>—</td></tr>
+<tr><td><code>ok</code></td><td>可用/正常状态文字（如 "可用"、"API Key 有效"、进度条 ≥20%）</td><td>🟦 蓝</td></tr>
+<tr><td><code>warn</code></td><td>警告状态（如 "耗尽临近"、进度条 10-20%）</td><td>🟧 橙</td></tr>
+<tr><td><code>err</code></td><td>错误状态（如 "不可用"、"API Key 无效"、进度条 &lt;10%）</td><td>🟪 紫红</td></tr>
+</table>
+
+<p><strong>配色哲学</strong>：使用了 Wong (2011) 色弱安全调色板，蓝/橙/紫红三种状态色在红绿色弱用户眼中能清晰区分。如果仍不满意，自由替换即可。</p>
+
+<!-- ================================================================== -->
+<h2>4. Provider 配置</h2>
 <p>每个 provider 对象定义了一个监控平台。</p>
 
-<h3>2.1 通用字段</h3>
+<h3>4.1 通用字段</h3>
 <table>
 <tr><th>字段</th><th>类型</th><th>说明</th></tr>
 <tr><td><code>id</code> <sup>必填</sup></td><td>string</td><td>平台唯一标识，如 <code>deepseek</code></td></tr>
 <tr><td><code>name</code> <sup>必填</sup></td><td>string</td><td>显示名称，如 <code>DeepSeek</code></td></tr>
 <tr><td><code>keychainService</code> <sup>必填</sup></td><td>string</td><td>macOS Keychain 中存储 API Key 的服务名，如 <code>DEEPSEEK_API_KEY</code></td></tr>
+<tr><td><code>enabled</code></td><td>boolean</td><td>设为 <code>false</code> 可临时禁用该平台，不删除配置</td></tr>
 </table>
 
-<h3>2.2 api — API 请求配置</h3>
+<h3>4.2 api — API 请求配置</h3>
 <table>
 <tr><th>字段</th><th>类型</th><th>默认</th><th>说明</th></tr>
 <tr><td><code>url</code> <sup>必填</sup></td><td>string</td><td>—</td><td>API 端点 URL</td></tr>
@@ -58,57 +196,66 @@ sup{font-size:.75em;color:#e74c3c}
 <tr><td><code>authPrefix</code></td><td>string</td><td><code>Bearer </code></td><td>认证前缀（注意末尾空格）</td></tr>
 </table>
 
-<h3>2.3 display — 显示配置</h3>
+<h3>4.3 display — 显示配置</h3>
 <table>
 <tr><th>字段</th><th>类型</th><th>默认</th><th>说明</th></tr>
-<tr><td><code>unit</code></td><td>string</td><td>—</td><td>数值单位，如 <code>¥</code>、<code>%</code></td></tr>
-<tr><td><code>label</code></td><td>string</td><td>—</td><td>状态标签，如 <code>余额</code>、<code>免费</code></td></tr>
-<tr><td><code>nameColor</code></td><td>hex</td><td>自适应 <code>default</code></td><td>平台名称在菜单中的强调色</td></tr>
+<tr><td><code>unit</code></td><td>string</td><td>—</td><td>数值单位（菜单栏行），如 <code>¥</code>、<code>%</code></td></tr>
+<tr><td><code>label</code></td><td>string</td><td>—</td><td>状态标签（status parser），如 <code>免费</code></td></tr>
+<tr><td><code>nameColor</code></td><td>hex</td><td><code>colors.{theme}.default</code></td><td>平台名称行强调色</td></tr>
 </table>
 
-<h2>3. Parser 类型</h2>
+<!-- ================================================================== -->
+<h2>5. Parser 类型</h2>
 <p>三种 parser 对应不同 API 响应结构。</p>
 
-<h3>3.1 balance — 余额型</h3>
+<h3>5.1 balance — 余额型</h3>
 <p>适用于返回余额信息的 API（如 DeepSeek）。</p>
 <pre>{
   "<span class="key">type</span>": "<span class="str">balance</span>",
   "<span class="key">fields</span>": {
-    "<span class="key">balance</span>": "<span class="str">balance_infos.0.total_balance</span>",  <span class="cmt">// 余额字段路径（点号分隔，数字=数组索引）</span>
-    "<span class="key">currency</span>": "<span class="str">balance_infos.0.currency</span>"            <span class="cmt">// 货币字段路径：CNY→¥，USD→$</span>
+    "<span class="key">balance</span>": "<span class="str">balance_infos.0.total_balance</span>",
+    "<span class="key">currency</span>": "<span class="str">balance_infos.0.currency</span>"
   }
 }</pre>
 <table>
 <tr><th>字段</th><th>说明</th></tr>
-<tr><td><code>balance</code></td><td>用 <code>.</code> 分隔的 JSON 路径，定位余额值。数字表示数组索引</td></tr>
-<tr><td><code>currency</code></td><td>货币字段路径。默认 <code>CNY</code></td></tr>
+<tr><td><code>balance</code></td><td><code>.</code> 分隔的 JSON 路径。数字 = 数组索引</td></tr>
+<tr><td><code>currency</code></td><td>货币字段路径。默认 CNY（→¥），USD→$</td></tr>
 </table>
 
-<h3>3.2 plan_usage — 用量型</h3>
+<h3>5.2 plan_usage — 用量型</h3>
 <p>适用于返回按模型分组的用量数据的 API（如 MiniMax）。</p>
 <pre>{
   "<span class="key">type</span>": "<span class="str">plan_usage</span>",
-  "<span class="key">arrayPath</span>": "<span class="str">model_remains</span>",       <span class="cmt">// JSON 数组中存模型用量数据</span>
+  "<span class="key">arrayPath</span>": "<span class="str">model_remains</span>",
   "<span class="key">fields</span>": {
-    "<span class="key">model</span>": "<span class="str">model_name</span>",                       <span class="cmt">// 模型标识字段</span>
-    "<span class="key">intervalPct</span>": "<span class="str">current_interval_remaining_percent</span>",  <span class="cmt">// 5小时窗口剩余百分比</span>
-    "<span class="key">intervalStatus</span>": "<span class="str">current_interval_status</span>",        <span class="cmt">// 状态：1=可用 2=耗尽临近 3=耗尽</span>
-    "<span class="key">weeklyPct</span>": "<span class="str">current_weekly_remaining_percent</span>",    <span class="cmt">// 周窗口剩余百分比</span>
-    "<span class="key">weeklyStatus</span>": "<span class="str">current_weekly_status</span>",          <span class="cmt">// 周窗口状态</span>
-    "<span class="key">intervalBoost</span>": "<span class="str">interval_boost_permille</span>",      <span class="cmt">// 限时加成（千分比，1000=无加成）</span>
-    "<span class="key">weeklyBoost</span>": "<span class="str">weekly_boost_permille</span>",          <span class="cmt">// 周加成（千分比）</span>
-    "<span class="key">resetMs</span>": "<span class="str">remains_time</span>"                       <span class="cmt">// 重置倒计时（毫秒）</span>
+    "<span class="key">model</span>": "<span class="str">model_name</span>",
+    "<span class="key">intervalPct</span>": "<span class="str">current_interval_remaining_percent</span>",
+    "<span class="key">intervalStatus</span>": "<span class="str">current_interval_status</span>",
+    "<span class="key">weeklyPct</span>": "<span class="str">current_weekly_remaining_percent</span>",
+    "<span class="key">weeklyStatus</span>": "<span class="str">current_weekly_status</span>",
+    "<span class="key">intervalBoost</span>": "<span class="str">interval_boost_permille</span>",
+    "<span class="key">weeklyBoost</span>": "<span class="str">weekly_boost_permille</span>",
+    "<span class="key">resetMs</span>": "<span class="str">remains_time</span>"
   },
-  "<span class="key">modelLabels</span>": { ... },        <span class="cmt">// 模型 ID → 显示名映射</span>
-  "<span class="key">showModels</span>": ["<span class="str">general</span>","<span class="str">video</span>"]    <span class="cmt">// 在菜单栏显示哪些模型</span>
+  "<span class="key">modelLabels</span>": { "<span class="key">general</span>": "<span class="str">通用</span>", ... },
+  "<span class="key">showModels</span>": [<span class="str">"general"</span>, <span class="str">"video"</span>]
 }</pre>
+<table>
+<tr><th>字段</th><th>说明</th></tr>
+<tr><td><code>model</code></td><td>模型标识字段</td></tr>
+<tr><td><code>intervalPct</code>/<code>weeklyPct</code></td><td>百分比，0-100 整数</td></tr>
+<tr><td><code>intervalStatus</code>/<code>weeklyStatus</code></td><td>状态码：1=可用 2=耗尽临近 3=耗尽</td></tr>
+<tr><td><code>intervalBoost</code>/<code>weeklyBoost</code></td><td>限时加成（千分比，1000=无加成）</td></tr>
+<tr><td><code>resetMs</code></td><td>重置倒计时（毫秒）</td></tr>
+</table>
 
-<h3>3.3 status — 状态型</h3>
+<h3>5.3 status — 状态型</h3>
 <p>适用于只需验证 Key 有效性的 API（如 MiMo）。</p>
 <pre>{
   "<span class="key">type</span>": "<span class="str">status</span>",
-  "<span class="key">okField</span>": "<span class="str">object</span>",   <span class="cmt">// 响应中标记状态的字段路径</span>
-  "<span class="key">okValue</span>": "<span class="str">list</span>"      <span class="cmt">// 该字段匹配此值即表示 Key 有效</span>
+  "<span class="key">okField</span>": "<span class="str">object</span>",
+  "<span class="key">okValue</span>": "<span class="str">list</span>"
 }</pre>
 <table>
 <tr><th>字段</th><th>说明</th></tr>
@@ -116,103 +263,8 @@ sup{font-size:.75em;color:#e74c3c}
 <tr><td><code>okValue</code></td><td>期望值。留空则只检查字段是否为非 <code>null</code></td></tr>
 </table>
 
-<h2>4. 自适应配色</h2>
-<p><code>colors</code> 段定义浅色/深色模式下的全局配色。脚本检测到外观后自动选用对应模式。内置兜底值，此段可选。</p>
-<pre>{
-  "<span class="key">colors</span>": {
-    "<span class="key">dark</span>": {
-      "<span class="key">default</span>":   "<span class="str">#ffffff</span>",  <span class="cmt">// 默认文字（nameColor 兜底、菜单栏默认色）</span>
-      "<span class="key">secondary</span>": "<span class="str">#aaaaaa</span>",  <span class="cmt">// 次要文字（状态描述、子行信息）</span>
-      "<span class="key">muted</span>":     "<span class="str">#888888</span>",  <span class="cmt">// 弱化文字（时间戳、提示文字）</span>
-      "<span class="key">header</span>":    "<span class="str">#FFD60A</span>"   <span class="cmt">// Token Eye 标题色</span>
-    },
-    "<span class="key">light</span>": {
-      "<span class="key">default</span>":   "<span class="str">#1d1d1f</span>",
-      "<span class="key">secondary</span>": "<span class="str">#6e6e73</span>",
-      "<span class="key">muted</span>":     "<span class="str">#8e8e93</span>",
-      "<span class="key">header</span>":    "<span class="str">#9a7600</span>"
-    }
-  }
-}</pre>
-<table>
-<tr><th>字段</th><th>适用位置</th></tr>
-<tr><td><code>default</code></td><td>provider <code>nameColor</code> 未设置时的兜底色、菜单项默认文字色</td></tr>
-<tr><td><code>secondary</code></td><td>status parser 的 "API Key 有效/无效" 文字、plan_usage 的子行文字</td></tr>
-<tr><td><code>muted</code></td><td>"上次更新" 时间戳、"未配置 Key" 提示行、providers.json 路径提示</td></tr>
-<tr><td><code>header</code></td><td>下拉菜单顶部 "Token Eye" 标题行</td></tr>
-</table>
-
-<h2>5. 常用颜色速查</h2>
-<p>以下颜色在浅色/深色菜单栏下均可读，适合用作 <code>nameColor</code> 或调整 <code>colors</code> 预设。</p>
-
-<h3>5.1 强调色</h3>
-<div class="palette">
-<div class="swatch" style="background:#5AC8FA;color:#000"><div class="name">Sky Blue</div><div class="hex">#5AC8FA</div></div>
-<div class="swatch" style="background:#BF5AF2;color:#fff"><div class="name">Purple</div><div class="hex">#BF5AF2</div></div>
-<div class="swatch" style="background:#FF9F0A;color:#000"><div class="name">Orange</div><div class="hex">#FF9F0A</div></div>
-<div class="swatch" style="background:#30D158;color:#000"><div class="name">Mint</div><div class="hex">#30D158</div></div>
-<div class="swatch" style="background:#FF375F;color:#fff"><div class="name">Pink</div><div class="hex">#FF375F</div></div>
-<div class="swatch" style="background:#64D2FF;color:#000"><div class="name">Light Blue</div><div class="hex">#64D2FF</div></div>
-<div class="swatch" style="background:#FFD60A;color:#000"><div class="name">Yellow</div><div class="hex">#FFD60A</div></div>
-<div class="swatch" style="background:#32D74B;color:#000"><div class="name">Green</div><div class="hex">#32D74B</div></div>
-</div>
-
-<h3>5.2 状态色（固定，不参与自适应）</h3>
-<div class="palette">
-<div class="swatch" style="background:#2ecc71;color:#000"><div class="name">OK</div><div class="hex">#2ecc71</div></div>
-<div class="swatch" style="background:#e74c3c;color:#fff"><div class="name">Error</div><div class="hex">#e74c3c</div></div>
-<div class="swatch" style="background:#f39c12;color:#000"><div class="name">Warn</div><div class="hex">#f39c12</div></div>
-</div>
-
-<h3>5.3 文字/灰色（浅色模式）</h3>
-<div class="palette">
-<div class="swatch" style="background:#1d1d1f;color:#fff"><div class="name">Default</div><div class="hex">#1d1d1f</div></div>
-<div class="swatch" style="background:#6e6e73;color:#fff"><div class="name">Secondary</div><div class="hex">#6e6e73</div></div>
-<div class="swatch" style="background:#8e8e93;color:#000"><div class="name">Muted</div><div class="hex">#8e8e93</div></div>
-<div class="swatch" style="background:#3a3a3c;color:#fff"><div class="name">Dark Gray</div><div class="hex">#3a3a3c</div></div>
-<div class="swatch" style="background:#48484a;color:#fff"><div class="name">Mid Gray</div><div class="hex">#48484a</div></div>
-<div class="swatch" style="background:#aeaeb2;color:#000"><div class="name">Light Gray</div><div class="hex">#aeaeb2</div></div>
-</div>
-
-<h3>5.4 文字/灰色（深色模式）</h3>
-<div class="palette">
-<div class="swatch" style="background:#ffffff;color:#000"><div class="name">White</div><div class="hex">#ffffff</div></div>
-<div class="swatch" style="background:#aaaaaa;color:#000"><div class="name">Light Gray</div><div class="hex">#aaaaaa</div></div>
-<div class="swatch" style="background:#888888;color:#000"><div class="name">Mid Gray</div><div class="hex">#888888</div></div>
-<div class="swatch" style="background:#999999;color:#000"><div class="name">Warm Gray</div><div class="hex">#999999</div></div>
-<div class="swatch" style="background:#e0e0e0;color:#000"><div class="name">Near White</div><div class="hex">#e0e0e0</div></div>
-<div class="swatch" style="background:#cccccc;color:#000"><div class="name">Silver</div><div class="hex">#cccccc</div></div>
-</div>
-
-<h2>6. 常用颜色代码表</h2>
-<table>
-<tr><th>颜色</th><th>代码</th><th>适用场景</th></tr>
-<tr><td>Black</td><td><code>#000000</code></td><td>纯黑，深色模式下不可见</td></tr>
-<tr><td>Near Black</td><td><code>#1d1d1f</code></td><td>浅色模式默认文字</td></tr>
-<tr><td>Dark Gray</td><td><code>#3a3a3c</code></td><td>浅色模式次要文字替代</td></tr>
-<tr><td>Mid Gray</td><td><code>#6e6e73</code></td><td>浅色模式 secondary</td></tr>
-<tr><td>Tertiary Gray</td><td><code>#8e8e93</code></td><td>浅色模式 muted</td></tr>
-<tr><td>Light Gray</td><td><code>#aeaeb2</code></td><td>浅色模式高亮灰色替代</td></tr>
-<tr><td>Silver</td><td><code>#cccccc</code></td><td>深色模式高亮文字替代</td></tr>
-<tr><td>White</td><td><code>#ffffff</code></td><td>深色模式默认文字</td></tr>
-<tr><td>Warm Gray</td><td><code>#999999</code></td><td>深色模式 muted 替代</td></tr>
-<tr><td>Red</td><td><code>#e74c3c</code></td><td>错误状态（固定）</td></tr>
-<tr><td>Orange</td><td><code>#f39c12</code></td><td>警告状态（固定）</td></tr>
-<tr><td>Green</td><td><code>#2ecc71</code></td><td>正常状态（固定）</td></tr>
-<tr><td>Mint</td><td><code>#30D158</code></td><td>iOS 风格正常状态</td></tr>
-<tr><td>Cyan</td><td><code>#5AC8FA</code></td><td>深蓝强调（DeepSeek 默认）</td></tr>
-<tr><td>Sky Blue</td><td><code>#64D2FF</code></td><td>浅蓝强调</td></tr>
-<tr><td>Purple</td><td><code>#BF5AF2</code></td><td>紫色强调（MiniMax 默认）</td></tr>
-<tr><td>Orange</td><td><code>#FF9F0A</code></td><td>橙色强调（MiMo 默认）</td></tr>
-<tr><td>Pink</td><td><code>#FF375F</code></td><td>粉色强调</td></tr>
-<tr><td>Yellow</td><td><code>#FFD60A</code></td><td>黄色强调 / 深色模式标题</td></tr>
-<tr><td>Gold</td><td><code>#9a7600</code></td><td>浅色模式标题</td></tr>
-<tr><td>Green</td><td><code>#32D74B</code></td><td>iOS 风格绿色</td></tr>
-<tr><td>Blue</td><td><code>#0A84FF</code></td><td>iOS 风格蓝色</td></tr>
-</table>
-
-<h2>7. 完整示例</h2>
-<p>添加一个新平台的完整配置：</p>
+<!-- ================================================================== -->
+<h2>6. 完整示例 — 添加新平台</h2>
 <pre>{
   "<span class="key">id</span>": "<span class="str">my-platform</span>",
   "<span class="key">name</span>": "<span class="str">My Platform</span>",
@@ -236,7 +288,7 @@ sup{font-size:.75em;color:#e74c3c}
 }</pre>
 <p>配置完成后将 API Key 存入 Keychain：</p>
 <pre>$ security add-generic-password -s MY_API_KEY -a "" -w "sk-your-key"</pre>
-<p>SwiftBar 下次刷新时自动加载，无需修改脚本。</p>
+<p>SwiftBar 下次刷新时自动加载，无需修改脚本。页面自动保持 <code>providers.json</code> 同步，不依赖脚本内硬编码。</p>
 
 </body>
 </html>

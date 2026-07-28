@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.8.0] - 2026-07-28
+
+### Added
+- 缓存机制：按 parser 类型设置默认 TTL（balance 300s / plan_usage 30s / status 60s），`providers.json` 的 `cache` 段可全局覆盖，单个 provider 可用 `cacheTtl` 字段覆盖；失败请求 10s 内不重试，避免连续打 API
+- 余额阈值告警：balance parser 支持 `alert.minBalance` 配置，余额低于阈值时用 `osascript` 推送 macOS 系统通知；告警去重（余额恢复前不重复）
+- 菜单栏汇总显示：`menuBar.showSummary` 开启后菜单栏显示关键数字（余额/百分比/状态），不再只显示 👁
+- 各平台控制台跳转：provider 配置 `consoleUrl`，详情菜单末尾出现「→ 打开 X 控制台」可点击跳转
+- HTTP 错误分类：5xx 服务端异常 / 4xx 配置鉴权错误 / 网络失败 / 超时 各自独立文案与颜色；临时故障用 warn 色（橙），配置错误用 err 色（红紫），不再一律显示「API 错误」
+- 自定义请求头：`api.headers` 支持额外 header（如 OpenAI Organization）
+- `plan_usage` 状态映射可配置：`parser.statusMap` 自定义状态码到文案的映射，默认 `{1: 可用, 2: 耗尽临近, 3: 耗尽}`
+- 进度条长度可配置：`parser.barLength`，默认 20
+
+### Changed
+- 合并两段 Python 为一段：渲染逻辑内联，减少一次进程启动和 JSON 序列化，冷启动开销下降约 50%
+- 颜色变量统一由 Python 输出，bash 不再二次解析
+- 未配置 Key 时提示命令直接使用配置里的 `keychainService`，不再推测
+
+### Fixed
+- `color=$C_MUTED` 在 Python heredoc 内未展开的 bug：未配置 Key 时提示命令的颜色显示为字面量 `$C_MUTED`，SwiftBar 解析失败回退默认色，现改为 `color={C_MUTED}` 由 Python 填值
+- 渲染失败时菜单整体空白：原第二段 Python 异常被 `|| true` 吞掉无 fallback，现加 try-except 兜底输出占位菜单
+
 ## [0.7.6] - 2026-06-07
 
 ### Fixed
