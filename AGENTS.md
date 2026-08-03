@@ -18,6 +18,8 @@ macOS 菜单栏 LLM Token 用量实时监控插件，基于 SwiftBar + Bash + Py
 token-eye/
 ├── swiftbar/
 │   └── token-eye.sh       ← 插件脚本，复制到 ~/SwiftBar/
+├── scripts/
+│   └── refresh-mimo-cookie.py  ← MiMo Cookie 一键刷新（会话过期时运行）
 ├── providers.json         ← 核心配置（JSON），定义所有平台
 ├── AGENTS.md              ← 本文件（项目指南）
 ├── README.md
@@ -82,9 +84,9 @@ Python 内嵌脚本（单段，并发）：
 
 ### parser 类型
 
-- **balance** — 余额型，适用于 DeepSeek 等有余额 API 的平台
+- **balance** — 余额型，适用于 DeepSeek、MiMo（Cookie 鉴权）等有余额 API 的平台
 - **plan_usage** — 用量型，适用于 MiniMax 等有按模型用量 API 的平台
-- **status** — 状态型，适用于 MiMo 等只验证 Key 有效性的平台
+- **status** — 状态型，适用于只验证 Key 有效性的平台
 
 ### 全局可选字段
 
@@ -98,10 +100,16 @@ Python 内嵌脚本（单段，并发）：
 - `consoleUrl` — 控制台跳转链接，详情菜单末尾显示
 - `cacheTtl` — 单 provider 覆盖全局缓存 TTL
 - `alert.minBalance` — 单 provider 余额告警阈值
-- `api.headers` — 额外请求头（如 OpenAI Organization）
+- `api.headers` — 额外请求头（如 OpenAI Organization、User-Agent）
 - `parser.statusMap` — plan_usage 状态码映射，默认 `{1:可用, 2:耗尽临近, 3:耗尽}`
 - `parser.barLength` — 进度条长度，默认 20
 - `enabled` — 设为 false 临时禁用
+
+### Cookie 鉴权（MiMo 特例）
+
+- MiMo platform API（`/api/v1/balance`）要求**完整 Cookie 组合**（ph + serviceToken + slh + userId），仅单个 Cookie 返回 401
+- 完整 Cookie 串存 Keychain 单个条目 `MIMO_PLATFORM_TOKEN`，provider 配 `authHeader: "Cookie"` + `authPrefix: ""`
+- Cookie 为会话级，过期后运行 `scripts/refresh-mimo-cookie.py` 一键刷新（从 Edge 数据库解密提取）
 
 详细配置示例见 `README.md`。
 

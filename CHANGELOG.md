@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.8.1] - 2026-08-04
+
+### Added
+- MiMo 余额监控：从「验证 Key 有效性」升级为真实余额查询（`/api/v1/balance`），显示 ¥ 余额
+- MiMo 余额阈值告警：`alert.minBalance` 默认 5.0
+- 新增 `scripts/refresh-mimo-cookie.py`：一键刷新 MiMo Cookie（从 Edge Cookie 数据库提取解密 → 更新 Keychain → 验证）
+
+### Changed
+- MiMo 鉴权方式：从 Bearer Token（API Key）改为完整 Cookie 组合（`authHeader: "Cookie"` + `authPrefix: ""`，Keychain 存 `MIMO_PLATFORM_TOKEN`）
+- 新增「Cookie 鉴权（多 Cookie 组合）」配置模式说明（README 高级配置段）
+
+### Notes
+- MiMo platform API 要求**完整 4 Cookie 组合**（api-platform_ph + serviceToken + slh + userId），仅 serviceToken 会返回 401
+- Cookie 为会话级，Edge 关闭/过期后需运行刷新脚本；tokenPlan/usage 接口当前返回空数据，待账户有套餐后接入
+
 ## [0.8.0] - 2026-07-28
 
 ### Added

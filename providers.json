@@ -78,22 +78,32 @@
     {
       "id": "mimo",
       "name": "MiMo",
-      "keychainService": "MIMO_API_KEY",
+      "keychainService": "MIMO_PLATFORM_TOKEN",
       "consoleUrl": "https://platform.xiaomimimo.com/console/balance?userId=8012371",
       "api": {
-        "url": "https://api.xiaomimimo.com/v1/models",
+        "url": "https://platform.xiaomimimo.com/api/v1/balance",
         "method": "GET",
-        "authHeader": "Authorization",
-        "authPrefix": "Bearer "
+        "authHeader": "Cookie",
+        "authPrefix": "",
+        "headers": {
+          "Accept": "application/json",
+          "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 Edg/126.0.0.0"
+        }
       },
       "parser": {
-        "type": "status",
-        "okField": "object",
-        "okValue": "list"
+        "type": "balance",
+        "fields": {
+          "balance": "data.balance",
+          "currency": "data.currency"
+        }
       },
       "display": {
-        "label": "免费",
+        "unit": "¥",
+        "label": "余额",
         "nameColor": "#FF9F0A"
+      },
+      "alert": {
+        "minBalance": 5.0
       }
     }
   ],

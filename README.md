@@ -9,7 +9,7 @@
 - 👁 菜单栏常驻图标，点击展开详情面板（可选显示汇总数字）
 - 💰 DeepSeek 余额监控（¥）+ 余额阈值告警
 - 📊 MiniMax 用量监控（M2.7 剩余次数 + 进度条 + 重置倒计时）
-- 🆓 MiMo 可用性检测
+- 💰 MiMo 余额监控（Cookie 鉴权）
 - 🔑 所有 API Key 统一从 macOS Keychain 读取，安全且变更无需重启
 - ⚙️ 配置驱动 — 添加新平台只需编辑项目里的 `providers.json`，零代码
 - 💾 按类型 TTL 缓存，余额类 5 分钟、用量类 30 秒，省 90% API 调用
@@ -25,7 +25,7 @@
 |------|---------|-----|--------|
 | DeepSeek | 余额 ¥13.5 | `/user/balance` | platform.deepseek.com/usage |
 | MiniMax | M2.7/M3 92% · 周窗 100% · 🔥x2.0 加成中 | `/v1/token_plan/remains` | platform.minimaxi.com |
-| MiMo | 免费 · API Key 有效 | `/v1/models` | api.xiaomimimo.com |
+| MiMo | 余额 ¥5.0（Cookie 鉴权） | `/api/v1/balance` | platform.xiaomimimo.com |
 
 ## 使用方法
 
@@ -260,6 +260,42 @@ provider 配置 `consoleUrl`，详情菜单末尾出现「→ 打开 X 控制台
   }
 }
 ```
+
+### Cookie 鉴权（多 Cookie 组合）
+
+部分平台（如 MiMo platform API）不用 Bearer Token，而是要求请求头携带**完整 Cookie 组合**——只发单个 Cookie（如仅 serviceToken）会返回 401。
+
+配置方法：
+1. 把完整 Cookie 串（`name1=value1; name2=value2; ...`）存入 Keychain 的**单个条目**
+2. provider 配置 `authHeader: "Cookie"`、`authPrefix: ""`，Keychain 值作为整个 Cookie 头发送：
+
+```json
+{
+  "api": {
+    "url": "https://platform.xiaomimimo.com/api/v1/balance",
+    "authHeader": "Cookie",
+    "authPrefix": "",
+    "headers": {
+      "Accept": "application/json"
+    }
+  },
+  "parser": {
+    "type": "balance",
+    "fields": {
+      "balance": "data.balance",
+      "currency": "data.currency"
+    }
+  }
+}
+```
+
+**Cookie 过期维护**：MiMo 的 Cookie 是会话级，Edge 关闭或长时间不用后失效（菜单栏显示「配置/鉴权错误」）。重新登录平台后运行一键刷新脚本：
+
+```bash
+/usr/bin/python3 scripts/refresh-mimo-cookie.py
+```
+
+脚本会从 Edge Cookie 数据库提取并解密 4 个 Cookie（api-platform_ph / serviceToken / slh / userId），拼好更新到 Keychain `MIMO_PLATFORM_TOKEN`，并自动验证。
 
 ### plan_usage 状态映射（parser.statusMap）
 
