@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.8.2] - 2026-08-10
+
+### Added
+- `display.nameColor` 支持深浅双套：字符串（旧版兼容）或 `{"dark":..., "light":...}` 对象，随系统外观自动切换
+
+### Changed（配色审计，红绿色弱友好）
+- 全配色按 WCAG AA（≥4.5:1）审计，修正浅色模式 3 处不达标：
+  - warn `#B86E00`（3.99:1）→ `#8A5A00`（5.93:1）
+  - DeepSeek `#FF375F`（3.52:1）→ 浅色 `#B3154A`（6.72:1），深色保持 `#FF375F`
+  - MiniMax `#AC8E68`（3.08:1）→ 青绿 `#1D9E75`（深）/ `#0F6E56`（浅）
+- 三平台名色相角拉开：DeepSeek 粉红 348° / MiniMax 青绿 165° / MiMo 橙 35°，红绿色弱可清晰区分
+- 状态色沿用 Wong 色盲安全色板（ok 蓝 / warn 橙 / err 紫红），深浅两套全部 ≥4.5:1
+
+### Fixed
+- `scripts/refresh-mimo-cookie.py` 防御 PYTHONPATH 污染（WorkBuddy/Hermes 注入路径导致 cryptography ImportError）；shebang 改 `/usr/bin/python3`
+
 ## [0.8.1] - 2026-08-04
 
 ### Added

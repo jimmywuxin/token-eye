@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # <bitbar.title>Token Eye</bitbar.title>
-# <bitbar.version>v0.8.1</bitbar.version>
+# <bitbar.version>v0.8.2</bitbar.version>
 # <bitbar.author>wuxin</bitbar.author>
 # <bitbar.desc>LLM Token usage monitor — config-driven, with caching & alerts</bitbar.desc>
 # <bitbar.refreshTime>30</bitbar.refreshTime>
@@ -25,7 +25,7 @@ else
     C_MUTED="#48484a"
     C_HEADER="#0066CC"
     C_OK="#0072B2"
-    C_WARN="#B86E00"
+    C_WARN="#8A5A00"
     C_ERR="#8E1A4A"
 fi
 export APPEARANCE C_DEFAULT C_SECONDARY C_MUTED C_HEADER C_OK C_WARN C_ERR
@@ -226,6 +226,14 @@ def alert_check(pid, name, balance_val, alert_cfg):
         pass
     return f"{name} 余额仅 {bal:.2f}，低于阈值 {min_bal}"
 
+def name_color(display):
+    """display.nameColor 支持深浅双套：字符串（旧版兼容）或 {"dark":..., "light":...}"""
+    nc = display.get("nameColor", C_DEFAULT)
+    if isinstance(nc, dict):
+        return nc.get(APPEARANCE, nc.get("dark", C_DEFAULT))
+    return nc
+
+
 def parse_provider(p, fetch_result):
     pid, name = p["id"], p["name"]
     parser = p["parser"]
@@ -233,6 +241,7 @@ def parse_provider(p, fetch_result):
     console_url = p.get("consoleUrl")
     data = fetch_result["data"]
     ptype = parser["type"]
+    NC = name_color(display)
 
     if ptype == "balance":
         fields = parser.get("fields", {})
@@ -254,7 +263,7 @@ def parse_provider(p, fetch_result):
             "id": pid, "name": name, "status": status,
             "menu_bar": f"{symbol}{balance_str}",
             "lines": [f"{name}: {symbol}{balance_str}", "可用" if avail else "不可用"],
-            "colors": [display.get("nameColor", C_DEFAULT), C_OK if avail else C_ERR],
+            "colors": [NC, C_OK if avail else C_ERR],
             "console_url": console_url,
             "balance_num": balance_num,
             "currency": currency,
@@ -321,7 +330,7 @@ def parse_provider(p, fetch_result):
                 f"  重置: {reset}",
                 f"  {bar} {pct}%",
             ])
-            item_colors.extend([display.get("nameColor", C_DEFAULT), C_SECONDARY, C_SECONDARY, color])
+            item_colors.extend([NC, C_SECONDARY, C_SECONDARY, color])
             if min_pct is None or pct < min_pct:
                 min_pct = pct
 
@@ -330,7 +339,7 @@ def parse_provider(p, fetch_result):
                 "id": pid, "name": name, "status": "ok",
                 "menu_bar": " | ".join(menu_parts),
                 "lines": [f"{name}:"] + item_lines,
-                "colors": [display.get("nameColor", C_DEFAULT)] + item_colors,
+                "colors": [NC] + item_colors,
                 "console_url": console_url,
                 "min_pct": min_pct,
             }
