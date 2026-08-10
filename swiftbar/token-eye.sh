@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # <bitbar.title>Token Eye</bitbar.title>
-# <bitbar.version>v0.8.3</bitbar.version>
+# <bitbar.version>v0.9.0</bitbar.version>
 # <bitbar.author>wuxin</bitbar.author>
 # <bitbar.desc>LLM Token usage monitor — config-driven, with caching & alerts</bitbar.desc>
 # <bitbar.refreshTime>30</bitbar.refreshTime>
@@ -86,11 +86,12 @@ if [ "${1:-}" = "refresh-mimo-cookie" ]; then
     exit 0
 fi
 
-CONFIG_FILE="$CONFIG_FILE" python3 << 'ENDOFPYTHON'
+CONFIG_FILE="$CONFIG_FILE" PROJECT_DIR="$PROJECT_DIR" python3 << 'ENDOFPYTHON'
 import json, subprocess, os, sys, time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 config_path = os.environ["CONFIG_FILE"]
+project_dir = os.environ.get("PROJECT_DIR", "")
 cache_dir = "/tmp"
 
 try:
@@ -182,6 +183,80 @@ def save_cache(pid, payload):
             json.dump(payload, f)
     except Exception:
         pass
+
+# ---- 余额历史（趋势）----
+def _history_dir():
+    d = os.path.expanduser("~/Library/Caches/token-eye")
+    try: os.makedirs(d, exist_ok=True)
+    except Exception: pass
+    return d
+
+def append_history(pid, value):
+    try:
+        with open(os.path.join(_history_dir(), f"history-{pid}.jsonl"), "a") as f:
+            f.write(f"{int(time.time())},{value}\n")
+    except Exception:
+        pass
+
+def load_history(pid, n=24):
+    out = []
+    try:
+        with open(os.path.join(_history_dir(), f"history-{pid}.jsonl")) as f:
+            lines = f.read().strip().splitlines()
+        for line in lines[-n:]:
+            ts, _, val = line.partition(",")
+            try:
+                out.append((int(ts), float(val)))
+            except (ValueError, TypeError):
+                continue
+    except Exception:
+        pass
+    return out
+
+def sparkline(values, width=12):
+    if not values:
+        return ""
+    lo, hi = min(values), max(values)
+    span = hi - lo if hi > lo else 1.0
+    chars = "▁▂▃▄▅▆▇█"
+    return "".join(chars[min(len(chars) - 1, int((v - lo) / span * (len(chars) - 1)))] for v in values)
+
+# ---- 版本自检 ----
+VERSION = "0.9.0"
+
+def _ver_gt(a, b):
+    import re
+    pa = [int(x) for x in re.findall(r"\d+", a)]
+    pb = [int(x) for x in re.findall(r"\d+", b)]
+    return pa > pb
+
+def check_latest_version():
+    cache_file = os.path.join(_history_dir(), "latest-release.json")
+    now = int(time.time())
+    try:
+        if os.path.exists(cache_file):
+            with open(cache_file) as f:
+                d = json.load(f)
+            if now - d.get("ts", 0) < 86400:
+                return d.get("tag_name", "")
+    except Exception:
+        pass
+    try:
+        r = subprocess.run(
+            ["curl", "-s", "--max-time", "4",
+             "https://api.github.com/repos/jimmywuxin/token-eye/releases/latest"],
+            capture_output=True, text=True, timeout=6)
+        d = json.loads(r.stdout)
+        tag = d.get("tag_name", "")
+        if tag:
+            try:
+                with open(cache_file, "w") as f:
+                    json.dump({"ts": now, "tag_name": tag}, f)
+            except Exception:
+                pass
+        return tag
+    except Exception:
+        return ""
 
 def fetch_api(url, method, auth_header, auth_prefix, key, extra_headers=None):
     """Returns {ok, status, data, error_kind, message}."""
@@ -336,6 +411,12 @@ def parse_provider(p, fetch_result):
             def _int(v, default=0):
                 try: return int(resolve_field(item, fields.get(v, "")) or default)
                 except (ValueError, TypeError): return default
+            def _int_or_none(v):
+                val = resolve_field(item, fields.get(v, ""))
+                try:
+                    return int(val) if val is not None and str(val).strip() != "" else None
+                except (ValueError, TypeError):
+                    return None
             pct = _int("intervalPct", 0)
             interval_status = _int("intervalStatus", 0)
             weekly_pct = _int("weeklyPct", 0)
@@ -357,6 +438,12 @@ def parse_provider(p, fetch_result):
                 boost_texts.append(boost_tag)
             interval_state = status_map.get(str(interval_status), "未知")
             weekly_state = status_map.get(str(weekly_status), "未知")
+            # total=0 表示该窗口无套餐配额，状态显示「无套餐」而非「耗尽」
+            no_quota_label = parser.get("noQuotaLabel", "无套餐")
+            if _int_or_none("intervalTotal") == 0:
+                interval_state = no_quota_label
+            if _int_or_none("weeklyTotal") == 0:
+                weekly_state = no_quota_label
             menu_parts.append(f"{icon} {label} {pct}%{boost_tag}")
             item_lines.extend([
                 f"{label}: 5小时窗口 {pct}%（{interval_state}）",
@@ -404,11 +491,39 @@ def render_error(pid, name, error_kind, message, console_url):
         "console_url": console_url,
     }
 
+def auto_refresh_cookie(pid, refresh_script):
+    """自动刷新 Cookie（401 自愈）。带 30 分钟防抖，避免反复打脚本。返回 (ok, 输出)"""
+    flag = os.path.join(cache_dir, f"token-eye-autorefresh-{pid}.flag")
+    now = int(time.time())
+    try:
+        if os.path.exists(flag):
+            with open(flag) as f:
+                last = int(f.read().strip() or 0)
+            if now - last < 1800:
+                return False, "防抖中（30 分钟内已自动尝试过）"
+    except Exception:
+        pass
+    try:
+        with open(flag, "w") as f:
+            f.write(str(now))
+    except Exception:
+        pass
+    try:
+        r = subprocess.run(["/usr/bin/python3", refresh_script],
+                           capture_output=True, text=True, timeout=30)
+        if r.returncode == 0 and "HTTP=200" in r.stdout:
+            return True, ""
+        return False, (r.stdout or r.stderr).strip()[-150:]
+    except Exception as e:
+        return False, str(e)
+
 def process_provider(p):
     pid, name = p["id"], p["name"]
     keychain, api, parser = p["keychainService"], p["api"], p["parser"]
     ptype = parser["type"]
     console_url = p.get("consoleUrl")
+    refresh_param = p.get("refreshParam")
+    alert_cfg = p.get("alert") or config.get("alerts", {}).get(pid)
 
     # Cache check
     ttl = p.get("cacheTtl", _cfg_cache.get(ptype, DEFAULT_CACHE_TTL.get(ptype, 30)))
@@ -434,6 +549,23 @@ def process_provider(p):
             api.get("authPrefix", "Bearer "), key,
             api.get("headers")
         )
+
+        # 自动自愈：client 鉴权错误 + 配置了 refreshParam → 刷新 Cookie 后重试一次
+        if (not fetch_result["ok"] and fetch_result.get("error_kind") == "client"
+                and refresh_param):
+            script = os.path.join(project_dir, "scripts", refresh_param + ".py")
+            if os.path.exists(script):
+                refreshed, _ = auto_refresh_cookie(pid, script)
+                if refreshed:
+                    key2 = get_key(keychain)
+                    if key2:
+                        fetch_result = fetch_api(
+                            api["url"], api.get("method", "GET"),
+                            api.get("authHeader", "Authorization"),
+                            api.get("authPrefix", "Bearer "), key2,
+                            api.get("headers")
+                        )
+
         if fetch_result["ok"]:
             save_cache(pid, {"ts": now, "data": fetch_result["data"]})
         else:
@@ -446,14 +578,70 @@ def process_provider(p):
 
     render = parse_provider(p, fetch_result)
 
-    # Alert check for balance type
+    # Balance history（趋势 + 当日变化）
     if ptype == "balance" and render.get("balance_num") is not None:
-        alert_cfg = p.get("alert") or config.get("alerts", {}).get(pid)
-        notify_msg = alert_check(pid, name, render["balance_num"], alert_cfg)
-        if notify_msg and os.environ.get("TOKEN_EYE_NOTIFY", "1") != "0":
-            send_notify("Token Eye 告警", notify_msg)
+        append_history(pid, render["balance_num"])
+        hist = load_history(pid, 24)
+        if len(hist) >= 2:
+            prev_val = hist[-2][1]
+            diff = render["balance_num"] - prev_val
+            change = f"{'+' if diff > 0 else ''}{diff:.2f}"
+            trend = sparkline([v for _, v in hist])
+            render.setdefault("lines", []).append(f"  趋势: {trend}  ({change})")
+            render.setdefault("colors", []).append(C_SECONDARY)
+
+    # Alert check (balance 余额 / plan_usage 用量百分比)
+    if os.environ.get("TOKEN_EYE_NOTIFY", "1") != "0":
+        if ptype == "balance" and render.get("balance_num") is not None:
+            notify_msg = alert_check(pid, name, render["balance_num"], alert_cfg)
+            if notify_msg:
+                send_notify("Token Eye 告警", notify_msg)
+        elif ptype == "plan_usage" and render.get("min_pct") is not None and alert_cfg:
+            min_pct = alert_cfg.get("minPct")
+            if min_pct is not None and render["min_pct"] < int(min_pct):
+                flag = os.path.join(cache_dir, f"token-eye-alerted-{pid}.flag")
+                if not os.path.exists(flag):
+                    try:
+                        with open(flag, "w") as f:
+                            f.write(str(render["min_pct"]))
+                    except Exception:
+                        pass
+                    send_notify("Token Eye 告警",
+                                f"{name} 用量剩余仅 {render['min_pct']}%，低于阈值 {min_pct}%")
+            else:
+                try:
+                    if os.path.exists(flag := os.path.join(cache_dir, f"token-eye-alerted-{pid}.flag")):
+                        os.remove(flag)
+                except Exception:
+                    pass
 
     return render
+
+# ---- Schema 校验 ----
+schema_errors = []
+for idx, p in enumerate(config.get("providers", [])):
+    if not isinstance(p, dict):
+        schema_errors.append(f"providers[{idx}] 不是对象")
+        continue
+    pid = p.get("id", "?")
+    for f in ("id", "name", "keychainService"):
+        if not p.get(f):
+            schema_errors.append(f"providers[{idx}]（{pid}）缺字段 {f}")
+    api = p.get("api") or {}
+    if not api.get("url"):
+        schema_errors.append(f"providers[{idx}]（{pid}）api 缺字段 url")
+    ptype = (p.get("parser") or {}).get("type")
+    if ptype not in ("balance", "plan_usage", "status"):
+        schema_errors.append(f"providers[{idx}]（{pid}）parser.type 无效: {ptype!r}")
+if schema_errors:
+    print("👁 | color=#e74c3c")
+    print("---")
+    print("providers.json 配置错误 | color=#e74c3c")
+    for e in schema_errors[:8]:
+        print(f"  {e} | color=#888 size=11")
+    print("---")
+    print("刷新 | refresh=true")
+    sys.exit(0)
 
 # Process all providers in parallel
 providers_list = [p for p in config.get("providers", []) if p.get("enabled", True)]
@@ -476,19 +664,21 @@ if providers_list:
 # ---------------------------------------------------------------------------
 try:
     menu_cfg = config.get("menuBar", {})
-    show_summary = menu_cfg.get("showSummary", False)
+    show_cfg = menu_cfg.get("showSummary", False)
+    if isinstance(show_cfg, list):
+        allowed_ids = set(show_cfg)
+        def want_summary(r): return r.get("id") in allowed_ids
+    elif show_cfg:
+        def want_summary(r): return True
+    else:
+        def want_summary(r): return False
 
-    if show_summary:
-        parts = []
-        for r in results:
-            if not r: continue
-            if r.get("status") in ("ok", "warn") and r.get("menu_bar"):
-                parts.append(r["menu_bar"])
-        summary = " | ".join(parts) if parts else ""
-        if summary:
-            print(f"👁 {summary} | color={C_HEADER}")
-        else:
-            print(f"👁 | color={C_HEADER}")
+    summary = " | ".join(
+        r["menu_bar"] for r in results
+        if r and want_summary(r) and r.get("status") in ("ok", "warn") and r.get("menu_bar")
+    )
+    if summary:
+        print(f"👁 {summary} | color={C_HEADER}")
     else:
         print(f"👁 | color={C_HEADER}")
 
@@ -526,6 +716,16 @@ try:
 
     print("刷新 | refresh=true")
     print(f"上次更新: {time.strftime('%H:%M:%S')} | color={C_MUTED} size=11")
+
+    # 版本自检：GitHub 最新 release（24h 缓存），有新版本时提示
+    try:
+        latest = check_latest_version()
+        if latest and _ver_gt(latest, "v" + VERSION):
+            print(f"⬆ 新版本 {latest} 可用 | href=https://github.com/jimmywuxin/token-eye/releases/latest color={C_HEADER} size=11")
+        else:
+            print(f"v{VERSION} | color={C_MUTED} size=11")
+    except Exception:
+        print(f"v{VERSION} | color={C_MUTED} size=11")
 
 except Exception as e:
     # 最后兜底，绝不让菜单空白

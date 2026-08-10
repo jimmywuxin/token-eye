@@ -19,7 +19,8 @@ token-eye/
 ├── swiftbar/
 │   └── token-eye.sh       ← 插件脚本，复制到 ~/SwiftBar/
 ├── scripts/
-│   └── refresh-mimo-cookie.py  ← MiMo Cookie 一键刷新（会话过期时运行）
+│   ├── refresh-mimo-cookie.py  ← MiMo Cookie 一键刷新（会话过期时运行）
+│   └── check-colors.py         ← 配色对比度回归检查（WCAG AA ≥4.5:1）
 ├── providers.json         ← 核心配置（JSON），定义所有平台
 ├── AGENTS.md              ← 本文件（项目指南）
 ├── README.md
@@ -91,20 +92,22 @@ Python 内嵌脚本（单段，并发）：
 ### 全局可选字段
 
 - `cache` — 按 parser 类型设置缓存 TTL（秒），默认 balance 300 / plan_usage 30 / status 60
-- `menuBar.showSummary` — 菜单栏是否显示汇总数字，默认 false
+- `menuBar.showSummary` — 菜单栏汇总：false 不显示 / true 全部 / id 数组（如 `["deepseek","mimo"]`）只显示指定平台
 - `alerts.{id}.minBalance` — balance 类余额阈值告警
+- `alerts.{id}.minPct` — plan_usage 类用量百分比告警（如 minimax `{"minPct": 20}`）
 - `colors.{dark,light}` — 自适应配色
 
 ### provider 可选字段
 
 - `consoleUrl` — 控制台跳转链接，详情菜单末尾显示
 - `cacheTtl` — 单 provider 覆盖全局缓存 TTL
-- `alert.minBalance` — 单 provider 余额告警阈值
+- `alert.minBalance` / `alert.minPct` — 单 provider 告警阈值（balance 余额 / plan_usage 用量）
 - `api.headers` — 额外请求头（如 OpenAI Organization、User-Agent）
 - `parser.statusMap` — plan_usage 状态码映射，默认 `{1:可用, 2:耗尽临近, 3:耗尽}`
 - `parser.barLength` — 进度条长度，默认 20
+- `parser.fields.intervalTotal` / `weeklyTotal` — plan_usage 套餐总量字段路径；total=0 时状态显示「无套餐」而非「耗尽」
 - `display.nameColor` — 平台名颜色；支持深浅双套 `{"dark":"#xxx","light":"#xxx"}`，随系统外观切换（注意红绿色弱对比度）
-- `refreshParam` — 鉴权错误时菜单出现「🔄 刷新 Cookie」点击项，点击以该参数重跑脚本（如 MiMo 的 `refresh-mimo-cookie`）
+- `refreshParam` — 鉴权错误时自动刷新 + 菜单「🔄 刷新 Cookie」点击项（如 MiMo 的 `refresh-mimo-cookie`）
 - `enabled` — 设为 false 临时禁用
 
 ### Cookie 鉴权（MiMo 特例）

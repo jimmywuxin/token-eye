@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.9.0] - 2026-08-10
+
+### Added
+- **MiMo 401 自动自愈**：鉴权错误时自动刷新 Cookie 并重试一次，无感恢复（30 分钟防抖，失败才显示手动刷新入口）
+- **MiniMax 用量阈值告警**：plan_usage 支持 `alert.minPct`，剩余低于阈值推送系统通知（默认 20）
+- **余额历史趋势**：记录余额快照（`~/Library/Caches/token-eye/`），详情菜单显示迷你趋势线（▁▂▃▄▅▆▇█）+ 变化量
+- **菜单栏汇总可定制**：`menuBar.showSummary` 支持平台 id 数组（如 `["deepseek","mimo"]` 只显示指定平台）
+- **配置 schema 校验**：providers 必填字段检查，配置错误给出明确中文提示
+- **配色对比度回归检查**：`scripts/check-colors.py`（WCAG AA ≥4.5:1，当前 20 处全达标）
+- **版本自检**：菜单底部显示版本号，GitHub 有新 release 时提示跳转（24h 缓存）
+
+### Changed
+- **MiniMax 状态语义修正**：total_count=0（无套餐配额）时显示「无套餐」而非「耗尽」（原「周窗口 100%（耗尽）」误导）
+- 版本升至 v0.9.0
+
 ## [0.8.3] - 2026-08-10
 
 ### Added

@@ -48,8 +48,10 @@
           "model": "model_name",
           "intervalPct": "current_interval_remaining_percent",
           "intervalStatus": "current_interval_status",
+          "intervalTotal": "current_interval_total_count",
           "weeklyPct": "current_weekly_remaining_percent",
           "weeklyStatus": "current_weekly_status",
+          "weeklyTotal": "current_weekly_total_count",
           "intervalBoost": "interval_boost_permille",
           "weeklyBoost": "weekly_boost_permille",
           "resetMs": "remains_time"
@@ -79,6 +81,9 @@
           "dark": "#1D9E75",
           "light": "#0F6E56"
         }
+      },
+      "alert": {
+        "minPct": 20
       }
     },
     {
