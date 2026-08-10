@@ -21,7 +21,10 @@
       "display": {
         "unit": "¥",
         "label": "余额",
-        "nameColor": "#FF375F"
+        "nameColor": {
+          "dark": "#FF375F",
+          "light": "#B3154A"
+        }
       },
       "alert": {
         "minBalance": 5.0
@@ -72,7 +75,10 @@
       "display": {
         "unit": "%",
         "label": "剩余",
-        "nameColor": "#AC8E68"
+        "nameColor": {
+          "dark": "#1D9E75",
+          "light": "#0F6E56"
+        }
       }
     },
     {
@@ -100,7 +106,10 @@
       "display": {
         "unit": "¥",
         "label": "余额",
-        "nameColor": "#FF9F0A"
+        "nameColor": {
+          "dark": "#FF9F0A",
+          "light": "#854F0B"
+        }
       },
       "alert": {
         "minBalance": 5.0
@@ -123,7 +132,7 @@
       "muted": "#48484a",
       "header": "#0066CC",
       "ok": "#0072B2",
-      "warn": "#B86E00",
+      "warn": "#8A5A00",
       "err": "#8E1A4A"
     }
   },

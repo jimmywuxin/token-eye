@@ -103,6 +103,7 @@ Python 内嵌脚本（单段，并发）：
 - `api.headers` — 额外请求头（如 OpenAI Organization、User-Agent）
 - `parser.statusMap` — plan_usage 状态码映射，默认 `{1:可用, 2:耗尽临近, 3:耗尽}`
 - `parser.barLength` — 进度条长度，默认 20
+- `display.nameColor` — 平台名颜色；支持深浅双套 `{"dark":"#xxx","light":"#xxx"}`，随系统外观切换（注意红绿色弱对比度）
 - `enabled` — 设为 false 临时禁用
 
 ### Cookie 鉴权（MiMo 特例）
