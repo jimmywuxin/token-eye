@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # <bitbar.title>Token Eye</bitbar.title>
-# <bitbar.version>v0.8.2</bitbar.version>
+# <bitbar.version>v0.8.3</bitbar.version>
 # <bitbar.author>wuxin</bitbar.author>
 # <bitbar.desc>LLM Token usage monitor — config-driven, with caching & alerts</bitbar.desc>
 # <bitbar.refreshTime>30</bitbar.refreshTime>
@@ -50,6 +50,40 @@ if [ ! -f "$CONFIG_FILE" ]; then
   echo "providers.json not found | color=$C_ERR"
   echo "Expected: $CONFIG_FILE | color=$C_MUTED size=11"
   exit 0
+fi
+
+# ---------------------------------------------------------------------------
+# SwiftBar 点击动作（param1 触发）：一键刷新 MiMo Cookie
+# ---------------------------------------------------------------------------
+if [ "${1:-}" = "refresh-mimo-cookie" ]; then
+    REFRESH_SCRIPT="$PROJECT_DIR/scripts/refresh-mimo-cookie.py"
+    if [ ! -f "$REFRESH_SCRIPT" ]; then
+        echo "👁 | color=$C_ERR"
+        echo "---"
+        echo "刷新脚本不存在: $REFRESH_SCRIPT | color=$C_ERR"
+        echo "---"
+        echo "关闭 | refresh=true"
+        exit 0
+    fi
+    OUTPUT=$(/usr/bin/python3 "$REFRESH_SCRIPT" 2>&1)
+    if echo "$OUTPUT" | grep -q "HTTP=200"; then
+        echo "👁 | color=$C_OK"
+        echo "---"
+        echo "✅ MiMo Cookie 刷新成功 | color=$C_OK"
+        echo "---"
+        echo "关闭 | refresh=true"
+    else
+        echo "👁 | color=$C_ERR"
+        echo "---"
+        echo "❌ MiMo Cookie 刷新失败 | color=$C_ERR"
+        echo "$OUTPUT" | tail -2 | sed 's/|/:/g' | while IFS= read -r line; do
+            [ -n "$line" ] && echo "$line | color=$C_MUTED size=11"
+        done
+        echo "---"
+        echo "重试 | param1=refresh-mimo-cookie refresh=true"
+        echo "关闭 | refresh=true"
+    fi
+    exit 0
 fi
 
 CONFIG_FILE="$CONFIG_FILE" python3 << 'ENDOFPYTHON'
@@ -423,6 +457,7 @@ def process_provider(p):
 
 # Process all providers in parallel
 providers_list = [p for p in config.get("providers", []) if p.get("enabled", True)]
+refresh_map = {p.get("id"): p.get("refreshParam") for p in providers_list if p.get("refreshParam")}
 results = [None] * len(providers_list)
 if providers_list:
     with ThreadPoolExecutor(max_workers=max(1, len(providers_list))) as executor:
@@ -475,6 +510,9 @@ try:
             msg = lines[0] if lines else '请求失败'
             c = (r.get("colors") or [C_ERR])[0]
             print(f"🔴 {name}: {msg} | color={c}")
+            rp = refresh_map.get(r.get("id"))
+            if rp:
+                print(f"  🔄 刷新 {name} Cookie | param1={rp} color={C_WARN} size=11")
         else:
             colors = r.get("colors", [])
             for i, line in enumerate(lines):

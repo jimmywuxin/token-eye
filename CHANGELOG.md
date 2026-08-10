@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.8.3] - 2026-08-10
+
+### Added
+- 菜单栏「一键刷新 Cookie」：provider 配置 `refreshParam` 后，鉴权错误时详情菜单出现「🔄 刷新 X Cookie」可点击项，点击自动执行刷新脚本并显示成功/失败反馈，无需打开终端（MiMo 401 时一键恢复）
+- token-eye.sh 支持 SwiftBar 点击动作（`param1` 触发）
+
+### Changed
+- MiMo 配置新增 `refreshParam: "refresh-mimo-cookie"`
+
 ## [0.8.2] - 2026-08-10
 
 ### Added

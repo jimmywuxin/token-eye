@@ -104,6 +104,7 @@ Python 内嵌脚本（单段，并发）：
 - `parser.statusMap` — plan_usage 状态码映射，默认 `{1:可用, 2:耗尽临近, 3:耗尽}`
 - `parser.barLength` — 进度条长度，默认 20
 - `display.nameColor` — 平台名颜色；支持深浅双套 `{"dark":"#xxx","light":"#xxx"}`，随系统外观切换（注意红绿色弱对比度）
+- `refreshParam` — 鉴权错误时菜单出现「🔄 刷新 Cookie」点击项，点击以该参数重跑脚本（如 MiMo 的 `refresh-mimo-cookie`）
 - `enabled` — 设为 false 临时禁用
 
 ### Cookie 鉴权（MiMo 特例）
