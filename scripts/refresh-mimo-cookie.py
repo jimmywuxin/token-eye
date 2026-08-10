@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/python3
 """
 Token Eye — MiMo Cookie 刷新工具
 
@@ -17,10 +17,18 @@ Cookie 串，更新到 Keychain（MIMO_PLATFORM_TOKEN），并调 balance API �
   MiMo platform API 鉴权需要完整 Cookie（仅 serviceToken 会 401）。
   Cookie 是会话级，Edge 关闭或长时间不用后会失效，此时重跑本脚本刷新。
 """
+import os, sys
+
+# 防御：清理 WorkBuddy/Hermes/OpenClaw 注入的 PYTHONPATH 与 sys.path，
+# 避免跨版本 venv 包（如 Hermes 的 python3.11 cryptography）污染导致 ImportError
+os.environ.pop("PYTHONPATH", None)
+os.environ.pop("PYTHONHOME", None)
+sys.path = [p for p in sys.path if not any(x in p for x in (".hermes", ".openclaw"))]
+
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-import sqlite3, subprocess, os, shutil, sys
+import sqlite3, subprocess, shutil
 
 COOKIE_DB = os.path.expanduser("~/Library/Application Support/Microsoft Edge/Default/Cookies")
 KEYCHAIN_SERVICE = "MIMO_PLATFORM_TOKEN"
