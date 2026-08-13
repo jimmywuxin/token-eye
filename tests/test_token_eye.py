@@ -684,6 +684,21 @@ class TestProcessProvider(unittest.TestCase):
         self.assertTrue(any("今日消耗: ¥2.00" in line for line in r["lines"]),
                         f"缺今日消耗行: {r['lines']}")
 
+    def test_balance_trend_shows_range_and_window_delta(self):
+        """趋势行：显示窗口首尾绝对值 + 首尾差值（与走势图形状一致，而非相邻差值）。"""
+        day0 = te.start_of_day()
+        with open(os.path.join(self.dir, "history-deepseek.jsonl"), "w") as f:
+            f.write(f"{day0 + 100},{50.0}\n")
+            f.write(f"{day0 + 200},{48.0}\n")
+            f.write(f"{day0 + 300},{48.0}\n")
+        self.cache("deepseek", {"ts": int(time.time()),
+                                "data": {"balance_infos": [{"total_balance": 48.0, "currency": "CNY"}]}})
+        r = te.process_provider(BALANCE_P, {"cache": {"balance": 300}}, COLORS, "dark",
+                                self.dir, self.dir, "/tmp")
+        trend = [line for line in r["lines"] if "趋势" in line][0]
+        self.assertIn("¥50.00→48.00", trend)
+        self.assertIn("(-2.00)", trend)
+
     def test_plan_usage_trend_line(self):
         """用量类：剩余百分比历史 → 详情菜单出现趋势线。"""
         day0 = te.start_of_day()
