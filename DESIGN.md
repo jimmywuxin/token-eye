@@ -1,123 +1,173 @@
 # Token Eye — 设计文档
 
-> ⚠️ **注意**：本文档反映的是早期 Tauri/Web 方案的设计思路，当前已迁移到 SwiftBar 菜单栏插件方案（见 README.md）。保留本文档供参考。
+> 本文档描述**当前**架构（SwiftBar 菜单栏插件方案）。早期 Electron/Tauri 方案与演进过程见文末「演进史」。
 
-> 多模型 LLM Token 消耗实时监控桌面仪表盘
+## 1. 项目定位
 
-## 项目背景
+macOS 菜单栏 LLM 余额/用量实时监控插件。解决的核心问题：日常使用多个大模型（DeepSeek、MiniMax、MiMo 等），各平台用量查看方式碎片化，需要分别登录开发者平台。
 
-日常使用多个大模型（DeepSeek、MiMo、MiniMax），通过不同 Agent（Codex、OpenClaw、Hermes Agent）调用。目前各平台的用量查看方式碎片化，需要一个统一的桌面窗口实时展示所有模型的消耗情况。
+设计目标：
 
-## 当前使用现状
+- **零侵入**：不拦截、不修改任何 Agent 的调用方式
+- **零常驻**：无后台进程、无 Node.js、无构建步骤
+- **零代码加平台**：新增平台只改 `providers.json`，不改脚本
 
-| 模型 | 调用方式 | 当前查看方式 |
-|------|---------|------------|
-| DeepSeek | Agent (codex/openclaw/hermes) | 登录开发者平台 |
-| MiMo | Agent | 登录开发者平台 |
-| MiniMax | Agent + 脚本 | API 查 plan 用量 (`check_usage.py`) |
+## 2. 核心设计决策
 
-**关键约束**：不是直接调 API，而是 Agent 替用户调用。因此不适合请求拦截，应采用**轮询平台 API** 的方式。
+| 决策点 | 选择 | 理由 |
+|--------|------|------|
+| 形态 | SwiftBar 菜单栏插件 | 点开即看、不离开当前工作流；SwiftBar 负责调度与 UI 壳，插件只输出纯文本菜单 |
+| 数据获取 | 轮询平台官方 API | Agent 直接调 API，无法请求拦截；轮询覆盖所有调用场景（见 §2.1） |
+| 实现语言 | Bash 启动器 + Python 核心 | 单脚本部署、无常驻进程；Python 处理 JSON 解析、并发、Keychain、加密 |
+| 配置 | 配置驱动（`providers.json`） | 平台差异全部参数化，加平台零代码 |
+| 密钥 | macOS Keychain | 安全；`security` CLI 读取，Key 变更无需重启插件 |
+| 部署 | 复制 1 个文件，其余从项目目录读取 | `token-eye.sh` 复制到 `~/SwiftBar/`；`token_eye.py` / `providers.json` / `scripts/` 自动从项目目录加载 |
+| 刷新节奏 | 30s 轮询 + 按类型 TTL 缓存 | 实时性与 API 调用成本平衡（余额类 5 分钟缓存，省 90% 调用） |
 
-## 参考项目：DeepSeek Reasonix
+### 2.1 轮询 vs 代理拦截
 
-**项目地址**：https://github.com/esengine/deepseek-reasonix
+早期评估过本地 OpenAI 兼容代理（所有 Agent 改 base_url 指向 localhost，逐请求精确记录）。**不采用**：侵入性强，需改动所有 Agent 配置；而本项目场景下 Agent 替用户调用 API，请求层不可控。轮询虽然拿不到逐请求的 token 明细，但能拿到余额/用量总量，足够覆盖监控诉求。
 
-Reasonix 的核心做法值得借鉴：
-
-### 1. 客户端拦截 + JSONL 日志
-- 从 API 响应的 `usage` 字段提取 token 数
-- 追加写入 `~/.reasonix/usage.jsonl`（append-only，不阻塞主流程）
-- 超过 5MB 自动压缩，保留 365 天
-
-### 2. 本地定价表计算费用
-```typescript
-// 内置定价（USD per 1M tokens）
-const DEEPSEEK_PRICING = {
-  "deepseek-v4-flash": { inputCacheHit: 0.0028, inputCacheMiss: 0.14, output: 0.28 },
-  "deepseek-v4-pro":   { inputCacheHit: 0.003625, inputCacheMiss: 0.435, output: 0.87 },
-};
-
-// 费用公式
-cost = (hitTokens × hitPrice + missTokens × missPrice + completionTokens × outputPrice) / 1,000,000
-```
-
-### 3. 缓存诊断（SHA-256 哈希对比）
-- 每轮对话计算 system prompt、tool specs、few-shots 的哈希
-- 与上一轮对比，推断缓存未命中原因（system-prompt-changed / tool-list-changed / cold-start 等）
-- DeepSeek 本身不提供此信息，是 Reasonix 自己推断的
-
-### 4. 滚动窗口聚合统计
-- today / 7d / 30d / all-time
-- 按 model、按 session 分组
-- 子代理（subagent）单独归因
-
-### 5. 内嵌 Web Dashboard
-- Tauri 桌面应用，内嵌 React 前端
-- 实时展示费用、缓存命中率、趋势图
-
-## 架构设计
-
-### 方案：轮询 API（推荐）
+## 3. 系统架构
 
 ```
-┌─────────────────────────────────────────────────┐
-│           Desktop Dashboard (Tauri/Web)          │
-│  ┌─────────┐ ┌─────────┐ ┌─────────┐           │
-│  │ DeepSeek │ │  MiMo   │ │ MiniMax │  ...更多   │
-│  │ $12.34  │ │  ¥5.67  │ │ 50/100  │           │
-│  │ ▃▅▇▆▅▇ │ │ ▂▃▅▄▅▆ │ │ ██████░ │           │
-│  └─────────┘ └─────────┘ └─────────┘           │
-│           ← 每 30s 自动刷新 →                    │
-└──────────────────┬──────────────────────────────┘
-                   │ HTTP 轮询
-    ┌──────────────┼──────────────┐
-    ▼              ▼              ▼
- Provider A    Provider B    Provider C
- (定时抓取)    (定时抓取)    (定时抓取)
+┌────────────────────────────────────────────────┐
+│ SwiftBar（macOS 菜单栏，每 30s 调度一次插件）      │
+│  └── ~/SwiftBar/token-eye.sh（Bash 启动器）      │
+│        ├─ 检测深浅外观 → 导出配色环境变量          │
+│        ├─ 自动定位项目目录（providers.json 所在）  │
+│        ├─ 处理 SwiftBar 点击动作（param1）        │
+│        └─ 调用 token_eye.py（Python 核心）        │
+└──────────────────┬─────────────────────────────┘
+                   ▼
+        swiftbar/token_eye.py（单进程，并发）
+   ┌──────────┬──────────┬──────────┬───────────┐
+   │ 缓存读取  │ Keychain │ 并发 API │ 渲染输出   │
+   │ /tmp     │ security │ Thread- │ SwiftBar  │
+   │ cache    │ CLI      │ Pool    │ 格式菜单   │
+   └────┬─────┴────┬─────┴────┬────┴─────┬─────┘
+        │          │          │          │
+   providers.json  Keychain  各平台 API  历史/趋势
+   （配置）        （密钥）   （数据源）  ~/Library/Caches
+                                       /token-eye/*.jsonl
 ```
 
-**选择理由**：不侵入 Agent 工作流，覆盖所有使用场景。
+**一次刷新周期**：
 
-### 备选：本地代理拦截
-- 在 `localhost` 起 OpenAI 兼容代理，所有 Agent 改用代理地址
-- 优点：逐请求精确记录
-- 缺点：需要改所有 Agent 的 base_url，侵入性强
-- **暂不采用**
+1. 读取 `providers.json`，做运行时 schema 校验（配置错误给出中文菜单提示）
+2. 逐 provider 检查 `/tmp/token-eye-cache-{id}.json` 缓存，命中（未过期）则跳过 API
+3. 从 Keychain 读取 API Key / Cookie
+4. `ThreadPoolExecutor` 并发请求各平台 API（curl，5s 超时）
+5. HTTP 错误分类（5xx 服务端 / 4xx 配置鉴权 / 网络失败 / 超时 / 解析失败）
+6. 解析响应 → 渲染数据（余额/进度条/状态），balance 类检查告警阈值并统计今日消耗
+7. 输出 SwiftBar 格式菜单（含控制台跳转、版本自检）
 
-## 各平台 API 可用性
+## 4. 核心模块设计
 
-| 平台 | API 查询方式 | 能拿到什么 |
-|------|------------|----------|
-| DeepSeek | `GET /v1/user/balance` | 余额、已用金额、token 数 |
-| MiMo | 待确认是否有 billing API | 可能需要走 OpenAI 兼容格式 |
-| MiniMax | ✅ 已有 `check_usage.py` | 模型维度的 plan 用量/剩余/重置倒计时 |
+### 4.1 Parser 类型体系
 
-### MiniMax 现有脚本
-路径：`/Users/wuxin/.openclaw/workspace/skills/minimax-plan-usage/scripts/check_usage.py`
-- 调用 `GET /v1/api/openplatform/coding_plan/remains`
-- 从 macOS Keychain 读取 API Key
-- 返回各模型的总次数、剩余次数、重置倒计时
+`providers.json` 里每个 provider 的 `parser.type` 决定数据如何被解析和展示：
 
-## 桌面窗口方案
+| 类型 | 语义 | 展示 |
+|------|------|------|
+| `balance` | 有余额 API（DeepSeek、MiMo） | 余额数字 + 货币符号 + 趋势线 + 今日消耗估算 |
+| `plan_usage` | 有按模型用量 API（MiniMax） | 模型列表 + 进度条 + 双窗口（5h/周）+ 重置倒计时 + 趋势线 |
+| `status` | 只验证 Key 有效性 | 自定义标签（可用/免费/…） |
 
-用户选择：**桌面动态窗口，实时显示**
+**扩展方式**：新增类型只需在 `parse_provider()` 加分支 + 更新 schema + 加测试；字段路径用 `.` 分隔的嵌套/数组索引（`resolve_field`），适配任意响应结构。`fields` 映射是平台差异的收敛点——**平台响应结构差异全部参数化到配置，不在代码里硬编码**。
 
-可选方案：
-- **浏览器页面**（最简单，HTML 文件，浏览器开着就能看）
-- **Tauri 桌面应用**（原生窗口，像 Reasonix 那样）
-- **菜单栏小工具**（macOS 菜单栏常驻，点开看详情）
+### 4.2 缓存与 TTL
 
-## 待确认事项
+- 按 parser 类型默认 TTL：balance 300s / plan_usage 30s / status 60s，`cache` 段全局覆盖，`cacheTtl` 单 provider 覆盖
+- **失败请求 10s 短缓存**：连续失败不重复打 API（错误结果也缓存，短 TTL）
+- 缓存文件在 `/tmp`（重启即清，天然无残留）；键为 provider id
 
-- [ ] DeepSeek 和 MiMo 的 API Key 存放位置（Keychain / 环境变量 / 配置文件）
-- [ ] MiMo 是否有 billing/balance API
-- [ ] 桌面窗口最终形式（Tauri / 浏览器 / 菜单栏）
-- [ ] 各平台定价表维护方式（硬编码 vs 配置文件）
+### 4.3 HTTP 错误分类
 
-## 技术栈（初步建议）
+5 类错误，各自独立文案与颜色语义：
 
-- **后端**：Python（与现有 check_usage.py 一致）
-- **前端**：React + Tailwind（或更轻量的方案）
-- **桌面**：Tauri / 或纯 Web 方案
-- **存储**：SQLite（持久化）+ JSONL（日志）
-- **调度**：定时轮询，间隔 30s~60s
+| 错误 | 含义 | 颜色 | 是否临时 |
+|------|------|------|---------|
+| `server` (5xx) | 服务端异常 | warn（橙） | 是 |
+| `network` | curl 失败/网络不通 | warn | 是 |
+| `timeout` | 请求超时 | warn | 是 |
+| `client` (4xx) | 配置/鉴权错误（Key 失效、Cookie 过期） | err（紫红） | 否 |
+| `parse` | 响应无法解析 | err | 否 |
+
+区分"临时故障"与"配置错误"是关键：前者提示稍后自动恢复，后者引导用户修配置或刷新凭据。
+
+### 4.4 告警
+
+- balance：`alert.minBalance` 余额低于阈值；plan_usage：`alert.minPct` 剩余百分比低于阈值
+- **去重**：`/tmp/token-eye-alerted-{id}.flag` 标记已通知，余额恢复后自动清除——阈值边界不会刷屏
+- `osascript` 发 macOS 系统通知；`TOKEN_EYE_NOTIFY=0` 可整体禁用
+
+### 4.5 401 自愈（Cookie 平台）
+
+配置 `refreshParam` 的 provider 在鉴权错误时**自动**执行刷新脚本并重试一次，用户无感：
+
+```
+401 → 跑 scripts/refresh-mimo-cookie.py → 成功 → 重新取 Key → 重试 API → 恢复
+```
+
+- **30 分钟防抖**：`token-eye-autorefresh-{id}.flag` 防止反复触发
+- 刷新脚本失败 → 回退菜单手动入口「🔄 刷新 Cookie」
+- **经验教训**：Edge 运行中时 Cookie 最新写入在 WAL 伴生文件里，只拷贝主库会拿到过期快照导致误报「缺少 Cookie」——必须连带拷贝 `-wal/-shm/-journal` 并重试（v0.10.0 修复）
+
+### 4.6 历史、趋势与消耗估算
+
+- **存储**：`~/Library/Caches/token-eye/history-{id}.jsonl`，append-only，每行 `时间戳,数值`
+- **趋势线**：最近 24 个快照 → sparkline（`▁▂▃▄▅▆▇█`）+ 相邻变化量
+- **当日消耗估算**：当天相邻快照的**下降量之和**。用下降量而非首尾差值，充值抬升余额不会干扰统计（`daily_spend`）
+- 同一套历史同时服务余额趋势、用量趋势（plan_usage 记 min_pct）、消耗估算三处
+
+### 4.7 渲染层
+
+- SwiftBar 纯文本协议：`文本 | color=.. size=.. href=.. param1=..`
+- **自适应配色**：检测系统深浅外观切换两套色板；全色板按 WCAG AA ≥4.5:1 审计 + 色弱安全（蓝/橙/紫，Wong 色板）
+- **兜底**：渲染全程 try-except，任何异常输出占位菜单，绝不让菜单空白
+- **版本自检**：菜单底部对比 GitHub 最新 release（24h 缓存），有新版本时提示跳转
+
+### 4.8 配置校验（三层）
+
+| 层 | 实现 | 时机 |
+|----|------|------|
+| 运行时轻量校验 | `schema_validate()`（必填字段/类型枚举） | 每次刷新，错误显示在菜单 |
+| JSON Schema | `schema/providers.schema.json` + 零依赖校验器 `scripts/validate-schema.py` | `make validate` / CI / 编辑器自动补全 |
+| 单元测试 | `tests/` 覆盖解析与校验逻辑 | `make test` / CI |
+
+三层互补：运行时校验保护菜单显示，Schema 服务编辑体验与 CI，测试守护回归。
+
+## 5. 质量保障
+
+- **纯函数化核心**：`token_eye.py` 顶层只有常量与函数，`main()` 才读环境变量——解析/告警/分类/缓存全部可独立单测（79 个用例）
+- **CI**（GitHub Actions）：bash 语法 + ShellCheck、Python 编译、单元测试、Schema 校验、配色对比度、版本一致性（`bitbar.version` vs `VERSION`）
+- **部署模型不变**：无论核心逻辑如何拆分，用户始终只复制 `token-eye.sh` 一个文件
+
+## 6. 已知权衡与边界
+
+- **消耗估算是近似值**：基于余额差值推算，无逐请求明细；DeepSeek 等接口不返回 token 级用量，这是当前模型的上限
+- **Cookie 鉴权脆弱**：会话级、依赖 Edge 浏览器与 Safe Storage Key，过期需重新登录；多浏览器支持（Chrome/Arc 等）尚未实现
+- **休眠唤醒后的陈旧窗口**：睡眠期间不刷新，唤醒后首个周期可能展示旧缓存（balance TTL 5 分钟）
+- **`/tmp` 语义**：缓存与告警标记随重启清空——告警去重状态重启后会重新通知一次（可接受）
+
+## 7. 演进史
+
+| 版本 | 里程碑 |
+|------|--------|
+| v0.1 | Electron + menubar 桌面应用（弃用：重、需打包） |
+| v0.2 | 迁移 SwiftBar，纯 Shell + Python，零依赖 |
+| v0.3 | 配置驱动重构（`providers.json`），加平台零代码 |
+| v0.4–0.6 | status/balance/plan_usage 三类 parser、自动探测项目目录 |
+| v0.7 | 自适应配色、色弱安全审计、并发拉取、错误分类 |
+| v0.8 | 缓存 TTL、告警去重、控制台跳转、MiMo Cookie 鉴权与刷新 |
+| v0.9 | 401 自愈、用量告警、余额趋势、schema 校验、版本自检 |
+| v0.10 | 质量基建：单元测试（79）/ JSON Schema / CI / Makefile；架构拆分（Python 拆为独立模块）；修复刷新菜单空白与 WAL 误报 |
+| 当前 | 当日消耗估算 + 用量趋势线 |
+
+## 8. Roadmap
+
+- **菜单栏汇总状态着色**：标题按最差状态整体变色，异常一眼可见
+- **一键升级闭环**：版本自检已有，补齐下载/替换/刷新
+- **多浏览器 Cookie 支持**：Chrome/Arc/Brave 与 Edge 同构，刷新脚本可扩展
+- **精确用量接入**：若平台开放 token 级用量接口，可补充精确计费（当前为余额差值近似）

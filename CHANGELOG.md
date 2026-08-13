@@ -8,6 +8,7 @@
 
 ### Changed
 - 历史记录（`~/Library/Caches/token-eye/history-{id}.jsonl`）现在同时服务于余额趋势、今日消耗估算与用量趋势三处
+- **DESIGN.md 重写**：移除早期 Tauri 方案残留，改为描述当前 SwiftBar 架构（设计决策、模块设计、权衡与演进史）
 
 ## [0.10.0] - 2026-08-14
 
