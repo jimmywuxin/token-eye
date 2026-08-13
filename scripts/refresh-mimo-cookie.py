@@ -17,7 +17,7 @@ Cookie 串，更新到 Keychain（MIMO_PLATFORM_TOKEN），并调 balance API �
   MiMo platform API 鉴权需要完整 Cookie（仅 serviceToken 会 401）。
   Cookie 是会话级，Edge 关闭或长时间不用后会失效，此时重跑本脚本刷新。
 """
-import os, sys
+import os, sys, time
 
 # 防御：清理 WorkBuddy/Hermes/OpenClaw 注入的 PYTHONPATH 与 sys.path，
 # 避免跨版本 venv 包（如 Hermes 的 python3.11 cryptography）污染导致 ImportError
@@ -31,9 +31,13 @@ from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 import sqlite3, subprocess, shutil
 
 COOKIE_DB = os.path.expanduser("~/Library/Application Support/Microsoft Edge/Default/Cookies")
+COOKIE_TMP = "/tmp/edge_cookies_tmp.db"
 KEYCHAIN_SERVICE = "MIMO_PLATFORM_TOKEN"
 HOST_FILTER = "%xiaomimimo%"
 REQUIRED = ["api-platform_ph", "api-platform_serviceToken", "api-platform_slh", "userId"]
+# 拷贝主库时要一起带的伴生文件：Edge 运行中时最新写入常在 -wal/-shm/-journal 里，
+# 只拷主库会拿到过期快照（表现为「缺少 Cookie」或旧值 401）
+COOKIE_SUFFIXES = ("", "-wal", "-shm", "-journal")
 
 
 def get_safe_storage_key():
@@ -58,30 +62,71 @@ def decrypt_cookie(enc, key):
     return (pt[:-pad] if pad else pt).decode('ascii')
 
 
+def copy_cookie_db():
+    """把 Cookie 库连同 -wal/-shm/-journal 一起拷贝到临时目录。"""
+    for suffix in COOKIE_SUFFIXES:
+        src, dst = COOKIE_DB + suffix, COOKIE_TMP + suffix
+        try:
+            if os.path.exists(src):
+                shutil.copy2(src, dst)
+            elif os.path.exists(dst):
+                os.unlink(dst)
+        except OSError as e:
+            print(f"警告: 拷贝 {os.path.basename(src) or 'Cookies'} 失败: {e}")
+
+
+def extract_cookie_rows():
+    """拷贝并读取匹配行；读取失败返回 None。拷贝一致性靠伴生文件 + 调用方重试保证。"""
+    copy_cookie_db()
+    rows = None
+    try:
+        conn = sqlite3.connect(COOKIE_TMP)
+        try:
+            rows = conn.execute(
+                "SELECT host_key, name, encrypted_value FROM cookies WHERE host_key LIKE ?",
+                (HOST_FILTER,)).fetchall()
+        finally:
+            conn.close()
+    except sqlite3.DatabaseError as e:
+        print(f"警告: Cookie 库读取失败: {e}")
+    finally:
+        for suffix in COOKIE_SUFFIXES:
+            try:
+                if os.path.exists(COOKIE_TMP + suffix):
+                    os.unlink(COOKIE_TMP + suffix)
+            except OSError:
+                pass
+    return rows
+
+
 def main():
     if not os.path.exists(COOKIE_DB):
         sys.exit(f"错误: Edge Cookie 数据库不存在: {COOKIE_DB}")
 
-    tmp = "/tmp/edge_cookies_tmp.db"
-    shutil.copy2(COOKIE_DB, tmp)  # Edge 运行时数据库锁定，先拷贝
-    conn = sqlite3.connect(tmp)
-    rows = conn.execute(
-        "SELECT host_key, name, encrypted_value FROM cookies WHERE host_key LIKE ?",
-        (HOST_FILTER,)).fetchall()
-    conn.close()
-    os.unlink(tmp)
-
     key = get_safe_storage_key()
-    cookies = {}
-    for host, name, enc in rows:
-        try:
-            cookies[name] = decrypt_cookie(enc, key)
-        except Exception as e:
-            print(f"警告: {name} 解密失败: {e}")
 
-    missing = [c for c in REQUIRED if c not in cookies]
+    cookies = {}
+    missing = REQUIRED[:]
+    for attempt in (1, 2):
+        rows = extract_cookie_rows()
+        if rows:
+            for host, name, enc in rows:
+                if name in cookies:
+                    continue
+                try:
+                    cookies[name] = decrypt_cookie(enc, key)
+                except Exception as e:
+                    print(f"警告: {name} 解密失败: {e}")
+        missing = [c for c in REQUIRED if c not in cookies]
+        if not missing:
+            break
+        if attempt == 1:
+            # Edge 运行中 WAL 可能尚未合并进主库，等一拍重试一次，避免误报「缺少 Cookie」
+            print(f"警告: 缺少 Cookie {missing}，1 秒后重试…")
+            time.sleep(1)
+
     if missing:
-        sys.exit(f"错误: 缺少 Cookie: {missing}。请先在 Edge 登录 platform.xiaomimimo.com")
+        sys.exit(f"错误: 缺少 Cookie: {missing}。请先在 Edge 打开并登录 platform.xiaomimimo.com（保持窗口打开），再重试")
 
     cookie_str = "; ".join(f"{k}={v}" for k, v in cookies.items())
     print(f"提取成功: 完整 Cookie 串 {len(cookie_str)} 字符")

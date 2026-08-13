@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.10.0] - 2026-08-14
+
+### Added
+- **单元测试**：`swiftbar/token_eye.py` 核心逻辑（字段解析 / parser 渲染 / 告警去重 / HTTP 错误分类 / 缓存 / Schema 校验 / 401 自愈）拆为可测试的纯函数，`tests/test_token_eye.py` 覆盖 70 个用例（`make test`）
+- **JSON Schema**：新增 `schema/providers.schema.json` + 零依赖校验器 `scripts/validate-schema.py`；编辑器打开 `providers.json` 自动补全，`make validate` / `--validate` 模式可离线校验
+- **CI**：新增 GitHub Actions（`.github/workflows/ci.yml`），push/PR 自动检查 bash 语法 + ShellCheck、Python 编译、单元测试、Schema 校验、配色对比度、版本一致性
+- **Makefile**：`make install / test / lint / validate / check` 收拢常用命令
+
+### Changed
+- **架构拆分**：Python 核心逻辑从 bash heredoc（约 650 行）拆出为 `swiftbar/token_eye.py`，`token-eye.sh` 变为薄启动器（环境检测 + 参数动作转发）。部署模型不变——仍只需复制 `token-eye.sh`，核心逻辑与 `providers.json` 一样从项目目录自动读取
+- 版本号双处维护由 CI 校验一致性（`bitbar.version` vs `VERSION`）
+
+### Fixed
+- **一键刷新 Cookie 失败时菜单空白**：刷新脚本失败退出码非零时，`set -euo pipefail` 会中断 bash，导致「❌ 刷新失败」菜单永远不显示；现以 `|| true` 捕获退出码，由分支正常展示成功/失败
+- **MiMo Cookie 刷新误报「缺少 Cookie」**：Edge 运行中时最新 Cookie 写入在 `Cookies-wal/-shm/-journal` 里，旧脚本只拷贝主库拿到过期快照而误报缺失；现一并拷贝伴生文件，关键 Cookie 缺失时自动重试一次（`scripts/refresh-mimo-cookie.py`），失败菜单显示更多诊断输出（`tail -4`）
+
 ## [0.9.0] - 2026-08-10
 
 ### Added

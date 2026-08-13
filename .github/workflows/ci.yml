@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: lint / test / validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Bash 语法检查
+        run: bash -n swiftbar/token-eye.sh
+
+      - name: ShellCheck
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq shellcheck >/dev/null 2>&1
+          shellcheck -S warning swiftbar/token-eye.sh
+
+      - name: Python 编译检查
+        run: python3 -m py_compile swiftbar/token_eye.py scripts/*.py
+
+      - name: 单元测试
+        run: python3 -m unittest discover -s tests -v
+
+      - name: JSON Schema 校验
+        run: python3 scripts/validate-schema.py
+
+      - name: 配色对比度检查（WCAG AA ≥4.5:1）
+        run: python3 scripts/check-colors.py
+
+      - name: 版本号一致性（token-eye.sh vs token_eye.py）
+        run: |
+          PY_VER="$(sed -n 's/^VERSION = "\([0-9.]*\)"/\1/p' swiftbar/token_eye.py | head -1)"
+          SH_VER="$(sed -n 's/.*<bitbar.version>v\([0-9.]*\)<\/bitbar.version>.*/\1/p' swiftbar/token-eye.sh | head -1)"
+          echo "token_eye.py VERSION        = $PY_VER"
+          echo "token-eye.sh bitbar.version = $SH_VER"
+          test -n "$PY_VER"
+          test "$PY_VER" = "$SH_VER"

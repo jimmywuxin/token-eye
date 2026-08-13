@@ -61,9 +61,10 @@ SwiftBar 自动检测新脚本，菜单栏出现 👁 图标即完成。
 ### 工作原理
 
 ```
-~/SwiftBar/token-eye.sh          →  SwiftBar 每 30 秒执行
+~/SwiftBar/token-eye.sh                  →  SwiftBar 每 30 秒执行（薄启动器）
        ↓ 自动探测项目路径
-$HOME/dev/token-eye/providers.json  →  脚本直接读取项目里的配置
+$HOME/dev/token-eye/swiftbar/token_eye.py  →  Python 核心逻辑（缓存/告警/解析/渲染）
+$HOME/dev/token-eye/providers.json         →  配置（与核心逻辑一样从项目目录读取）
 ```
 
 脚本按优先级自动查找 `providers.json`：
@@ -74,6 +75,8 @@ $HOME/dev/token-eye/providers.json  →  脚本直接读取项目里的配置
 ### 更新
 
 ```bash
+make install
+# 或手动：
 cp swiftbar/token-eye.sh ~/SwiftBar/
 ```
 
@@ -338,12 +341,36 @@ TOKEN_EYE_NOTIFY=0 bash ~/SwiftBar/token-eye.sh
 ```
 token-eye/
 ├── swiftbar/
-│   └── token-eye.sh       ← 复制到 ~/SwiftBar/，SwiftBar 运行它
+│   ├── token-eye.sh       ← SwiftBar 启动器（复制到 ~/SwiftBar/）
+│   └── token_eye.py       ← 核心逻辑：缓存/告警/解析/渲染（从项目目录读取）
+├── scripts/               ← 辅助脚本（Cookie 刷新 / 配色检查 / Schema 校验）
+├── schema/
+│   └── providers.schema.json  ← providers.json 的 JSON Schema（编辑器补全 + 校验）
+├── tests/
+│   └── test_token_eye.py  ← 单元测试（unittest，零依赖）
 ├── providers.json         ← 核心配置，脚本从项目目录自动读取
-├── DESIGN.md              ← 设计文档
+├── Makefile               ← make install / test / check
+├── .github/workflows/     ← CI（语法/测试/Schema/配色/版本一致性）
+├── AGENTS.md
+├── DESIGN.md
 ├── CHANGELOG.md
 └── README.md
 ```
+
+## 开发与质量保障
+
+项目无构建步骤，纯脚本。常用命令（详见 `Makefile`）：
+
+```bash
+make install    # 安装/更新插件到 ~/SwiftBar/
+make test       # 单元测试（unittest，零依赖）
+make check      # 全部检查：语法 + 测试 + Schema + 配色对比度
+```
+
+- **单元测试**：`swiftbar/token_eye.py` 的解析/告警/错误分类/缓存等核心函数全部可测，`tests/` 覆盖 60+ 用例，`python3 -m unittest discover -s tests` 即可运行
+- **JSON Schema**：`schema/providers.schema.json` 描述配置结构；VS Code 等编辑器打开 `providers.json` 时自动补全与校验；`python3 scripts/validate-schema.py` 提供零依赖的运行时校验（脚本内置的轻量校验用于菜单栏提示）
+- **CI**：GitHub Actions（`.github/workflows/ci.yml`）自动执行 bash 语法 + ShellCheck、Python 编译、单元测试、Schema 校验、配色对比度、版本一致性检查
+- **配色回归**：`scripts/check-colors.py` 保证全部颜色 WCAG AA ≥4.5:1
 
 ## License
 

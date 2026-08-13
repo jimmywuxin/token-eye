@@ -1,0 +1,163 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/jimmywuxin/token-eye/blob/main/schema/providers.schema.json",
+  "title": "Token Eye providers.json",
+  "description": "Token Eye 插件配置：定义所有平台（parser / api / display / alert）。支持 JSON Schema 的编辑器（VS Code 等）可自动补全与校验。运行时校验见 scripts/validate-schema.py（零依赖实现本 schema 所用到的子集）。",
+  "type": "object",
+  "properties": {
+    "providers": {
+      "type": "array",
+      "description": "平台列表，按顺序展示",
+      "items": { "$ref": "#/definitions/provider" }
+    },
+    "colors": {
+      "type": "object",
+      "description": "深浅模式配色（WCAG AA ≥4.5:1）",
+      "properties": {
+        "dark": { "$ref": "#/definitions/colorSet" },
+        "light": { "$ref": "#/definitions/colorSet" }
+      }
+    },
+    "cache": {
+      "type": "object",
+      "description": "按 parser 类型的缓存 TTL（秒）",
+      "properties": {
+        "balance": { "type": "integer", "minimum": 1 },
+        "plan_usage": { "type": "integer", "minimum": 1 },
+        "status": { "type": "integer", "minimum": 1 }
+      },
+      "additionalProperties": true
+    },
+    "menuBar": {
+      "type": "object",
+      "description": "菜单栏汇总显示",
+      "properties": {
+        "showSummary": {
+          "description": "false 不显示 / true 全部 / id 数组只显示指定平台",
+          "oneOf": [
+            { "type": "boolean" },
+            { "type": "array", "items": { "type": "string" } }
+          ]
+        }
+      },
+      "additionalProperties": true
+    },
+    "alerts": {
+      "type": "object",
+      "description": "按 provider id 的全局告警配置（与 provider 内 alert 等价）",
+      "additionalProperties": { "$ref": "#/definitions/alert" }
+    }
+  },
+  "required": ["providers"],
+  "additionalProperties": true,
+  "definitions": {
+    "provider": {
+      "type": "object",
+      "required": ["id", "name", "keychainService", "api", "parser"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1 },
+        "keychainService": {
+          "type": "string",
+          "description": "Keychain 服务名，约定 <平台名大写>_API_KEY"
+        },
+        "consoleUrl": { "type": "string" },
+        "cacheTtl": { "type": "integer", "minimum": 1 },
+        "enabled": { "type": "boolean" },
+        "refreshParam": {
+          "type": "string",
+          "description": "鉴权错误时自动刷新 + 菜单手动刷新的脚本名（scripts/<refreshParam>.py）"
+        },
+        "api": { "$ref": "#/definitions/api" },
+        "parser": { "$ref": "#/definitions/parser" },
+        "display": { "$ref": "#/definitions/display" },
+        "alert": { "$ref": "#/definitions/alert" }
+      },
+      "additionalProperties": true
+    },
+    "api": {
+      "type": "object",
+      "required": ["url"],
+      "properties": {
+        "url": { "type": "string", "minLength": 1 },
+        "method": { "type": "string", "enum": ["GET", "POST", "PUT", "DELETE"] },
+        "authHeader": { "type": "string", "default": "Authorization" },
+        "authPrefix": { "type": "string", "default": "Bearer " },
+        "headers": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        }
+      },
+      "additionalProperties": true
+    },
+    "parser": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "type": "string", "enum": ["balance", "plan_usage", "status"] },
+        "fields": {
+          "type": "object",
+          "description": "字段路径映射，支持 . 分隔嵌套与数组索引（如 balance_infos.0.total_balance）",
+          "additionalProperties": { "type": "string" }
+        },
+        "arrayPath": { "type": "string" },
+        "modelLabels": { "type": "object" },
+        "showModels": { "type": "array", "items": { "type": "string" } },
+        "statusMap": {
+          "type": "object",
+          "description": "状态码 -> 文案，默认 {1:可用, 2:耗尽临近, 3:耗尽}"
+        },
+        "barLength": { "type": "integer", "minimum": 1 },
+        "noQuotaLabel": { "type": "string" },
+        "okField": { "type": "string" },
+        "okValue": {}
+      },
+      "additionalProperties": true
+    },
+    "display": {
+      "type": "object",
+      "properties": {
+        "unit": { "type": "string" },
+        "label": { "type": "string" },
+        "nameColor": {
+          "description": "平台名颜色：字符串（旧版兼容）或深浅双套",
+          "oneOf": [
+            { "type": "string" },
+            {
+              "type": "object",
+              "properties": {
+                "dark": { "type": "string" },
+                "light": { "type": "string" }
+              },
+              "additionalProperties": true
+            }
+          ]
+        }
+      },
+      "additionalProperties": true
+    },
+    "alert": {
+      "type": "object",
+      "description": "告警阈值（balance 用 minBalance，plan_usage 用 minPct）",
+      "properties": {
+        "minBalance": { "type": "number" },
+        "minPct": { "type": "number" }
+      },
+      "additionalProperties": true
+    },
+    "colorSet": {
+      "type": "object",
+      "description": "一组 7 个状态颜色",
+      "properties": {
+        "default": { "type": "string" },
+        "secondary": { "type": "string" },
+        "muted": { "type": "string" },
+        "header": { "type": "string" },
+        "ok": { "type": "string" },
+        "warn": { "type": "string" },
+        "err": { "type": "string" }
+      },
+      "additionalProperties": true
+    }
+  }
+}
