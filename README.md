@@ -8,7 +8,7 @@
 
 - 👁 菜单栏常驻图标，点击展开详情面板（可选显示汇总数字）
 - 💰 DeepSeek 余额监控（¥）+ 余额阈值告警
-- 📉 当日消耗估算：余额类平台基于余额快照差值自动统计今日花费，充值不干扰
+- 📉 当日消耗估算 + 消耗监控：今日消耗、预计可用天数（按 24h 速率外推）、本周/本月消耗、近 7 天每日消耗柱状图（余额类平台）
 - 📊 MiniMax 用量监控（M2.7 剩余次数 + 进度条 + 重置倒计时）
 - 📈 用量趋势线：余额与剩余百分比历史迷你走势图（▁▂▃▄▅▆▇█）
 - 💰 MiMo 余额监控（Cookie 鉴权）
@@ -228,14 +228,22 @@ cp swiftbar/token-eye.sh ~/SwiftBar/
 
 ### 余额告警（alert）
 
-balance parser 支持 `alert.minBalance`，余额低于阈值时推送 macOS 系统通知（去重，余额恢复前不重复通知）：
+balance parser 支持 `alert.minBalance`（余额阈值）、`alert.dailySpendMax`（当日消耗上限）、`alert.daysLeft`（预计可用天数预警），低于/超过阈值时推送 macOS 系统通知（去重，余额恢复前不重复通知）：
 
 ```json
 {
   "id": "deepseek",
-  "alert": { "minBalance": 5.0 }
+  "alert": {
+    "minBalance": 5.0,
+    "dailySpendMax": 20.0,
+    "daysLeft": 7
+  }
 }
 ```
+
+- `minBalance`：余额低于 5.0 告警（回升后自动发「已恢复」）
+- `dailySpendMax`：今日消耗超过 20.0 告警（基于余额快照差值估算）
+- `daysLeft`：按最近 24h 消耗速率外推，预计可用天数低于 7 天告警
 
 也可在根 `alerts` 段按 provider id 配置：
 

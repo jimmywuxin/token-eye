@@ -123,7 +123,7 @@ Python 核心逻辑：
 
 - `consoleUrl` — 控制台跳转链接，详情菜单末尾显示
 - `cacheTtl` — 单 provider 覆盖全局缓存 TTL
-- `alert.minBalance` / `alert.minPct` — 单 provider 告警阈值（balance 余额 / plan_usage 用量）
+- `alert.minBalance` / `alert.minPct` / `alert.dailySpendMax` / `alert.daysLeft` — 单 provider 告警阈值（balance 余额/用量百分比/当日消耗上限/预计可用天数预警）
 - `api.headers` — 额外请求头（如 OpenAI Organization、User-Agent）
 - `parser.statusMap` — plan_usage 状态码映射，默认 `{1:可用, 2:耗尽临近, 3:耗尽}`
 - `parser.barLength` — 进度条长度，默认 20

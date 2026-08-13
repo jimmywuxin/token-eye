@@ -143,10 +143,18 @@
     },
     "alert": {
       "type": "object",
-      "description": "告警阈值（balance 用 minBalance，plan_usage 用 minPct）",
+      "description": "告警阈值（balance 用 minBalance / dailySpendMax / daysLeft，plan_usage 用 minPct）",
       "properties": {
         "minBalance": { "type": "number" },
-        "minPct": { "type": "number" }
+        "minPct": { "type": "number" },
+        "dailySpendMax": {
+          "type": "number",
+          "description": "balance：当日消耗超过该值时告警（基于余额快照差值估算）"
+        },
+        "daysLeft": {
+          "type": "number",
+          "description": "balance：按最近 24h 消耗速率外推，预计可用天数低于该值时告警"
+        }
       },
       "additionalProperties": true
     },

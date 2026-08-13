@@ -235,14 +235,23 @@ def start_of_day(ts=None):
     return int(time.mktime((t.tm_year, t.tm_mon, t.tm_mday, 0, 0, 0, 0, 0, -1)))
 
 
-def daily_spend(hdir, pid, epsilon=0.001):
-    """今日消耗估算：当天相邻余额快照的下降量之和。
+def start_of_week(ts=None):
+    """本地时区本周一 0 点的时间戳。"""
+    t = time.localtime(ts if ts is not None else time.time())
+    monday = t.tm_mday - t.tm_wday
+    return int(time.mktime((t.tm_year, t.tm_mon, monday, 0, 0, 0, 0, 0, -1)))
 
-    用「下降量」而不是「首尾差值」，充值会抬高余额但不会干扰消耗统计。
-    返回 (spend, points)；points < 2 表示当日数据不足。
-    """
-    day_start = start_of_day()
-    hist = [(ts, val) for ts, val in load_history(hdir, pid, n=10000) if ts >= day_start]
+
+def start_of_month(ts=None):
+    """本地时区本月 1 日 0 点的时间戳。"""
+    t = time.localtime(ts if ts is not None else time.time())
+    return int(time.mktime((t.tm_year, t.tm_mon, 1, 0, 0, 0, 0, 0, -1)))
+
+
+def consumption_since(hdir, pid, cutoff_ts, epsilon=0.001):
+    """[cutoff, now] 窗口内的消耗量：相邻快照下降量之和（充值抬升不干扰）。
+    返回 (spend, points)；points < 2 表示窗口内数据不足。"""
+    hist = [(ts, val) for ts, val in load_history(hdir, pid, n=10000) if ts >= cutoff_ts]
     if len(hist) < 2:
         return 0.0, len(hist)
     spend = 0.0
@@ -252,6 +261,43 @@ def daily_spend(hdir, pid, epsilon=0.001):
             spend += prev - val
         prev = val
     return spend, len(hist)
+
+
+def daily_spend(hdir, pid, epsilon=0.001):
+    """今日消耗估算（当天 0 点至今）。"""
+    return consumption_since(hdir, pid, start_of_day(), epsilon)
+
+
+def days_left(hdir, pid, current_balance, window_hours=24, epsilon=0.001):
+    """按最近 window_hours 的消耗速率外推余额可用天数；数据不足/无消耗返回 None。"""
+    cutoff = int(time.time()) - window_hours * 3600
+    consumed, pts = consumption_since(hdir, pid, cutoff, epsilon)
+    if pts < 2 or consumed <= epsilon:
+        return None
+    try:
+        bal = float(current_balance)
+    except (ValueError, TypeError):
+        return None
+    if bal <= 0:
+        return 0.0
+    # window_hours 内消耗 consumed → 每天速率 consumed*24/window_hours → 可用天数
+    return bal * window_hours / (consumed * 24)
+
+
+def daily_spend_series(hdir, pid, days=7, epsilon=0.001):
+    """近 days 天（含今天）每日消耗，索引 0 = 最早一天，索引 -1 = 今天。
+    跨零点下降归到后一天。"""
+    now = int(time.time())
+    today0 = start_of_day(now)
+    start = today0 - (days - 1) * 86400
+    hist = [(ts, val) for ts, val in load_history(hdir, pid, n=10000) if ts >= start]
+    buckets = [0.0] * days
+    for (t1, v1), (t2, v2) in zip(hist, hist[1:]):
+        if v2 < v1 - epsilon:
+            idx = days - 1 - int((today0 - start_of_day(t2)) // 86400)
+            if 0 <= idx < days:
+                buckets[idx] += v1 - v2
+    return buckets
 
 
 def sparkline(values, width=12):
@@ -682,7 +728,7 @@ def process_provider(p, config, colors, appearance, cache_dir, hdir, project_dir
 
     render = parse_provider(p, fetch_result, colors, appearance)
 
-    # Balance history（趋势 + 当日变化 + 今日消耗估算）
+    # Balance history（趋势 + 当日变化 + 消耗统计与预测）
     if ptype == "balance" and render.get("balance_num") is not None:
         append_history(hdir, pid, render["balance_num"])
         hist = load_history(hdir, pid, HISTORY_LEN)
@@ -695,11 +741,32 @@ def process_provider(p, config, colors, appearance, cache_dir, hdir, project_dir
             render.setdefault("lines", []).append(
                 f"  趋势: {trend}  {symbol}{first_val:.2f}→{last_val:.2f} ({change})")
             render.setdefault("colors", []).append(colors["SECONDARY"])
+        symbol = render.get("symbol", "¥")
         # 今日消耗估算：相邻余额快照下降量之和（充值会抬升余额，下降量不受干扰）
         spend, pts = daily_spend(hdir, pid)
+        render["_daily_spend"] = spend
         if pts >= 2 and spend > 0:
-            symbol = render.get("symbol", "¥")
             render.setdefault("lines", []).append(f"  今日消耗: {symbol}{spend:.2f}")
+            render.setdefault("colors", []).append(colors["SECONDARY"])
+        # 预计可用天数（按最近 24h 消耗速率外推）
+        days = days_left(hdir, pid, render["balance_num"])
+        render["_days_left"] = days
+        if days is not None:
+            text = f"  预计可用: ~{days:.1f} 天" if days < 30 else f"  预计可用: 充足（>{days:.0f} 天）"
+            render.setdefault("lines", []).append(text)
+            render.setdefault("colors", []).append(colors["SECONDARY"])
+        # 本周 / 本月消耗
+        wk, wp = consumption_since(hdir, pid, start_of_week())
+        mo, mp = consumption_since(hdir, pid, start_of_month())
+        if (wp >= 2 and wk > 0) or (mp >= 2 and mo > 0):
+            render.setdefault("lines", []).append(
+                f"  本周 {symbol}{wk:.2f} · 本月 {symbol}{mo:.2f}")
+            render.setdefault("colors", []).append(colors["SECONDARY"])
+        # 近 7 天每日消耗柱状图（右 = 今天）
+        series = daily_spend_series(hdir, pid, 7)
+        if any(v > 0 for v in series):
+            bars = sparkline(series) if max(series) > 0 else "·" * 7
+            render.setdefault("lines", []).append(f"  近7天: {bars}")
             render.setdefault("colors", []).append(colors["SECONDARY"])
 
     # plan_usage 趋势（剩余百分比历史）
@@ -732,6 +799,30 @@ def process_provider(p, config, colors, appearance, cache_dir, hdir, project_dir
                                  f"{symbol}{render['balance_num']:.2f}", hdir,
                                  was_alerted=was_alerted)
                 log_debug(hdir, f"[{pid}] 余额已恢复，发送恢复通知")
+            # 当日消耗上限告警（alert.dailySpendMax）
+            max_spend = (alert_cfg or {}).get("dailySpendMax")
+            if max_spend is not None and render.get("_daily_spend", 0) > max_spend:
+                spend_flag = _flag_path(hdir, pid, "spendalerted")
+                if not os.path.exists(spend_flag):
+                    _write_flag(spend_flag, "1")
+                    symbol = render.get("symbol", "¥")
+                    send_notify("Token Eye 告警",
+                                f"{name} 今日消耗 {symbol}{render['_daily_spend']:.2f}，超过上限 {max_spend}")
+                    log_debug(hdir, f"[{pid}] 当日消耗超上限告警（{render['_daily_spend']:.2f} > {max_spend}）")
+            else:
+                _clear_flag(_flag_path(hdir, pid, "spendalerted"))
+            # 余额耗尽天数预警（alert.daysLeft）
+            min_days = (alert_cfg or {}).get("daysLeft")
+            dl = render.get("_days_left")
+            if min_days is not None and dl is not None and dl < min_days:
+                days_flag = _flag_path(hdir, pid, "daysalerted")
+                if not os.path.exists(days_flag):
+                    _write_flag(days_flag, "1")
+                    send_notify("Token Eye 告警",
+                                f"{name} 预计 {dl:.1f} 天后余额耗尽（阈值 {min_days} 天）")
+                    log_debug(hdir, f"[{pid}] 耗尽天数预警（{dl:.1f} < {min_days}）")
+            else:
+                _clear_flag(_flag_path(hdir, pid, "daysalerted"))
         elif ptype == "plan_usage" and render.get("min_pct") is not None and alert_cfg:
             min_pct = alert_cfg.get("minPct")
             if min_pct is not None:

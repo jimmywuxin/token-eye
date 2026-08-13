@@ -598,6 +598,59 @@ class TestDailySpend(unittest.TestCase):
         self.assertEqual(te.daily_spend(self.dir, "x"), (0.0, 3))
 
 
+class TestConsumptionAndPrediction(unittest.TestCase):
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.day0 = te.start_of_day()
+
+    def write(self, pid, pairs):
+        with open(os.path.join(self.dir, f"history-{pid}.jsonl"), "w") as f:
+            for ts, v in pairs:
+                f.write(f"{ts},{v}\n")
+
+    def test_start_of_week_is_monday(self):
+        t = time.localtime(te.start_of_week())
+        self.assertEqual((t.tm_wday, t.tm_hour, t.tm_min, t.tm_sec), (0, 0, 0, 0))
+
+    def test_start_of_month_is_first(self):
+        t = time.localtime(te.start_of_month())
+        self.assertEqual((t.tm_mday, t.tm_hour, t.tm_min), (1, 0, 0))
+
+    def test_consumption_since_window(self):
+        self.write("x", [(self.day0 - 86400, 50.0), (self.day0 - 100, 40.0),
+                         (self.day0 + 100, 35.0)])
+        # 今天窗口内只有 1 个点 → 数据不足
+        self.assertEqual(te.consumption_since(self.dir, "x", self.day0), (0.0, 1))
+        spend, pts = te.consumption_since(self.dir, "x", self.day0 - 86400)
+        self.assertEqual(pts, 3)
+        self.assertAlmostEqual(spend, 15.0)  # 50→40 (10) + 40→35 (5)
+
+    def test_daily_spend_series_buckets(self):
+        def ts(day_offset, sec):
+            return self.day0 + day_offset * 86400 + sec
+        self.write("x", [
+            (ts(-3, 3600), 100.0), (ts(-3, 7200), 95.0),   # day-3 消耗 5
+            (ts(-2, 3600), 95.0), (ts(-2, 7200), 90.0),    # day-2 消耗 5
+            (ts(-1, 86399), 90.0),                          # 前一天 23:59:59
+            (ts(0, 60), 85.0),                              # 今天 00:01 → 跨零点下降归今天
+            (ts(0, 3600), 82.0),                            # 今天再消耗 3
+        ])
+        series = te.daily_spend_series(self.dir, "x", 7)
+        # 索引 0 = 最早一天（6 天前），索引 -1 = 今天；day-3 消耗 5、day-2 消耗 5、今天 8
+        self.assertEqual(series, [0.0, 0.0, 0.0, 5.0, 5.0, 0.0, 8.0])
+
+    def test_days_left(self):
+        now = int(time.time())
+        self.write("x", [(now - 86400, 100.0), (now - 43200, 90.0), (now - 3600, 85.0)])
+        d = te.days_left(self.dir, "x", 85.0)
+        self.assertIsNotNone(d)
+        self.assertAlmostEqual(d, 85.0 / 15.0, places=2)  # 24h 消耗 15 → 可用 85/15 天
+
+    def test_days_left_no_consumption(self):
+        self.write("x", [(self.day0 + 100, 50.0), (self.day0 + 200, 50.0)])
+        self.assertIsNone(te.days_left(self.dir, "x", 50.0))
+
+
 class TestVersion(unittest.TestCase):
     def test_ver_gt(self):
         self.assertTrue(te._ver_gt("0.10.0", "0.9.0"))
@@ -717,6 +770,55 @@ class TestProcessProvider(unittest.TestCase):
         self.assertEqual(r["status"], "ok")
         self.assertTrue(any("趋势" in line and "(+10%)" in line for line in r["lines"]),
                         f"缺趋势行: {r['lines']}")
+
+    def test_balance_consumption_lines(self):
+        """余额类：预计可用 / 本周本月 / 近7天柱状 三行都出现。"""
+        day0 = te.start_of_day()
+        with open(os.path.join(self.dir, "history-deepseek.jsonl"), "w") as f:
+            f.write(f"{day0 + 100},{50.0}\n")
+            f.write(f"{day0 + 200},{48.0}\n")
+        self.cache("deepseek", {"ts": int(time.time()),
+                                "data": {"balance_infos": [{"total_balance": 48.0, "currency": "CNY"}]}})
+        r = te.process_provider(BALANCE_P, {"cache": {"balance": 300}}, COLORS, "dark",
+                                self.dir, self.dir, "/tmp")
+        lines = "\n".join(r["lines"])
+        self.assertIn("预计可用", lines)
+        self.assertIn("本周", lines)
+        self.assertIn("近7天", lines)
+
+    def test_daily_spend_max_alert_dedup(self):
+        """alert.dailySpendMax：当日消耗超上限 → 告警一次，去重。"""
+        day0 = te.start_of_day()
+        with open(os.path.join(self.dir, "history-deepseek.jsonl"), "w") as f:
+            f.write(f"{day0 + 100},{50.0}\n")
+            f.write(f"{day0 + 200},{46.0}\n")  # 今日消耗 4.0
+        p = dict(BALANCE_P, alert={"minBalance": 1.0, "dailySpendMax": 3.0})
+        cfg = {"cache": {"balance": 300}}
+        self.cache("deepseek", {"ts": int(time.time()),
+                                "data": {"balance_infos": [{"total_balance": 46.0, "currency": "CNY"}]}})
+        with mock.patch.object(te, "send_notify") as m:
+            te.process_provider(p, cfg, COLORS, "dark", self.dir, self.dir, "/tmp")
+        self.assertEqual(m.call_count, 1)
+        self.assertIn("今日消耗", m.call_args.args[1])
+        with mock.patch.object(te, "send_notify") as m2:
+            te.process_provider(p, cfg, COLORS, "dark", self.dir, self.dir, "/tmp")
+        self.assertEqual(m2.call_count, 0)  # 去重
+
+    def test_days_left_alert(self):
+        """alert.daysLeft：预测可用天数低于阈值 → 告警。"""
+        now = int(time.time())
+        with open(os.path.join(self.dir, "history-deepseek.jsonl"), "w") as f:
+            f.write(f"{now - 86400},{100.0}\n")
+            f.write(f"{now - 43200},{90.0}\n")
+            f.write(f"{now - 3600},{85.0}\n")
+        p = dict(BALANCE_P, alert={"minBalance": 0.1, "daysLeft": 10})
+        cfg = {"cache": {"balance": 300}}
+        self.cache("deepseek", {"ts": now,
+                                "data": {"balance_infos": [{"total_balance": 85.0, "currency": "CNY"}]}})
+        with mock.patch.object(te, "send_notify") as m:
+            te.process_provider(p, cfg, COLORS, "dark", self.dir, self.dir, "/tmp")
+        self.assertEqual(m.call_count, 1)
+        self.assertIn("天后余额耗尽", m.call_args.args[1])
 
     def test_auto_refresh_recovers_from_401(self):
         """401 自愈：client 错误 + refreshParam → 自动跑刷新脚本 → 重试成功，无需手动干预。"""
