@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.11.0] - 2026-08-14
 
 ### Added
 - **当日消耗估算**：余额类平台（DeepSeek / MiMo）基于当天余额快照差值统计「今日消耗 ¥x.xx」，充值不会干扰统计（`daily_spend`，仅消耗 > 0 时显示在详情菜单）
