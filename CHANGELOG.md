@@ -1,5 +1,14 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- **当日消耗估算**：余额类平台（DeepSeek / MiMo）基于当天余额快照差值统计「今日消耗 ¥x.xx」，充值不会干扰统计（`daily_spend`，仅消耗 > 0 时显示在详情菜单）
+- **plan_usage 趋势线**：MiniMax 等用量类平台记录剩余百分比历史，详情菜单显示趋势线（与余额趋势同款 sparkline）
+
+### Changed
+- 历史记录（`~/Library/Caches/token-eye/history-{id}.jsonl`）现在同时服务于余额趋势、今日消耗估算与用量趋势三处
+
 ## [0.10.0] - 2026-08-14
 
 ### Added

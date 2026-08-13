@@ -223,6 +223,31 @@ def load_history(hdir, pid, n=HISTORY_LEN):
     return out
 
 
+def start_of_day(ts=None):
+    """本地时区当天 0 点的时间戳。"""
+    t = time.localtime(ts if ts is not None else time.time())
+    return int(time.mktime((t.tm_year, t.tm_mon, t.tm_mday, 0, 0, 0, 0, 0, -1)))
+
+
+def daily_spend(hdir, pid, epsilon=0.001):
+    """今日消耗估算：当天相邻余额快照的下降量之和。
+
+    用「下降量」而不是「首尾差值」，充值会抬高余额但不会干扰消耗统计。
+    返回 (spend, points)；points < 2 表示当日数据不足。
+    """
+    day_start = start_of_day()
+    hist = [(ts, val) for ts, val in load_history(hdir, pid, n=10000) if ts >= day_start]
+    if len(hist) < 2:
+        return 0.0, len(hist)
+    spend = 0.0
+    prev = hist[0][1]
+    for _, val in hist[1:]:
+        if val < prev - epsilon:
+            spend += prev - val
+        prev = val
+    return spend, len(hist)
+
+
 def sparkline(values, width=12):
     if not values:
         return ""
@@ -598,7 +623,7 @@ def process_provider(p, config, colors, appearance, cache_dir, hdir, project_dir
 
     render = parse_provider(p, fetch_result, colors, appearance)
 
-    # Balance history（趋势 + 当日变化）
+    # Balance history（趋势 + 当日变化 + 今日消耗估算）
     if ptype == "balance" and render.get("balance_num") is not None:
         append_history(hdir, pid, render["balance_num"])
         hist = load_history(hdir, pid, HISTORY_LEN)
@@ -608,6 +633,24 @@ def process_provider(p, config, colors, appearance, cache_dir, hdir, project_dir
             change = f"{'+' if diff > 0 else ''}{diff:.2f}"
             trend = sparkline([v for _, v in hist])
             render.setdefault("lines", []).append(f"  趋势: {trend}  ({change})")
+            render.setdefault("colors", []).append(colors["SECONDARY"])
+        # 今日消耗估算：相邻余额快照下降量之和（充值会抬升余额，下降量不受干扰）
+        spend, pts = daily_spend(hdir, pid)
+        if pts >= 2 and spend > 0:
+            symbol = "$" if render.get("currency") == "USD" else "¥"
+            render.setdefault("lines", []).append(f"  今日消耗: {symbol}{spend:.2f}")
+            render.setdefault("colors", []).append(colors["SECONDARY"])
+
+    # plan_usage 趋势（剩余百分比历史）
+    elif ptype == "plan_usage" and render.get("min_pct") is not None:
+        append_history(hdir, pid, render["min_pct"])
+        hist = load_history(hdir, pid, HISTORY_LEN)
+        if len(hist) >= 2:
+            prev_val = hist[-2][1]
+            diff = render["min_pct"] - prev_val
+            change = f"{'+' if diff > 0 else ''}{diff:.0f}"
+            trend = sparkline([v for _, v in hist])
+            render.setdefault("lines", []).append(f"  趋势: {trend}  ({change}%)")
             render.setdefault("colors", []).append(colors["SECONDARY"])
 
     # Alert check (balance 余额 / plan_usage 用量百分比)

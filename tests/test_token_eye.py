@@ -438,6 +438,50 @@ class TestCacheAndHistory(unittest.TestCase):
         self.assertEqual(hist[-1][1], 29.0)
 
 
+class TestDailySpend(unittest.TestCase):
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.day0 = te.start_of_day()
+
+    def write(self, pid, pairs):
+        with open(os.path.join(self.dir, f"history-{pid}.jsonl"), "w") as f:
+            for ts, v in pairs:
+                f.write(f"{ts},{v}\n")
+
+    def test_start_of_day_is_local_midnight(self):
+        t = time.localtime(te.start_of_day())
+        self.assertEqual((t.tm_hour, t.tm_min, t.tm_sec), (0, 0, 0))
+
+    def test_empty(self):
+        self.assertEqual(te.daily_spend(self.dir, "x"), (0.0, 0))
+
+    def test_one_point(self):
+        self.write("x", [(self.day0 + 100, 50.0)])
+        self.assertEqual(te.daily_spend(self.dir, "x"), (0.0, 1))
+
+    def test_decreasing(self):
+        self.write("x", [(self.day0 + 100, 50.0), (self.day0 + 200, 48.0),
+                         (self.day0 + 300, 30.0)])
+        self.assertEqual(te.daily_spend(self.dir, "x"), (20.0, 3))
+
+    def test_topup_ignored(self):
+        # 50→48 消耗 2，充值回 55，55→53 再消耗 2 → 总消耗 4（充值不干扰）
+        self.write("x", [(self.day0 + 100, 50.0), (self.day0 + 200, 48.0),
+                         (self.day0 + 300, 55.0), (self.day0 + 400, 53.0)])
+        self.assertEqual(te.daily_spend(self.dir, "x"), (4.0, 4))
+
+    def test_yesterday_excluded(self):
+        # 昨天的下降不计入；今天只剩一个点 → 数据不足
+        self.write("x", [(self.day0 - 600, 10.0), (self.day0 - 300, 5.0),
+                         (self.day0 + 100, 5.0)])
+        self.assertEqual(te.daily_spend(self.dir, "x"), (0.0, 1))
+
+    def test_noise_ignored(self):
+        self.write("x", [(self.day0 + 100, 50.0), (self.day0 + 200, 49.999),
+                         (self.day0 + 300, 50.0)])
+        self.assertEqual(te.daily_spend(self.dir, "x"), (0.0, 3))
+
+
 class TestVersion(unittest.TestCase):
     def test_ver_gt(self):
         self.assertTrue(te._ver_gt("0.10.0", "0.9.0"))
@@ -509,6 +553,39 @@ class TestProcessProvider(unittest.TestCase):
         # 第二次调用：告警已标记，不再重复通知（也不抛异常）
         r2 = te.process_provider(p, cfg, COLORS, "dark", self.dir, self.dir, "/tmp")
         self.assertEqual(r2["status"], "ok")
+
+    def test_balance_daily_spend_line(self):
+        """余额类：当日有下降快照 → 详情菜单出现「今日消耗」。"""
+        day0 = te.start_of_day()
+        with open(os.path.join(self.dir, "history-deepseek.jsonl"), "w") as f:
+            f.write(f"{day0 + 100},{50.0}\n")
+            f.write(f"{day0 + 200},{48.0}\n")
+        self.cache("deepseek", {"ts": int(time.time()),
+                                "data": {"balance_infos": [{"total_balance": 48.0, "currency": "CNY"}]}})
+        r = te.process_provider(BALANCE_P, {"cache": {"balance": 300}}, COLORS, "dark",
+                                self.dir, self.dir, "/tmp")
+        self.assertEqual(r["status"], "ok")
+        self.assertTrue(any("今日消耗: ¥2.00" in line for line in r["lines"]),
+                        f"缺今日消耗行: {r['lines']}")
+
+    def test_plan_usage_trend_line(self):
+        """用量类：剩余百分比历史 → 详情菜单出现趋势线。"""
+        day0 = te.start_of_day()
+        with open(os.path.join(self.dir, "history-minimax.jsonl"), "w") as f:
+            f.write(f"{day0 + 100},{80.0}\n")
+        self.cache("minimax", {"ts": int(time.time()), "data": {"model_remains": [
+            {"model_name": "general",
+             "current_interval_remaining_percent": 90, "current_interval_status": 1,
+             "current_interval_total_count": 100,
+             "current_weekly_remaining_percent": 90, "current_weekly_status": 1,
+             "current_weekly_total_count": 100,
+             "interval_boost_permille": 1000, "weekly_boost_permille": 1000,
+             "remains_time": 3600000}]}})
+        r = te.process_provider(MINIMAX_P, {"cache": {"plan_usage": 30}}, COLORS, "dark",
+                                self.dir, self.dir, "/tmp")
+        self.assertEqual(r["status"], "ok")
+        self.assertTrue(any("趋势" in line and "(+10%)" in line for line in r["lines"]),
+                        f"缺趋势行: {r['lines']}")
 
     def test_auto_refresh_recovers_from_401(self):
         """401 自愈：client 错误 + refreshParam → 自动跑刷新脚本 → 重试成功，无需手动干预。"""

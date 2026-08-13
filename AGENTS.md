@@ -88,7 +88,7 @@ Python 核心逻辑：
   2. 从 Keychain 读取各平台 API Key
   3. 并发调用各平台 API（ThreadPoolExecutor）
   4. HTTP 错误分类（5xx/4xx/网络/超时）
-  5. 解析响应数据，balance 类检查告警阈值
+  5. 解析响应数据，balance 类检查告警阈值并统计今日消耗
   6. 输出 SwiftBar 格式菜单（含控制台跳转链接）
 ```
 
