@@ -125,9 +125,9 @@ Python 核心逻辑：
 - `cacheTtl` — 单 provider 覆盖全局缓存 TTL
 - `alert.minBalance` / `alert.minPct` / `alert.dailySpendMax` / `alert.daysLeft` — 单 provider 告警阈值（balance 余额/用量百分比/当日消耗上限/预计可用天数预警）
 - `api.headers` — 额外请求头（如 OpenAI Organization、User-Agent）
-- `parser.statusMap` — plan_usage 状态码映射，默认 `{1:可用, 2:耗尽临近, 3:耗尽}`
+- `parser.statusMap` — plan_usage 状态码映射，默认 `{1:可用, 2:耗尽临近, 3:耗尽}`；接口返回百分比字段时**优先按百分比推断状态**（≥20 可用 / 10-20 耗尽临近 / <10 耗尽），statusMap 仅在旧接口兜底
 - `parser.barLength` — 进度条长度，默认 20
-- `parser.fields.intervalTotal` / `weeklyTotal` — plan_usage 套餐总量字段路径；total=0 时状态显示「无套餐」而非「耗尽」
+- `parser.fields.intervalTotal` / `weeklyTotal` — 旧接口的套餐总量字段路径；仅当接口无百分比字段时生效（total=0 显示「无套餐」）。**注意：MiniMax 新接口该字段已废弃恒为 0，状态由百分比推断**
 - `display.nameColor` — 平台名颜色；支持深浅双套 `{"dark":"#xxx","light":"#xxx"}`，随系统外观切换（注意红绿色弱对比度）
 - `refreshParam` — 鉴权错误时自动刷新 + 菜单「🔄 刷新 Cookie」点击项（如 MiMo 的 `refresh-mimo-cookie`）
 - `enabled` — 设为 false 临时禁用

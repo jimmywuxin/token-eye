@@ -322,20 +322,56 @@ class TestParsePlanUsage(unittest.TestCase):
         r = te.parse_provider(MINIMAX_P, ok_result(data), COLORS, "dark")
         self.assertNotIn("speech-hd", r["menu_bar"])
 
-    def test_no_quota_label(self):
+    def test_status_percent_priority(self):
+        """percent 存在时优先按 pct 推断状态，忽略 status 码与废弃的 total_count 字段
+        （MiniMax 新接口 total_count 恒为 0，即使有真实套餐）。"""
         data = {"model_remains": [{
             "model_name": "general",
-            "current_interval_remaining_percent": 90, "current_interval_status": 3,
+            "current_interval_remaining_percent": 90, "current_interval_status": 1,
             "current_interval_total_count": 0,
             "current_weekly_remaining_percent": 100, "current_weekly_status": 3,
             "current_weekly_total_count": 0,
             "interval_boost_permille": 1000, "weekly_boost_permille": 1000,
             "remains_time": 3600000}]}
         r = te.parse_provider(MINIMAX_P, ok_result(data), COLORS, "dark")
-        # total=0 → 显示「无套餐」而非「耗尽」（子串断言，行内含平台名前缀）
         lines = r["lines"]
-        self.assertTrue(any("5小时窗口 90%（无套餐）" in line for line in lines))
-        self.assertTrue(any("周窗口 100%（无套餐）" in line for line in lines))
+        # 90% → 可用；周窗口 100% + status 3（矛盾）→ 按 pct 显示可用，不再误报「耗尽/无套餐」
+        self.assertTrue(any("5小时窗口 90%（可用）" in line for line in lines))
+        self.assertTrue(any("周窗口 100%（可用）" in line for line in lines))
+        self.assertFalse(any("无套餐" in line for line in lines))
+        self.assertFalse(any("耗尽" in line for line in lines))
+
+    def test_status_low_pct_maps_to_warning(self):
+        data = {"model_remains": [{
+            "model_name": "general",
+            "current_interval_remaining_percent": 15, "current_interval_status": 1,
+            "current_interval_total_count": 0,
+            "current_weekly_remaining_percent": 100, "current_weekly_status": 1,
+            "current_weekly_total_count": 0,
+            "interval_boost_permille": 1000, "weekly_boost_permille": 1000,
+            "remains_time": 3600000}]}
+        r = te.parse_provider(MINIMAX_P, ok_result(data), COLORS, "dark")
+        lines = r["lines"]
+        self.assertTrue(any("5小时窗口 15%（耗尽临近）" in line for line in lines))
+
+    def test_status_fallback_without_percent(self):
+        """percent 缺失（旧按次数平台）→ 用 statusMap；total=0 时才显示「无套餐」。"""
+        import copy
+        p = copy.deepcopy(MINIMAX_P)
+        p["parser"]["fields"] = {k: v for k, v in p["parser"]["fields"].items()
+                                 if k not in ("intervalPct", "weeklyPct")}
+        data = {"model_remains": [{
+            "model_name": "general",
+            "current_interval_status": 3,
+            "current_interval_total_count": 0,
+            "current_weekly_status": 1,
+            "current_weekly_total_count": 100,
+            "interval_boost_permille": 1000, "weekly_boost_permille": 1000,
+            "remains_time": 3600000}]}
+        r = te.parse_provider(p, ok_result(data), COLORS, "dark")
+        lines = r["lines"]
+        self.assertTrue(any("5小时窗口 0%（无套餐）" in line for line in lines))
+        self.assertTrue(any("周窗口 0%（可用）" in line for line in lines))
 
     def test_warning_colors_below_threshold(self):
         data = {"model_remains": [{

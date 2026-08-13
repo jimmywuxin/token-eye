@@ -500,14 +500,28 @@ def parse_provider(p, fetch_result, colors, appearance):
             boost_tag = f" 🔥x{max_boost/1000:.1f}" if max_boost > 1000 else ""
             if boost_tag and boost_tag not in boost_texts:
                 boost_texts.append(boost_tag)
-            interval_state = status_map.get(str(interval_status), "未知")
-            weekly_state = status_map.get(str(weekly_status), "未知")
-            # total=0 表示该窗口无套餐配额，状态显示「无套餐」而非「耗尽」
+            # 状态推导：percent 字段存在时优先按 pct 推断（与图标阈值一致）；
+            # percent 缺失（旧按次数平台）时用 statusMap，total=0 视为无套餐。
+            # 注意：total_count 字段在 MiniMax 新接口中已废弃、恒为 0，不能用于判断有无套餐。
             no_quota_label = parser.get("noQuotaLabel", "无套餐")
-            if _int_or_none("intervalTotal") == 0:
-                interval_state = no_quota_label
-            if _int_or_none("weeklyTotal") == 0:
-                weekly_state = no_quota_label
+
+            def _state(pct_raw, status_val, total_val):
+                if pct_raw is not None:
+                    p = int(pct_raw)
+                    if p >= 20:
+                        return "可用"
+                    if p >= 10:
+                        return "耗尽临近"
+                    return "耗尽"
+                state = status_map.get(str(status_val), "未知")
+                if total_val == 0:
+                    return no_quota_label
+                return state
+
+            interval_state = _state(resolve_field(item, fields.get("intervalPct", "")),
+                                    interval_status, _int_or_none("intervalTotal"))
+            weekly_state = _state(resolve_field(item, fields.get("weeklyPct", "")),
+                                  weekly_status, _int_or_none("weeklyTotal"))
             menu_parts.append(f"{icon} {label} {pct}%{boost_tag}")
             item_lines.extend([
                 f"{label}: 5小时窗口 {pct}%（{interval_state}）",
