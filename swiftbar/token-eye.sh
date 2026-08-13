@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # <bitbar.title>Token Eye</bitbar.title>
-# <bitbar.version>v0.12.0</bitbar.version>
+# <bitbar.version>v0.13.0</bitbar.version>
 # <bitbar.author>wuxin</bitbar.author>
 # <bitbar.desc>LLM Token usage monitor — config-driven, with caching & alerts</bitbar.desc>
 # <bitbar.refreshTime>30</bitbar.refreshTime>
