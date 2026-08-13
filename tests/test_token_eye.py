@@ -4,6 +4,8 @@
 运行:
   /usr/bin/python3 -m unittest discover -s tests -v
 """
+import contextlib
+import io
 import json
 import os
 import subprocess
@@ -135,6 +137,103 @@ class TestNameColor(unittest.TestCase):
 
     def test_missing_falls_back(self):
         self.assertEqual(te.name_color({}, "dark", "#abc"), "#abc")
+
+
+class TestCurrencySymbol(unittest.TestCase):
+    def test_custom_symbols(self):
+        p = dict(BALANCE_P, display={
+            "nameColor": "#FF375F",
+            "currencySymbols": {"USD": "$", "EUR": "€", "CNY": "¥"},
+        })
+        r = te.parse_provider(p, ok_result({
+            "balance_infos": [{"total_balance": 13.5, "currency": "EUR"}]}), COLORS, "dark")
+        self.assertEqual(r["menu_bar"], "€13.5")
+        self.assertEqual(r["symbol"], "€")
+
+    def test_unknown_currency_defaults_yen(self):
+        r = te.parse_provider(BALANCE_P, ok_result({
+            "balance_infos": [{"total_balance": 13.5, "currency": "XYZ"}]}), COLORS, "dark")
+        self.assertEqual(r["menu_bar"], "¥13.5")
+
+
+class TestNotifyRecovered(unittest.TestCase):
+    def cache(self, pid, payload):
+        d = self.dir
+        with open(os.path.join(d, f"token-eye-cache-{pid}.json"), "w") as f:
+            json.dump(payload, f)
+
+    def test_balance_recovery_once(self):
+        self.dir = tempfile.mkdtemp()
+        d = self.dir
+        p = dict(BALANCE_P, alert={"minBalance": 5.0})
+        cfg = {"cache": {"balance": 300}}
+        below = {"balance_infos": [{"total_balance": 3.0, "currency": "CNY"}]}
+        above = {"balance_infos": [{"total_balance": 6.0, "currency": "CNY"}]}
+        with mock.patch.object(te, "send_notify") as m:
+            # 低于阈值 → 告警
+            self.cache("deepseek", {"ts": int(time.time()), "data": below})
+            te.process_provider(p, cfg, COLORS, "dark", d, d, "/tmp")
+            self.assertEqual(m.call_count, 1)
+            self.assertIn("告警", m.call_args.args[0])
+            # 回升 → 恢复通知（一条）
+            self.cache("deepseek", {"ts": int(time.time()), "data": above})
+            te.process_provider(p, cfg, COLORS, "dark", d, d, "/tmp")
+            self.assertEqual(m.call_count, 2)
+            self.assertIn("已恢复", m.call_args.args[0])
+            # 再次回升 → 不重复发恢复通知
+            self.cache("deepseek", {"ts": int(time.time()), "data": above})
+            te.process_provider(p, cfg, COLORS, "dark", d, d, "/tmp")
+            self.assertEqual(m.call_count, 2)
+            # 再次跌破 → 重新告警 + 可再次恢复
+            self.cache("deepseek", {"ts": int(time.time()), "data": below})
+            te.process_provider(p, cfg, COLORS, "dark", d, d, "/tmp")
+            self.assertEqual(m.call_count, 3)
+
+
+class TestLogDebug(unittest.TestCase):
+    def test_writes_when_enabled(self):
+        d = tempfile.mkdtemp()
+        with mock.patch.dict(os.environ, {"TOKEN_EYE_DEBUG": "1"}):
+            te.log_debug(d, "测试消息")
+        with open(os.path.join(d, "debug.log")) as f:
+            self.assertIn("测试消息", f.read())
+
+    def test_skips_when_disabled(self):
+        d = tempfile.mkdtemp()
+        with mock.patch.dict(os.environ, {"TOKEN_EYE_DEBUG": "0"}):
+            te.log_debug(d, "不应出现")
+        self.assertFalse(os.path.exists(os.path.join(d, "debug.log")))
+
+
+class TestRenderTitleColor(unittest.TestCase):
+    def setUp(self):
+        self.ok_r = {"id": "a", "name": "A", "status": "ok",
+                     "menu_bar": "¥1", "lines": [], "colors": []}
+
+    def run_render(self, results):
+        buf = io.StringIO()
+        with mock.patch.object(te, "check_latest_version", return_value=""), \
+             contextlib.redirect_stdout(buf):
+            te.render(results, {"menuBar": {}}, COLORS, {}, "/tmp")
+        return buf.getvalue().splitlines()[0]
+
+    def test_all_ok_header_color(self):
+        self.assertIn(f"color={COLORS['HEADER']}", self.run_render([self.ok_r]))
+
+    def test_warn_orange(self):
+        warn_r = {"id": "c", "name": "C", "status": "warn",
+                  "menu_bar": "50%", "lines": [], "colors": []}
+        self.assertIn(f"color={COLORS['WARN']}", self.run_render([self.ok_r, warn_r]))
+
+    def test_no_key_orange(self):
+        nk_r = {"id": "d", "name": "D", "status": "no_key",
+                "menu_bar": "", "lines": [], "colors": [], "keychainService": "K"}
+        self.assertIn(f"color={COLORS['WARN']}", self.run_render([self.ok_r, nk_r]))
+
+    def test_error_red(self):
+        err_r = {"id": "b", "name": "B", "status": "error",
+                 "menu_bar": "", "lines": ["x"], "colors": [COLORS["ERR"]]}
+        self.assertIn(f"color={COLORS['ERR']}", self.run_render([self.ok_r, err_r]))
 
 
 class TestParseBalance(unittest.TestCase):
@@ -306,6 +405,23 @@ class TestClassifyResponse(unittest.TestCase):
         self.assertTrue(r["ok"])
         self.assertEqual(r["status"], 200)
         self.assertEqual(r["data"], {"ok": True, "n": 1})
+
+    def test_delimiter_format(self):
+        r = te.classify_response('{"ok":true,"n":1}\n__TE_HTTP__200', 0)
+        self.assertTrue(r["ok"])
+        self.assertEqual(r["status"], 200)
+        self.assertEqual(r["data"], {"ok": True, "n": 1})
+
+    def test_delimiter_body_ending_with_digits(self):
+        # 正文以数字结尾也不影响状态码解析（分隔符加固）
+        r = te.classify_response('{"n":123}\n__TE_HTTP__200', 0)
+        self.assertTrue(r["ok"])
+        self.assertEqual(r["data"], {"n": 123})
+
+    def test_delimiter_client_error(self):
+        r = te.classify_response('{"error":{"message":"Invalid API key"}}\n__TE_HTTP__401', 0)
+        self.assertEqual(r["error_kind"], "client")
+        self.assertEqual(r["message"], "Invalid API key")
 
     def test_ok_empty_body(self):
         r = te.classify_response("\n200", 0)

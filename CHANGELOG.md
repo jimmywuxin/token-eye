@@ -5,10 +5,19 @@
 ### Added
 - **当日消耗估算**：余额类平台（DeepSeek / MiMo）基于当天余额快照差值统计「今日消耗 ¥x.xx」，充值不会干扰统计（`daily_spend`，仅消耗 > 0 时显示在详情菜单）
 - **plan_usage 趋势线**：MiniMax 等用量类平台记录剩余百分比历史，详情菜单显示趋势线（与余额趋势同款 sparkline）
+- **告警恢复通知**：余额/用量回升到阈值以上时推送「已恢复」通知（去重，不刷屏）
+- **菜单栏状态着色**：👁 标题按所有平台最差状态整体变色（任一错误→红，任一告警/缺 Key→橙）
+- **一键升级**：版本自检发现新版本时，菜单出现「一键升级」（git 仓库自动 fetch+ff 合并并同步插件；非 git 仓库下载 release 包替换）
+- **调试日志**：`TOKEN_EYE_DEBUG=1` 时请求的缓存命中/状态码/耗时/自愈结果写入 `~/Library/Caches/token-eye/debug.log`
+- **货币符号可配置**：`display.currencySymbols` 自定义映射（如 `{"USD":"$","EUR":"€"}`），默认 USD→$ 其余→¥
+- **多浏览器 Cookie 支持**：`refresh-mimo-cookie.py` 支持 Edge / Chrome / Brave / Arc 任一已登录浏览器（多配置档探测）
+- **新平台添加向导**：`scripts/add-provider.py` 交互式生成配置，自动 schema 校验并提示 Keychain 命令
 
 ### Changed
 - 历史记录（`~/Library/Caches/token-eye/history-{id}.jsonl`）现在同时服务于余额趋势、今日消耗估算与用量趋势三处
+- **告警/自愈标记持久化**：从 `/tmp` 移至 `~/Library/Caches/token-eye/`，重启后不再重复告警
 - **DESIGN.md 重写**：移除早期 Tauri 方案残留，改为描述当前 SwiftBar 架构（设计决策、模块设计、权衡与演进史）
+- HTTP 状态码解析加固：curl 输出改用唯一分隔符 `__TE_HTTP__`，正文以数字结尾不再误判
 
 ## [0.10.0] - 2026-08-14
 

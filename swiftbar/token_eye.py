@@ -102,22 +102,28 @@ def get_key(service):
 
 
 def classify_response(output, returncode):
-    """纯函数：把 curl 原始输出（body + 最后一行状态码）分类成 fetch_result。
+    """纯函数：把 curl 原始输出分类成 fetch_result。
 
-    返回 dict：{ok, status, data, error_kind, message}
+    curl 以 `\\n__TE_HTTP__%{http_code}` 结尾输出状态码；无分隔符时退回
+    解析最后一行（兼容旧格式）。返回 dict：{ok, status, data, error_kind, message}
     """
+    marker = "__TE_HTTP__"
     if returncode != 0:
         return {"ok": False, "status": None, "data": None,
                 "error_kind": "network", "message": "curl 退出非零"}
     output = output.rstrip("\n")
-    if "\n" in output:
-        last_line = output.rsplit("\n", 1)[-1]
+    if marker in output:
+        body, _, code_part = output.rpartition(marker)
+        status_str = code_part.strip()
+    elif "\n" in output:
+        # 旧格式兼容：最后一行是状态码
+        status_str = output.rsplit("\n", 1)[-1]
         body = output[:output.rfind("\n")]
     else:
-        last_line = output
+        status_str = output
         body = ""
     try:
-        status_code = int(last_line.strip())
+        status_code = int(status_str.strip())
     except (ValueError, TypeError):
         return {"ok": False, "status": None, "data": None,
                 "error_kind": "parse", "message": "无法解析 HTTP 状态"}
@@ -145,7 +151,7 @@ def fetch_api(url, method, auth_header, auth_prefix, key, extra_headers=None,
               curl_timeout=5, proc_timeout=10):
     """调用 curl 拉取 API，返回 classify_response 结果。"""
     cmd = ["curl", "-s", "--max-time", str(curl_timeout),
-           "-w", "\n%{http_code}",
+           "-w", "\n__TE_HTTP__%{http_code}",
            "-H", f"{auth_header}: {auth_prefix}{key}"]
     if extra_headers:
         for k, v in extra_headers.items():
@@ -329,6 +335,16 @@ def format_ms(ms):
     return f"{h}h{m}m" if h > 0 else f"{m}m"
 
 
+DEFAULT_CURRENCY_SYMBOLS = {"USD": "$"}
+
+
+def currency_symbol(display, currency):
+    """货币符号：display.currencySymbols 可自定义（如 {"USD":"$","EUR":"€"}），
+    未配置时默认 USD→$，其余 →¥。"""
+    sym_map = display.get("currencySymbols") or {}
+    return sym_map.get(currency, DEFAULT_CURRENCY_SYMBOLS.get(currency, "¥"))
+
+
 def name_color(display, appearance, default_color):
     """display.nameColor 支持深浅双套：字符串（旧版兼容）或 {"dark":..., "light":...}"""
     nc = display.get("nameColor", default_color)
@@ -350,7 +366,7 @@ def parse_provider(p, fetch_result, colors, appearance):
         fields = parser.get("fields", {})
         balance = resolve_field(data, fields.get("balance", ""))
         currency = resolve_field(data, fields.get("currency", "CNY")) or "CNY"
-        symbol = "$" if currency == "USD" else "¥"
+        symbol = currency_symbol(display, currency)
         avail = data.get("is_available", True) if isinstance(data, dict) else True
         status = "ok" if avail else "warn"
         balance_num = None
@@ -370,6 +386,7 @@ def parse_provider(p, fetch_result, colors, appearance):
             "console_url": console_url,
             "balance_num": balance_num,
             "currency": currency,
+            "symbol": symbol,
         }
 
     elif ptype == "status":
@@ -496,10 +513,41 @@ def render_error(pid, name, error_kind, message, console_url, colors):
 
 
 # ---------------------------------------------------------------------------
-# 告警 / 自愈
+# 告警 / 自愈 / 调试日志
 # ---------------------------------------------------------------------------
 
-def alert_check(pid, name, balance_val, alert_cfg, cache_dir):
+def _flag_path(flags_dir, pid, kind):
+    return os.path.join(flags_dir, f"token-eye-{kind}-{pid}.flag")
+
+
+def _write_flag(path, content=""):
+    try:
+        with open(path, "w") as f:
+            f.write(content)
+    except Exception:
+        pass
+
+
+def _clear_flag(path):
+    try:
+        if os.path.exists(path):
+            os.remove(path)
+    except Exception:
+        pass
+
+
+def log_debug(hdir, msg):
+    """TOKEN_EYE_DEBUG=1 时追加调试日志到 ~/Library/Caches/token-eye/debug.log。"""
+    if os.environ.get("TOKEN_EYE_DEBUG", "0") != "1":
+        return
+    try:
+        with open(os.path.join(hdir, "debug.log"), "a") as f:
+            f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {msg}\n")
+    except Exception:
+        pass
+
+
+def alert_check(pid, name, balance_val, alert_cfg, flags_dir):
     """余额告警（去重）：低于阈值且未标记过 → 返回通知文案并打标记。"""
     if not alert_cfg:
         return None
@@ -510,27 +558,30 @@ def alert_check(pid, name, balance_val, alert_cfg, cache_dir):
         bal = float(balance_val)
     except (ValueError, TypeError):
         return None
-    flag = os.path.join(cache_dir, f"token-eye-alerted-{pid}.flag")
+    flag = _flag_path(flags_dir, pid, "alerted")
     if bal >= min_bal:
-        if os.path.exists(flag):
-            try:
-                os.remove(flag)
-            except Exception:
-                pass
+        _clear_flag(flag)
         return None
     if os.path.exists(flag):
         return None
-    try:
-        with open(flag, "w") as f:
-            f.write(str(bal))
-    except Exception:
-        pass
+    _write_flag(flag, str(bal))
     return f"{name} 余额仅 {bal:.2f}，低于阈值 {min_bal}"
 
 
-def auto_refresh_cookie(cache_dir, pid, refresh_script):
+def notify_recovered(pid, name, kind_label, current_str, flags_dir, was_alerted=False):
+    """告警恢复通知（去重）：曾告警且未发过恢复 → 发一条「已恢复」。"""
+    if not was_alerted:
+        return
+    recovered = _flag_path(flags_dir, pid, "recovered")
+    if os.path.exists(recovered):
+        return
+    _write_flag(recovered, "1")
+    send_notify("Token Eye 已恢复", f"{name} {kind_label}已恢复（当前 {current_str}）")
+
+
+def auto_refresh_cookie(flags_dir, pid, refresh_script):
     """自动刷新 Cookie（401 自愈）。带 30 分钟防抖，避免反复打脚本。返回 (ok, 输出)"""
-    flag = os.path.join(cache_dir, f"token-eye-autorefresh-{pid}.flag")
+    flag = _flag_path(flags_dir, pid, "autorefresh")
     now = int(time.time())
     try:
         if os.path.exists(flag):
@@ -540,11 +591,7 @@ def auto_refresh_cookie(cache_dir, pid, refresh_script):
                 return False, "防抖中（30 分钟内已自动尝试过）"
     except Exception:
         pass
-    try:
-        with open(flag, "w") as f:
-            f.write(str(now))
-    except Exception:
-        pass
+    _write_flag(flag, str(now))
     try:
         r = subprocess.run(["/usr/bin/python3", refresh_script],
                            capture_output=True, text=True, timeout=30)
@@ -566,6 +613,8 @@ def process_provider(p, config, colors, appearance, cache_dir, hdir, project_dir
     console_url = p.get("consoleUrl")
     refresh_param = p.get("refreshParam")
     alert_cfg = p.get("alert") or config.get("alerts", {}).get(pid)
+    t0 = time.time()
+    log_debug(hdir, f"[{pid}] 开始处理（parser={ptype}）")
 
     # Cache check
     ttl = p.get("cacheTtl", config.get("cache", {}).get(ptype, DEFAULT_CACHE_TTL.get(ptype, 30)))
@@ -576,14 +625,17 @@ def process_provider(p, config, colors, appearance, cache_dir, hdir, project_dir
 
     if cached and (now - cached.get("ts", 0)) < effective_ttl:
         if is_err_cache:
+            log_debug(hdir, f"[{pid}] 命中错误缓存（{cached.get('error')}），跳过 API")
             return render_error(pid, name, cached.get("error"),
                                 cached.get("message", ""), console_url, colors)
         # 命中成功缓存，跳过 API
+        log_debug(hdir, f"[{pid}] 命中成功缓存，跳过 API")
         fetch_result = {"ok": True, "status": 200, "data": cached["data"],
                         "error_kind": None, "message": ""}
     else:
         key = get_key(keychain)
         if not key:
+            log_debug(hdir, f"[{pid}] Keychain 无密钥（{keychain}）")
             return {"id": pid, "name": name, "status": "no_key", "lines": [],
                     "menu_bar": "", "console_url": console_url,
                     "keychainService": keychain}
@@ -593,13 +645,18 @@ def process_provider(p, config, colors, appearance, cache_dir, hdir, project_dir
             api.get("authPrefix", "Bearer "), key,
             api.get("headers")
         )
+        log_debug(hdir, f"[{pid}] 请求完成: ok={fetch_result['ok']} "
+                        f"status={fetch_result.get('status')} "
+                        f"kind={fetch_result.get('error_kind')} "
+                        f"耗时={time.time() - t0:.2f}s")
 
         # 自动自愈：client 鉴权错误 + 配置了 refreshParam → 刷新 Cookie 后重试一次
         if (not fetch_result["ok"] and fetch_result.get("error_kind") == "client"
                 and refresh_param):
             script = os.path.join(project_dir, "scripts", refresh_param + ".py")
             if os.path.exists(script):
-                refreshed, _ = auto_refresh_cookie(cache_dir, pid, script)
+                refreshed, err = auto_refresh_cookie(hdir, pid, script)
+                log_debug(hdir, f"[{pid}] 自愈刷新: ok={refreshed} {err}")
                 if refreshed:
                     key2 = get_key(keychain)
                     if key2:
@@ -609,6 +666,8 @@ def process_provider(p, config, colors, appearance, cache_dir, hdir, project_dir
                             api.get("authPrefix", "Bearer "), key2,
                             api.get("headers")
                         )
+                        log_debug(hdir, f"[{pid}] 自愈重试: ok={fetch_result['ok']} "
+                                        f"status={fetch_result.get('status')}")
 
         if fetch_result["ok"]:
             save_cache(cache_dir, pid, {"ts": now, "data": fetch_result["data"]})
@@ -637,7 +696,7 @@ def process_provider(p, config, colors, appearance, cache_dir, hdir, project_dir
         # 今日消耗估算：相邻余额快照下降量之和（充值会抬升余额，下降量不受干扰）
         spend, pts = daily_spend(hdir, pid)
         if pts >= 2 and spend > 0:
-            symbol = "$" if render.get("currency") == "USD" else "¥"
+            symbol = render.get("symbol", "¥")
             render.setdefault("lines", []).append(f"  今日消耗: {symbol}{spend:.2f}")
             render.setdefault("colors", []).append(colors["SECONDARY"])
 
@@ -653,31 +712,43 @@ def process_provider(p, config, colors, appearance, cache_dir, hdir, project_dir
             render.setdefault("lines", []).append(f"  趋势: {trend}  ({change}%)")
             render.setdefault("colors", []).append(colors["SECONDARY"])
 
-    # Alert check (balance 余额 / plan_usage 用量百分比)
+    # Alert check (balance 余额 / plan_usage 用量百分比) + 恢复通知
     if os.environ.get("TOKEN_EYE_NOTIFY", "1") != "0":
         if ptype == "balance" and render.get("balance_num") is not None:
-            notify_msg = alert_check(pid, name, render["balance_num"], alert_cfg, cache_dir)
+            alerted = _flag_path(hdir, pid, "alerted")
+            was_alerted = os.path.exists(alerted)
+            notify_msg = alert_check(pid, name, render["balance_num"], alert_cfg, hdir)
             if notify_msg:
+                _clear_flag(_flag_path(hdir, pid, "recovered"))
                 send_notify("Token Eye 告警", notify_msg)
+                log_debug(hdir, f"[{pid}] 触发告警: {notify_msg}")
+            elif (was_alerted and alert_cfg and alert_cfg.get("minBalance") is not None
+                    and render["balance_num"] >= float(alert_cfg["minBalance"])):
+                symbol = render.get("symbol", "¥")
+                notify_recovered(pid, name, "余额",
+                                 f"{symbol}{render['balance_num']:.2f}", hdir,
+                                 was_alerted=was_alerted)
+                log_debug(hdir, f"[{pid}] 余额已恢复，发送恢复通知")
         elif ptype == "plan_usage" and render.get("min_pct") is not None and alert_cfg:
             min_pct = alert_cfg.get("minPct")
-            if min_pct is not None and render["min_pct"] < int(min_pct):
-                flag = os.path.join(cache_dir, f"token-eye-alerted-{pid}.flag")
-                if not os.path.exists(flag):
-                    try:
-                        with open(flag, "w") as f:
-                            f.write(str(render["min_pct"]))
-                    except Exception:
-                        pass
-                    send_notify("Token Eye 告警",
-                                f"{name} 用量剩余仅 {render['min_pct']}%，低于阈值 {min_pct}%")
-            else:
-                try:
-                    if os.path.exists(flag := os.path.join(cache_dir, f"token-eye-alerted-{pid}.flag")):
-                        os.remove(flag)
-                except Exception:
-                    pass
+            if min_pct is not None:
+                alerted = _flag_path(hdir, pid, "alerted")
+                was_alerted = os.path.exists(alerted)
+                if render["min_pct"] < int(min_pct):
+                    if not was_alerted:
+                        _write_flag(alerted, str(render["min_pct"]))
+                        send_notify("Token Eye 告警",
+                                    f"{name} 用量剩余仅 {render['min_pct']}%，低于阈值 {min_pct}%")
+                        log_debug(hdir, f"[{pid}] 触发用量告警（{render['min_pct']}% < {min_pct}%）")
+                    _clear_flag(_flag_path(hdir, pid, "recovered"))
+                else:
+                    _clear_flag(alerted)
+                    if was_alerted:
+                        notify_recovered(pid, name, "用量",
+                                         f"剩余 {render['min_pct']}%", hdir,
+                                         was_alerted=was_alerted)
 
+    log_debug(hdir, f"[{pid}] 完成，总耗时 {time.time() - t0:.2f}s")
     return render
 
 
@@ -707,10 +778,15 @@ def render(results, config, colors, refresh_map, hdir):
             r["menu_bar"] for r in results
             if r and want_summary(r) and r.get("status") in ("ok", "warn") and r.get("menu_bar")
         )
+        # 菜单栏标题按最差状态整体着色：任一错误 → 红；任一告警/缺 Key → 橙；否则标题色
+        worst = max((3 if r.get("status") == "error"
+                     else 2 if r.get("status") in ("warn", "no_key") else 0
+                     for r in results if r), default=0)
+        title_color = colors["ERR"] if worst == 3 else (colors["WARN"] if worst >= 2 else colors["HEADER"])
         if summary:
-            print(f"👁 {summary} | color={colors['HEADER']}")
+            print(f"👁 {summary} | color={title_color}")
         else:
-            print(f"👁 | color={colors['HEADER']}")
+            print(f"👁 | color={title_color}")
 
         print("---")
         print(f"Token Eye | color={colors['HEADER']}")
@@ -748,11 +824,12 @@ def render(results, config, colors, refresh_map, hdir):
         print("刷新 | refresh=true")
         print(f"上次更新: {time.strftime('%H:%M:%S')} | color={colors['MUTED']} size=11")
 
-        # 版本自检：GitHub 最新 release（24h 缓存），有新版本时提示
+        # 版本自检：GitHub 最新 release（24h 缓存），有新版本时提示 + 一键升级
         try:
             latest = check_latest_version(hdir)
             if latest and _ver_gt(latest, "v" + VERSION):
                 print(f"⬆ 新版本 {latest} 可用 | href=https://github.com/jimmywuxin/token-eye/releases/latest color={colors['HEADER']} size=11")
+                print(f"  一键升级到 {latest} | param1=upgrade param2={latest} refresh=true color={colors['OK']} size=11")
             else:
                 print(f"v{VERSION} | color={colors['MUTED']} size=11")
         except Exception:

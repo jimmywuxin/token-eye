@@ -15,10 +15,11 @@
 - 🔑 所有 API Key 统一从 macOS Keychain 读取，安全且变更无需重启
 - ⚙️ 配置驱动 — 添加新平台只需编辑项目里的 `providers.json`，零代码
 - 💾 按类型 TTL 缓存，余额类 5 分钟、用量类 30 秒，省 90% API 调用
-- 🔔 余额低于阈值时推送 macOS 系统通知（去重，不刷屏）
+- 🔔 余额低于阈值时推送 macOS 系统通知（去重，不刷屏），回升后自动发「已恢复」通知
 - 🔗 详情菜单可一键跳转各平台控制台
 - 🚦 HTTP 错误分类：服务端异常 / 配置错误 / 网络失败 / 超时 各自独立文案与颜色
-- 🔄 每 30 秒自动刷新，支持手动刷新
+- 🚨 菜单栏标题按最差状态变色：任一平台异常 → 橙/红，一眼可见
+- 🔄 每 30 秒自动刷新，支持手动刷新；新版本出现时菜单可「一键升级」
 - 🪶 零依赖、零后台进程，仅一个 Shell 脚本
 
 ## 支持平台
@@ -82,9 +83,15 @@ make install
 cp swiftbar/token-eye.sh ~/SwiftBar/
 ```
 
+菜单栏版本自检发现新版本时，可直接点「⬆ 一键升级」：
+- 项目目录是 git 仓库：自动 `git fetch + merge --ff-only origin/main` 并同步插件
+- 非 git 仓库：自动下载 release 包替换插件文件
+
 ## 添加新平台
 
-编辑**项目根目录**的 `providers.json`（`~/dev/token-eye/providers.json`），在 `providers` 数组中追加配置，无需改脚本，无需复制文件。脚本下次刷新时自动加载。
+**推荐用向导**：`python3 scripts/add-provider.py` 交互式问答生成配置，自动校验并提示 Keychain 命令。
+
+也可以手动编辑**项目根目录**的 `providers.json`（`~/dev/token-eye/providers.json`），在 `providers` 数组中追加配置，无需改脚本，无需复制文件。脚本下次刷新时自动加载。
 
 ### Parser 类型
 
@@ -294,13 +301,13 @@ provider 配置 `consoleUrl`，详情菜单末尾出现「→ 打开 X 控制台
 }
 ```
 
-**Cookie 过期维护**：MiMo 的 Cookie 是会话级，Edge 关闭或长时间不用后失效（菜单栏显示「配置/鉴权错误」）。重新登录平台后运行一键刷新脚本：
+**Cookie 过期维护**：MiMo 的 Cookie 是会话级，Edge 关闭或长时间不用后失效（菜单栏显示「配置/鉴权错误」）。重新登录平台后运行一键刷新脚本（支持 Edge / Chrome / Brave / Arc 任一已登录浏览器）：
 
 ```bash
 /usr/bin/python3 scripts/refresh-mimo-cookie.py
 ```
 
-脚本会从 Edge Cookie 数据库提取并解密 4 个 Cookie（api-platform_ph / serviceToken / slh / userId），拼好更新到 Keychain `MIMO_PLATFORM_TOKEN`，并自动验证。
+脚本会从浏览器 Cookie 数据库提取并解密 4 个 Cookie（api-platform_ph / serviceToken / slh / userId），拼好更新到 Keychain `MIMO_PLATFORM_TOKEN`，并自动验证；鉴权错误时 Token Eye 也会自动触发该刷新（401 自愈）。
 
 ### plan_usage 状态映射（parser.statusMap）
 
@@ -330,12 +337,33 @@ provider 配置 `consoleUrl`，详情菜单末尾出现「→ 打开 X 控制台
 }
 ```
 
+### 货币符号（display.currencySymbols）
+
+balance 类默认 USD → `$`、其余 → `¥`，可自定义映射：
+
+```json
+{
+  "display": {
+    "currencySymbols": { "USD": "$", "EUR": "€", "CNY": "¥" }
+  }
+}
+```
+
 ### 临时禁用通知
 
 设环境变量 `TOKEN_EYE_NOTIFY=0` 可禁用告警通知（不影响其他功能）：
 
 ```bash
 TOKEN_EYE_NOTIFY=0 bash ~/SwiftBar/token-eye.sh
+```
+
+### 调试日志
+
+设 `TOKEN_EYE_DEBUG=1` 时，每次请求的缓存命中/状态码/耗时/自愈结果写入 `~/Library/Caches/token-eye/debug.log`：
+
+```bash
+TOKEN_EYE_DEBUG=1 bash ~/SwiftBar/token-eye.sh
+tail -20 ~/Library/Caches/token-eye/debug.log
 ```
 
 ## 项目结构
@@ -369,10 +397,11 @@ make test       # 单元测试（unittest，零依赖）
 make check      # 全部检查：语法 + 测试 + Schema + 配色对比度
 ```
 
-- **单元测试**：`swiftbar/token_eye.py` 的解析/告警/错误分类/缓存等核心函数全部可测，`tests/` 覆盖 60+ 用例，`python3 -m unittest discover -s tests` 即可运行
+- **单元测试**：`swiftbar/token_eye.py` 的解析/告警/错误分类/缓存等核心函数全部可测，`tests/` 覆盖 90+ 用例，`python3 -m unittest discover -s tests` 即可运行
 - **JSON Schema**：`schema/providers.schema.json` 描述配置结构；VS Code 等编辑器打开 `providers.json` 时自动补全与校验；`python3 scripts/validate-schema.py` 提供零依赖的运行时校验（脚本内置的轻量校验用于菜单栏提示）
 - **CI**：GitHub Actions（`.github/workflows/ci.yml`）自动执行 bash 语法 + ShellCheck、Python 编译、单元测试、Schema 校验、配色对比度、版本一致性检查
 - **配色回归**：`scripts/check-colors.py` 保证全部颜色 WCAG AA ≥4.5:1
+- **排查**：`TOKEN_EYE_DEBUG=1` 输出调试日志到 `~/Library/Caches/token-eye/debug.log`
 
 ## License
 

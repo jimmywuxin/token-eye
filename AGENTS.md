@@ -20,9 +20,10 @@ token-eye/
 │   ├── token-eye.sh       ← 插件启动器，复制到 ~/SwiftBar/
 │   └── token_eye.py       ← 核心逻辑（缓存/告警/解析/渲染），从项目目录读取
 ├── scripts/
-│   ├── refresh-mimo-cookie.py  ← MiMo Cookie 一键刷新（会话过期时运行）
+│   ├── refresh-mimo-cookie.py  ← MiMo Cookie 一键刷新（多浏览器，会话过期时运行）
 │   ├── check-colors.py         ← 配色对比度回归检查（WCAG AA ≥4.5:1）
-│   └── validate-schema.py      ← providers.json JSON Schema 校验（零依赖）
+│   ├── validate-schema.py      ← providers.json JSON Schema 校验（零依赖）
+│   └── add-provider.py         ← 新平台添加向导（交互式）
 ├── schema/
 │   └── providers.schema.json   ← 配置结构定义（编辑器补全 + 校验）
 ├── tests/
@@ -65,6 +66,11 @@ make validate             # 仅 Schema + 配色
 security add-generic-password -s "DEEPSEEK_API_KEY" -a "" -w "sk-your-key"
 security add-generic-password -s "MINIMAX_CN_API_KEY" -a "" -w "your-key"
 security add-generic-password -s "MIMO_API_KEY" -a "" -w "your-key"
+```
+
+### 添加新平台
+```bash
+/usr/bin/python3 scripts/add-provider.py    # 交互式向导，零代码
 ```
 
 ### 验证 Keychain 中的 Key
@@ -130,7 +136,7 @@ Python 核心逻辑：
 
 - MiMo platform API（`/api/v1/balance`）要求**完整 Cookie 组合**（ph + serviceToken + slh + userId），仅单个 Cookie 返回 401
 - 完整 Cookie 串存 Keychain 单个条目 `MIMO_PLATFORM_TOKEN`，provider 配 `authHeader: "Cookie"` + `authPrefix: ""`
-- Cookie 为会话级，过期后运行 `scripts/refresh-mimo-cookie.py` 一键刷新（从 Edge 数据库解密提取）
+- Cookie 为会话级，过期后运行 `scripts/refresh-mimo-cookie.py` 一键刷新（支持 Edge / Chrome / Brave / Arc，从任一已登录浏览器解密提取）
 
 详细配置示例见 `README.md`。
 
@@ -150,6 +156,7 @@ Python 核心逻辑：
 - API 超时时间：curl 5s，subprocess 10s
 - SwiftBar 刷新间隔：30 秒（脚本内 `# <bitbar.refreshTime>30</bitbar.refreshTime>` 声明）
 - 缓存文件位于 `/tmp/token-eye-cache-{id}.json`，失败请求 10s 短缓存避免连续打 API
-- 告警去重标记 `/tmp/token-eye-alerted-{id}.flag`，余额恢复后自动清除
+- 告警去重/自愈防抖标记位于 `~/Library/Caches/token-eye/token-eye-{alerted|recovered|autorefresh}-{id}.flag`（持久化，重启不丢）；余额/用量恢复时发「已恢复」通知（去重）
+- `TOKEN_EYE_DEBUG=1` 时每次请求的缓存/状态码/耗时/自愈结果写入 `~/Library/Caches/token-eye/debug.log`
 - 渲染层有 try-except 兜底，异常时输出占位菜单，不会空白
 - 环境变量 `TOKEN_EYE_NOTIFY=0` 可临时禁用告警通知

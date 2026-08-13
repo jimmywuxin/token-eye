@@ -91,7 +91,94 @@ if [ "${1:-}" = "refresh-mimo-cookie" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# Python 核心逻辑（token_eye.py，与 providers.json 一样从项目目录读取）
+# SwiftBar 点击动作（param1=upgrade, param2=版本）：一键升级
+# ---------------------------------------------------------------------------
+if [ "${1:-}" = "upgrade" ]; then
+    UP_TAG="${2:-}"
+    if [ -z "$UP_TAG" ]; then
+        echo "👁 | color=$C_ERR"
+        echo "---"
+        echo "❌ 升级失败：缺少版本号参数 | color=$C_ERR"
+        echo "---"
+        echo "关闭 | refresh=true"
+        exit 0
+    fi
+    if [ -d "$PROJECT_DIR/.git" ]; then
+        # 项目目录是 git 仓库：拉取最新 main 并同步插件（保持当前分支，ff-only 拒绝分叉）
+        set +e
+        FETCH_ERR="$(git -C "$PROJECT_DIR" fetch --tags origin 2>&1)"
+        FETCH_RC=$?
+        MERGE_ERR=""
+        MERGE_RC=1
+        if [ "$FETCH_RC" -eq 0 ]; then
+            MERGE_ERR="$(git -C "$PROJECT_DIR" merge --ff-only origin/main 2>&1)"
+            MERGE_RC=$?
+        fi
+        set -e
+        if [ "$FETCH_RC" -eq 0 ] && [ "$MERGE_RC" -eq 0 ]; then
+            cp "$PROJECT_DIR/swiftbar/token-eye.sh" "$SCRIPT_DIR/token-eye.sh"
+            chmod +x "$SCRIPT_DIR/token-eye.sh"
+            echo "👁 | color=$C_OK"
+            echo "---"
+            echo "✅ 升级完成（项目已更新到最新 main，插件已同步）| color=$C_OK"
+            echo "---"
+            echo "关闭 | refresh=true"
+        else
+            echo "👁 | color=$C_ERR"
+            echo "---"
+            echo "❌ 升级失败（git 拉取/合并出错）| color=$C_ERR"
+            { echo "$FETCH_ERR"; echo "$MERGE_ERR"; } | tail -3 | sed 's/|/:/g' | while IFS= read -r line; do
+                if [ -n "$line" ]; then
+                    echo "$line | color=$C_MUTED size=11"
+                fi
+            done
+            echo "---"
+            echo "重试 | param1=upgrade param2=$UP_TAG refresh=true"
+            echo "关闭 | refresh=true"
+        fi
+    else
+        # 非 git 仓库：下载 release tarball 替换插件文件（含核心逻辑副本）
+        TARBALL="/tmp/token-eye-${UP_TAG}.tar.gz"
+        EXTRACT="/tmp/token-eye-upgrade-${UP_TAG}"
+        if ! curl -fsSL --max-time 20 -o "$TARBALL" \
+            "https://github.com/jimmywuxin/token-eye/archive/refs/tags/${UP_TAG}.tar.gz" 2>/dev/null; then
+            echo "👁 | color=$C_ERR"
+            echo "---"
+            echo "❌ 升级失败：下载失败（网络或版本号错误）| color=$C_ERR"
+            echo "   https://github.com/jimmywuxin/token-eye/releases/latest | href=https://github.com/jimmywuxin/token-eye/releases/latest color=$C_MUTED size=11"
+            echo "---"
+            echo "关闭 | refresh=true"
+            exit 0
+        fi
+        rm -rf "$EXTRACT"
+        mkdir -p "$EXTRACT"
+        tar -xzf "$TARBALL" -C "$EXTRACT" 2>/dev/null
+        NEW_SH="$(find "$EXTRACT" -path '*/swiftbar/token-eye.sh' | head -1)"
+        if [ -z "$NEW_SH" ]; then
+            echo "👁 | color=$C_ERR"
+            echo "---"
+            echo "❌ 升级失败：压缩包内未找到插件脚本 | color=$C_ERR"
+            echo "---"
+            echo "关闭 | refresh=true"
+            exit 0
+        fi
+        cp "$NEW_SH" "$SCRIPT_DIR/token-eye.sh"
+        chmod +x "$SCRIPT_DIR/token-eye.sh"
+        NEW_PY="$(find "$EXTRACT" -path '*/swiftbar/token_eye.py' | head -1)"
+        if [ -n "$NEW_PY" ]; then
+            cp "$NEW_PY" "$SCRIPT_DIR/token_eye.py"
+        fi
+        echo "👁 | color=$C_OK"
+        echo "---"
+        echo "✅ 升级到 $UP_TAG 完成 | color=$C_OK"
+        echo "---"
+        echo "关闭 | refresh=true"
+    fi
+    exit 0
+fi
+
+# ---------------------------------------------------------------------------
+# Python 核心逻辑：优先项目目录（开发源）；~/SwiftBar 有更新副本则用本地
 # ---------------------------------------------------------------------------
 if ! command -v python3 >/dev/null 2>&1; then
     echo "👁 | color=$C_ERR"
@@ -102,7 +189,14 @@ if ! command -v python3 >/dev/null 2>&1; then
     exit 0
 fi
 
-PY_MODULE="$PROJECT_DIR/swiftbar/token_eye.py"
+if [ -f "$PROJECT_DIR/swiftbar/token_eye.py" ] && { [ ! -f "$SCRIPT_DIR/token_eye.py" ] || [ "$PROJECT_DIR/swiftbar/token_eye.py" -nt "$SCRIPT_DIR/token_eye.py" ]; }; then
+    PY_MODULE="$PROJECT_DIR/swiftbar/token_eye.py"
+elif [ -f "$SCRIPT_DIR/token_eye.py" ]; then
+    PY_MODULE="$SCRIPT_DIR/token_eye.py"
+else
+    PY_MODULE="$PROJECT_DIR/swiftbar/token_eye.py"
+fi
+
 if [ ! -f "$PY_MODULE" ]; then
     echo "👁 | color=$C_ERR"
     echo "---"

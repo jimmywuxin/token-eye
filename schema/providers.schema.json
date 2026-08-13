@@ -119,6 +119,11 @@
       "properties": {
         "unit": { "type": "string" },
         "label": { "type": "string" },
+        "currencySymbols": {
+          "type": "object",
+          "description": "货币符号映射（如 {\"USD\":\"$\",\"EUR\":\"€\"}），未配置时默认 USD→$ 其余→¥",
+          "additionalProperties": { "type": "string" }
+        },
         "nameColor": {
           "description": "平台名颜色：字符串（旧版兼容）或深浅双套",
           "oneOf": [
