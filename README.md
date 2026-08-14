@@ -4,6 +4,10 @@
 
 在日常使用多个大模型（DeepSeek、MiniMax、MiMo 等）时，各平台的用量查看方式碎片化，需要分别登录各个开发者平台。Token Eye 把它们汇聚到菜单栏一个 👁 图标里，点击即看，无需离开当前工作。
 
+<p align="center">
+  <img src="docs/screenshot.png" alt="Token Eye 菜单栏详情" width="400">
+</p>
+
 ## 功能
 
 - 👁 菜单栏常驻图标，点击展开详情面板（可选显示汇总数字）
