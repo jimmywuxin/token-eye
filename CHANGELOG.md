@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.14.0] - 2026-08-14
 
 ### Added
 - **平台模板库**：`scripts/provider-templates.json` 内置 8 个平台模板（OpenAI / DeepSeek / Anthropic / Kimi / 智谱 GLM / 阿里云百炼 / 硅基流动 / MiniMax），添加向导可选模板一键生成配置
