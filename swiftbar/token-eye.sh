@@ -178,6 +178,17 @@ if [ "${1:-}" = "upgrade" ]; then
 fi
 
 # ---------------------------------------------------------------------------
+# SwiftBar 点击动作（param1=copy-balance, param2=内容）：复制到剪贴板
+# ---------------------------------------------------------------------------
+if [ "${1:-}" = "copy-balance" ]; then
+    printf '%s' "${2:-}" | pbcopy
+    echo "✅ 已复制到剪贴板: ${2:-} | color=$C_OK"
+    echo "---"
+    echo "关闭 | refresh=true"
+    exit 0
+fi
+
+# ---------------------------------------------------------------------------
 # Python 核心逻辑：优先项目目录（开发源）；~/SwiftBar 有更新副本则用本地
 # ---------------------------------------------------------------------------
 if ! command -v python3 >/dev/null 2>&1; then
@@ -206,4 +217,4 @@ if [ ! -f "$PY_MODULE" ]; then
     exit 0
 fi
 
-CONFIG_FILE="$CONFIG_FILE" PROJECT_DIR="$PROJECT_DIR" python3 "$PY_MODULE" "$@"
+CONFIG_FILE="$CONFIG_FILE" PROJECT_DIR="$PROJECT_DIR" SCRIPT_DIR="$SCRIPT_DIR" python3 "$PY_MODULE" "$@"

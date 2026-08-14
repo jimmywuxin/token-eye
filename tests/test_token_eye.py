@@ -128,8 +128,15 @@ class TestSparkline(unittest.TestCase):
         s = te.sparkline([0.0, 1.0])
         self.assertEqual(s, "▁█")
 
-    def test_width_unused(self):
-        # width 参数保留兼容（原实现按数据点数输出）
+    def test_downsample_to_width(self):
+        # 超宽数据均匀降采样（趋势窗口 288 → 显示 24 字符）
+        s = te.sparkline(list(range(100)), width=10)
+        self.assertEqual(len(s), 10)
+        self.assertEqual(s[0], "▁")  # 最小值
+        self.assertEqual(s[-1], "█")  # 最大值
+        self.assertEqual(len(te.sparkline(list(range(100)))), 24)  # 默认宽度
+
+    def test_width_no_downsample_for_small(self):
         self.assertEqual(len(te.sparkline([1.0, 2.0, 3.0])), 3)
 
 
@@ -776,6 +783,89 @@ class TestProviderTemplates(unittest.TestCase):
             runtime = te.schema_validate({"providers": [t]})
             self.assertEqual(runtime, [], f"模板 {t.get('name')} 未通过运行时校验: {runtime}")
         self.assertEqual(len(ids), len(set(ids)), "模板 id 存在重复")
+
+
+class TestSelfCheck(unittest.TestCase):
+    def test_check_keys(self):
+        config = {"providers": [
+            {"id": "a", "keychainService": "A", "enabled": True},
+            {"id": "b", "keychainService": "B", "enabled": True},
+            {"id": "c", "keychainService": "C", "enabled": False},
+        ]}
+        with mock.patch.object(te, "get_key", side_effect=["k1", "", "x"]):
+            result = te.check_keys(config)
+        self.assertEqual(result, [("A", True), ("B", False)])  # 禁用的不检查
+
+    def test_probe_network(self):
+        with mock.patch.object(te.subprocess, "run", return_value=mock.Mock(stdout="200")):
+            self.assertTrue(te.probe_network())
+        with mock.patch.object(te.subprocess, "run", return_value=mock.Mock(stdout="000")):
+            self.assertFalse(te.probe_network())
+        with mock.patch.object(te.subprocess, "run", side_effect=OSError("x")):
+            self.assertFalse(te.probe_network())
+
+    def test_installed_version(self):
+        d = tempfile.mkdtemp()
+        with open(os.path.join(d, "token-eye.sh"), "w") as f:
+            f.write('# <bitbar.version>v0.14.0</bitbar.version>\n')
+        self.assertEqual(te.installed_version(d), "0.14.0")
+        self.assertIsNone(te.installed_version(tempfile.mkdtemp()))
+
+    def test_self_check_report(self):
+        d = tempfile.mkdtemp()
+        cfg = os.path.join(d, "p.json")
+        with open(cfg, "w") as f:
+            json.dump({"providers": [{"id": "a", "keychainService": "A", "enabled": True}]}, f)
+        with mock.patch.dict(os.environ, {"CONFIG_FILE": cfg}), \
+             mock.patch.object(te, "check_keys", return_value=[("A", True)]), \
+             mock.patch.object(te, "probe_network", return_value=True), \
+             mock.patch.object(te, "installed_version", return_value="0.14.0"), \
+             contextlib.redirect_stdout(io.StringIO()) as buf:
+            rc = te.self_check()
+        out = buf.getvalue()
+        self.assertEqual(rc, 0)
+        self.assertIn("Keychain A 存在", out)
+        self.assertIn("网络连通", out)
+        self.assertIn("版本一致", out)
+
+
+class TestLineParams(unittest.TestCase):
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+
+    def cache(self, pid, payload):
+        with open(os.path.join(self.dir, f"token-eye-cache-{pid}.json"), "w") as f:
+            json.dump(payload, f)
+
+    def test_balance_copy_params(self):
+        r = te.parse_provider(BALANCE_P, ok_result({
+            "balance_infos": [{"total_balance": 13.5, "currency": "CNY"}]}), COLORS, "dark")
+        self.assertEqual(r["line_params"][0], {"param1": "copy-balance", "param2": "¥13.5"})
+        self.assertIsNone(r["line_params"][1])
+
+    def test_line_params_rendered(self):
+        r = {"id": "a", "name": "A", "status": "ok", "menu_bar": "¥1",
+             "lines": ["A: ¥1", "可用"],
+             "colors": [COLORS["DEFAULT"], COLORS["OK"]],
+             "line_params": [{"param1": "copy-balance", "param2": "¥1"}, None]}
+        buf = io.StringIO()
+        with mock.patch.object(te, "check_latest_version", return_value=""), \
+             contextlib.redirect_stdout(buf):
+            te.render([r], {"menuBar": {}}, COLORS, {}, "/tmp")
+        self.assertIn("A: ¥1 | color=", buf.getvalue())
+        self.assertIn("param1=copy-balance param2=¥1", buf.getvalue())
+
+    def test_daily_spend_line_opens_console(self):
+        day0 = te.start_of_day()
+        with open(os.path.join(self.dir, "history-deepseek.jsonl"), "w") as f:
+            f.write(f"{day0 + 100},{50.0}\n")
+            f.write(f"{day0 + 200},{48.0}\n")
+        p = dict(BALANCE_P, consoleUrl="https://c.example")
+        self.cache("deepseek", {"ts": int(time.time()),
+                                "data": {"balance_infos": [{"total_balance": 48.0, "currency": "CNY"}]}})
+        r = te.process_provider(p, {"cache": {"balance": 300}}, COLORS, "dark",
+                                self.dir, self.dir, "/tmp")
+        self.assertIn({"href": "https://c.example"}, r.get("line_params", []))
 
 
 class TestVersion(unittest.TestCase):

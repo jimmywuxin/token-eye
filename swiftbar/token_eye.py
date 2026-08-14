@@ -26,7 +26,7 @@ VERSION = "0.14.0"
 # 按 parser 类型的默认缓存 TTL（秒）
 DEFAULT_CACHE_TTL = {"balance": 300, "plan_usage": 30, "status": 60}
 ERROR_CACHE_TTL = 10  # 失败短缓存，避免连续打 API
-HISTORY_LEN = 24      # 趋势线取最近 N 条余额快照
+HISTORY_LEN = 288     # 趋势窗口：最近 288 条快照（30s 采样 ≈ 2.4 小时）
 
 # 环境变量 -> 颜色名（与 token-eye.sh 导出的 C_* 对应）
 COLOR_NAMES = ["DEFAULT", "SECONDARY", "MUTED", "HEADER", "OK", "WARN", "ERR"]
@@ -353,9 +353,14 @@ def daily_spend_series(hdir, pid, days=7, epsilon=0.001):
     return buckets
 
 
-def sparkline(values, width=12):
+def sparkline(values, width=24):
+    """迷你走势图：values 均匀降采样到 width 个点（默认 24 字符宽），
+    窗口内 min→max 归一化到 8 档字符。"""
     if not values:
         return ""
+    if len(values) > width:
+        idxs = [int(i * (len(values) - 1) / (width - 1)) for i in range(width)]
+        values = [values[i] for i in idxs]
     lo, hi = min(values), max(values)
     span = hi - lo if hi > lo else 1.0
     chars = "▁▂▃▄▅▆▇█"
@@ -486,6 +491,8 @@ def parse_provider(p, fetch_result, colors, appearance):
             "balance_num": balance_num,
             "currency": currency,
             "symbol": symbol,
+            # 行级交互：第一行点击复制余额到剪贴板
+            "line_params": [{"param1": "copy-balance", "param2": f"{symbol}{balance_str}"}, None],
         }
 
     elif ptype == "status":
@@ -808,6 +815,7 @@ def process_provider(p, config, colors, appearance, cache_dir, hdir, project_dir
             render.setdefault("lines", []).append(
                 f"  趋势: {trend}  {symbol}{first_val:.2f}→{last_val:.2f} ({change})")
             render.setdefault("colors", []).append(colors["SECONDARY"])
+            render.setdefault("line_params", []).append(None)
         symbol = render.get("symbol", "¥")
         # 今日消耗估算：相邻余额快照下降量之和（充值会抬升余额，下降量不受干扰）
         spend, pts = daily_spend(hdir, pid)
@@ -815,6 +823,9 @@ def process_provider(p, config, colors, appearance, cache_dir, hdir, project_dir
         if pts >= 2 and spend > 0:
             render.setdefault("lines", []).append(f"  今日消耗: {symbol}{spend:.2f}")
             render.setdefault("colors", []).append(colors["SECONDARY"])
+            # 行级交互：点今日消耗行 → 打开控制台（充值/账单）
+            render.setdefault("line_params", []).append(
+                {"href": console_url} if console_url else None)
         # 预计可用天数（按最近 24h 消耗速率外推）
         days = days_left(hdir, pid, render["balance_num"])
         render["_days_left"] = days
@@ -822,6 +833,7 @@ def process_provider(p, config, colors, appearance, cache_dir, hdir, project_dir
             text = f"  预计可用: ~{days:.1f} 天" if days < 30 else f"  预计可用: 充足（>{days:.0f} 天）"
             render.setdefault("lines", []).append(text)
             render.setdefault("colors", []).append(colors["SECONDARY"])
+            render.setdefault("line_params", []).append(None)
         # 本周 / 本月消耗
         wk, wp = consumption_since(hdir, pid, start_of_week())
         mo, mp = consumption_since(hdir, pid, start_of_month())
@@ -829,12 +841,14 @@ def process_provider(p, config, colors, appearance, cache_dir, hdir, project_dir
             render.setdefault("lines", []).append(
                 f"  本周 {symbol}{wk:.2f} · 本月 {symbol}{mo:.2f}")
             render.setdefault("colors", []).append(colors["SECONDARY"])
+            render.setdefault("line_params", []).append(None)
         # 近 7 天每日消耗柱状图（右 = 今天）
         series = daily_spend_series(hdir, pid, 7)
         if any(v > 0 for v in series):
             bars = sparkline(series) if max(series) > 0 else "·" * 7
             render.setdefault("lines", []).append(f"  近7天: {bars}")
             render.setdefault("colors", []).append(colors["SECONDARY"])
+            render.setdefault("line_params", []).append(None)
 
     # plan_usage 趋势（剩余百分比历史）
     elif ptype == "plan_usage" and render.get("min_pct") is not None:
@@ -848,6 +862,7 @@ def process_provider(p, config, colors, appearance, cache_dir, hdir, project_dir
             render.setdefault("lines", []).append(
                 f"  趋势: {trend}  {first_val:.0f}%→{last_val:.0f}% ({change}%)")
             render.setdefault("colors", []).append(colors["SECONDARY"])
+            render.setdefault("line_params", []).append(None)
 
     # Alert check (balance 余额 / plan_usage 用量百分比) + 恢复通知
     if os.environ.get("TOKEN_EYE_NOTIFY", "1") != "0":
@@ -973,9 +988,13 @@ def render(results, config, colors, refresh_map, hdir):
                     print(f"  🔄 刷新 {name} Cookie | param1={rp} color={colors['WARN']} size=11")
             else:
                 rcolors = r.get("colors", [])
+                line_params = r.get("line_params") or []
                 for i, line in enumerate(lines):
                     c = rcolors[i] if i < len(rcolors) else colors["DEFAULT"]
-                    print(f"{line} | color={c}")
+                    extra = ""
+                    if i < len(line_params) and line_params[i]:
+                        extra = " " + " ".join(f"{k}={v}" for k, v in line_params[i].items())
+                    print(f"{line} | color={c}{extra}")
             # Console link
             cu = r.get("console_url")
             if cu:
@@ -995,6 +1014,7 @@ def render(results, config, colors, refresh_map, hdir):
                 print(f"v{VERSION} | color={colors['MUTED']} size=11")
         except Exception:
             print(f"v{VERSION} | color={colors['MUTED']} size=11")
+        print(f"🔧 自检 | param1=self-check refresh=true color={colors['MUTED']} size=11")
 
     except Exception as e:
         # 最后兜底，绝不让菜单空白
@@ -1009,6 +1029,90 @@ def render(results, config, colors, refresh_map, hdir):
 # ---------------------------------------------------------------------------
 # 入口
 # ---------------------------------------------------------------------------
+
+def probe_network(url="https://api.github.com", timeout=4):
+    """快速网络连通性探测（200 视为通）。"""
+    try:
+        r = subprocess.run(
+            ["curl", "-s", "-o", "/dev/null", "--max-time", str(timeout),
+             "-w", "%{http_code}", url],
+            capture_output=True, text=True, timeout=timeout + 2)
+        return r.stdout.strip() == "200"
+    except Exception:
+        return False
+
+
+def check_keys(config):
+    """检查各 provider 的 Keychain 密钥是否存在。返回 [(service, ok)]。"""
+    out = []
+    for p in config.get("providers", []):
+        if not p.get("enabled", True):
+            continue
+        svc = p.get("keychainService", "")
+        if svc:
+            out.append((svc, bool(get_key(svc))))
+    return out
+
+
+def installed_version(plugin_dir=None):
+    """读取已安装插件（默认 ~/SwiftBar/token-eye.sh）的 bitbar.version。"""
+    base = plugin_dir or os.path.expanduser("~/SwiftBar")
+    path = os.path.join(base, "token-eye.sh")
+    try:
+        with open(path) as f:
+            for line in f:
+                m = re.search(r"bitbar\.version>v([\d.]+)", line)
+                if m:
+                    return m.group(1)
+    except Exception:
+        pass
+    return None
+
+
+def self_check():
+    """--self-check：Keychain Key / 网络 / 版本一致性，输出 SwiftBar 菜单。"""
+    config_path = os.environ.get("CONFIG_FILE") or "providers.json"
+    fail = 0
+    print("🔧 Token Eye 自检 | color=#FFD60A")
+    print("---")
+    try:
+        with open(config_path) as f:
+            config = json.load(f)
+    except Exception as e:
+        print(f"❌ 配置读取失败: {config_path}（{e}） | color=#e74c3c")
+        print("---")
+        print("关闭 | refresh=true")
+        return 1
+    # Keychain
+    keys = check_keys(config)
+    for svc, ok in keys:
+        if ok:
+            print(f"✅ Keychain {svc} 存在 | color=#2ecc71")
+        else:
+            fail = 1
+            print(f"❌ Keychain {svc} 缺失 | color=#e74c3c")
+            print(f"   security add-generic-password -s {svc} -w your-key | font=Menlo size=11 color=#888")
+    # 网络
+    if probe_network():
+        print("✅ 网络连通 (api.github.com) | color=#2ecc71")
+    else:
+        fail = 1
+        print("❌ 网络不通 (api.github.com) | color=#e74c3c")
+    # 版本一致性
+    installed = installed_version()
+    if installed is None:
+        fail = 1
+        print(f"❌ 未找到已安装插件 (~/SwiftBar/token-eye.sh) | color=#e74c3c")
+    elif installed == VERSION:
+        print(f"✅ 版本一致 v{installed} | color=#2ecc71")
+    else:
+        fail = 1
+        print(f"⚠️ 版本不一致：项目 v{VERSION} vs 已安装 v{installed} | color=#e67e22")
+        print("   执行 make install 同步 | color=#888 size=11")
+    print("---")
+    print("关闭 | refresh=true")
+    return 0 if fail == 0 else 1
+
 
 def validate_mode():
     """--validate：只校验配置（供 Makefile / CI / 手动使用），不渲染菜单。"""
@@ -1106,6 +1210,8 @@ def main(argv=None):
     args = list(sys.argv[1:] if argv is None else argv)
     if "--validate" in args:
         return validate_mode()
+    if "--self-check" in args or (args and args[0] == "self-check"):
+        return self_check()
     return run(args)
 
 
