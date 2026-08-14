@@ -18,6 +18,19 @@ from unittest import mock
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "swiftbar"))
 import token_eye as te  # noqa: E402
 
+# scripts/validate-schema.py 带连字符不是合法模块名，用 importlib 按路径加载
+def _load_validate_schema():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "validate_schema_mod",
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "scripts", "validate-schema.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+vs = _load_validate_schema()
+
 REPO_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 
 # 测试用颜色（键名与 load_colors 返回的 dict 一致）
@@ -685,6 +698,84 @@ class TestConsumptionAndPrediction(unittest.TestCase):
     def test_days_left_no_consumption(self):
         self.write("x", [(self.day0 + 100, 50.0), (self.day0 + 200, 50.0)])
         self.assertIsNone(te.days_left(self.dir, "x", 50.0))
+
+
+class TestHistoryCleanup(unittest.TestCase):
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.old_ts = int(time.time()) - 40 * 86400
+        self.new_ts = int(time.time()) - 3600
+
+    def test_cleanup_removes_old_lines(self):
+        with open(os.path.join(self.dir, "history-x.jsonl"), "w") as f:
+            f.write(f"{self.old_ts},1.0\n{self.new_ts},2.0\n")
+        te.cleanup_history(self.dir, 30)
+        with open(os.path.join(self.dir, "history-x.jsonl")) as f:
+            content = f.read()
+        self.assertNotIn(f"{self.old_ts}", content)
+        self.assertIn(f"{self.new_ts},2.0", content)
+
+    def test_cleanup_ignores_non_history(self):
+        other = os.path.join(self.dir, "debug.log")
+        with open(other, "w") as f:
+            f.write("keep me")
+        te.cleanup_history(self.dir, 30)
+        with open(other) as f:
+            self.assertEqual(f.read(), "keep me")
+
+    def test_maybe_cleanup_once_per_day(self):
+        with open(os.path.join(self.dir, "history-x.jsonl"), "w") as f:
+            f.write(f"{self.old_ts},1.0\n")
+        te.maybe_cleanup_history(self.dir)
+        with open(os.path.join(self.dir, "history-x.jsonl")) as f:
+            self.assertEqual(f.read(), "")
+        self.assertTrue(os.path.exists(os.path.join(self.dir, "last-cleanup.ts")))
+        # 24h 内再次执行：不重复清理（新写入的旧行保留）
+        with open(os.path.join(self.dir, "history-x.jsonl"), "w") as f:
+            f.write(f"{self.old_ts},1.0\n")
+        te.maybe_cleanup_history(self.dir)
+        with open(os.path.join(self.dir, "history-x.jsonl")) as f:
+            self.assertEqual(f.read(), f"{self.old_ts},1.0\n")
+
+
+class TestNotifySound(unittest.TestCase):
+    def test_default_sound_glass(self):
+        with mock.patch.object(te.subprocess, "run") as m:
+            te.send_notify("t", "m")
+        script = m.call_args.args[0][-1]
+        self.assertIn('sound name "Glass"', script)
+
+    def test_sound_disabled(self):
+        with mock.patch.dict(os.environ, {"TOKEN_EYE_SOUND": "0"}), \
+             mock.patch.object(te.subprocess, "run") as m:
+            te.send_notify("t", "m")
+        script = m.call_args.args[0][-1]
+        self.assertNotIn("sound name", script)
+
+    def test_custom_sound(self):
+        with mock.patch.dict(os.environ, {"TOKEN_EYE_SOUND": "Ping"}), \
+             mock.patch.object(te.subprocess, "run") as m:
+            te.send_notify("t", "m")
+        script = m.call_args.args[0][-1]
+        self.assertIn('sound name "Ping"', script)
+
+
+class TestProviderTemplates(unittest.TestCase):
+    def test_all_templates_valid(self):
+        with open(os.path.join(REPO_ROOT, "scripts", "provider-templates.json")) as f:
+            templates = json.load(f)
+        with open(os.path.join(REPO_ROOT, "schema", "providers.schema.json")) as f:
+            schema = json.load(f)
+        refs = vs.collect_refs(schema)
+        ids = []
+        self.assertGreater(len(templates), 0)
+        for t in templates:
+            ids.append(t.get("id"))
+            errors = vs.validate(t, schema["definitions"]["provider"], refs=refs)
+            self.assertEqual(errors, [], f"模板 {t.get('name')} 不符合 JSON Schema: {errors}")
+            runtime = te.schema_validate({"providers": [t]})
+            self.assertEqual(runtime, [], f"模板 {t.get('name')} 未通过运行时校验: {runtime}")
+        self.assertEqual(len(ids), len(set(ids)), "模板 id 存在重复")
 
 
 class TestVersion(unittest.TestCase):

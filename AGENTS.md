@@ -23,7 +23,8 @@ token-eye/
 │   ├── refresh-mimo-cookie.py  ← MiMo Cookie 一键刷新（多浏览器，会话过期时运行）
 │   ├── check-colors.py         ← 配色对比度回归检查（WCAG AA ≥4.5:1）
 │   ├── validate-schema.py      ← providers.json JSON Schema 校验（零依赖）
-│   └── add-provider.py         ← 新平台添加向导（交互式）
+│   ├── add-provider.py         ← 新平台添加向导（交互式，支持模板）
+│   └── provider-templates.json ← 内置平台模板库（OpenAI/Kimi/GLM/…）
 ├── schema/
 │   └── providers.schema.json   ← 配置结构定义（编辑器补全 + 校验）
 ├── tests/
@@ -157,6 +158,8 @@ Python 核心逻辑：
 - SwiftBar 刷新间隔：30 秒（脚本内 `# <bitbar.refreshTime>30</bitbar.refreshTime>` 声明）
 - 缓存文件位于 `/tmp/token-eye-cache-{id}.json`，失败请求 10s 短缓存避免连续打 API
 - 告警去重/自愈防抖标记位于 `~/Library/Caches/token-eye/token-eye-{alerted|recovered|autorefresh}-{id}.flag`（持久化，重启不丢）；余额/用量恢复时发「已恢复」通知（去重）
-- `TOKEN_EYE_DEBUG=1` 时每次请求的缓存/状态码/耗时/自愈结果写入 `~/Library/Caches/token-eye/debug.log`
+- 历史文件（history-*.jsonl）保留 30 天，每天自动清理一次（`cleanup_history` / `last-cleanup.ts` 标记），防无限增长
+- 告警通知默认带提示音（`TOKEN_EYE_SOUND` 换声音名，`0` 静音）；`TOKEN_EYE_DEBUG=1` 时请求明细写入 `~/Library/Caches/token-eye/debug.log`
+- 模板库 `scripts/provider-templates.json` 的每个模板必须通过 JSON Schema 与运行时校验（测试覆盖）
 - 渲染层有 try-except 兜底，异常时输出占位菜单，不会空白
 - 环境变量 `TOKEN_EYE_NOTIFY=0` 可临时禁用告警通知

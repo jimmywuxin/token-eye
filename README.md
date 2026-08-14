@@ -89,7 +89,7 @@ cp swiftbar/token-eye.sh ~/SwiftBar/
 
 ## 添加新平台
 
-**推荐用向导**：`python3 scripts/add-provider.py` 交互式问答生成配置，自动校验并提示 Keychain 命令。
+**推荐用向导**：`python3 scripts/add-provider.py`。内置 **8 个平台模板**（OpenAI / DeepSeek / Anthropic / Kimi / 智谱 GLM / 阿里云百炼 / 硅基流动 / MiniMax），选模板即得完整配置；也可以手动填写。向导自动校验并提示 Keychain 命令。
 
 也可以手动编辑**项目根目录**的 `providers.json`（`~/dev/token-eye/providers.json`），在 `providers` 数组中追加配置，无需改脚本，无需复制文件。脚本下次刷新时自动加载。
 
@@ -365,6 +365,12 @@ balance 类默认 USD → `$`、其余 → `¥`，可自定义映射：
 
 ```bash
 TOKEN_EYE_NOTIFY=0 bash ~/SwiftBar/token-eye.sh
+```
+
+告警通知默认带系统提示音（Glass）；`TOKEN_EYE_SOUND` 可换声音名（如 `Ping`、`Sosumi`）或设为 `0` 静音：
+
+```bash
+TOKEN_EYE_SOUND=Ping bash ~/SwiftBar/token-eye.sh
 ```
 
 ### 调试日志

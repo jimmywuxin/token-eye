@@ -13,12 +13,26 @@ Token Eye — 新平台添加向导（交互式）
   - 配置结构见 schema/providers.schema.json 与 README.md
   - 字段路径支持 . 分隔嵌套与数组索引（如 balance_infos.0.total_balance）
 """
+import copy
 import json
 import os
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_CONFIG = os.path.join(HERE, "..", "providers.json")
+TEMPLATES_PATH = os.path.join(HERE, "provider-templates.json")
+
+PTYPE_LABEL = {"balance": "余额型", "plan_usage": "用量型", "status": "状态型"}
+
+
+def load_templates():
+    """读取内置平台模板（脚本同目录 provider-templates.json）。"""
+    try:
+        with open(TEMPLATES_PATH) as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError) as e:
+        print(f"警告: 模板库读取失败（{e}），仅提供手动填写")
+        return []
 
 # 引入项目内校验（与运行时同一套）
 sys.path.insert(0, os.path.join(HERE, "..", "swiftbar"))
@@ -149,26 +163,55 @@ def main():
         config = json.load(f)
 
     print(f"Token Eye 新平台向导（配置文件: {config_path}）\n")
-    display_name = ask("平台显示名（如 OpenAI、Kimi）", required=True)
-    pid_default = display_name.lower().replace(" ", "-")
-    pid = ask("平台 id", pid_default)
-    keychain = ask("Keychain 服务名", display_name.upper().replace(" ", "_") + "_API_KEY")
-    ptype = ask("parser 类型（1=balance 2=plan_usage 3=status）", "1")
-    ptype_map = {"1": "balance", "2": "plan_usage", "3": "status"}
-    ptype = ptype_map.get(ptype, ptype)
 
-    builder = {"balance": build_balance, "plan_usage": build_plan_usage,
-               "status": build_status}[ptype]
-    provider = builder(display_name, keychain)
-    provider["id"] = pid
+    # 模板选择
+    templates = load_templates()
+    provider = None
+    if templates:
+        print("▶ 内置平台模板（0 = 手动填写）:")
+        for i, t in enumerate(templates, 1):
+            ttype = PTYPE_LABEL.get((t.get("parser") or {}).get("type", ""), "")
+            print(f"  {i} = {t.get('name')}（{ttype}）")
+        choice = ask("选择模板", "0")
+        if choice != "0":
+            try:
+                tmpl = templates[int(choice) - 1]
+            except (ValueError, IndexError):
+                sys.exit("错误: 模板序号无效，终止")
+            display_name = ask("平台显示名", tmpl.get("name", ""))
+            pid = ask("平台 id", tmpl.get("id", ""))
+            keychain = ask("Keychain 服务名", tmpl.get("keychainService", ""))
+            provider = copy.deepcopy(tmpl)
+            provider["name"], provider["id"], provider["keychainService"] = display_name, pid, keychain
+            min_balance = ask("告警阈值 minBalance（回车跳过）", None)
+            if min_balance:
+                provider.setdefault("alert", {})["minBalance"] = float(min_balance)
+            min_pct = ask("告警阈值 minPct（回车跳过）", None)
+            if min_pct:
+                provider.setdefault("alert", {})["minPct"] = int(min_pct)
 
-    print("\n▶ 可选：")
-    name_color = ask("平台名颜色 nameColor（十六进制，如 #FF0000，回车跳过）", None)
-    if name_color:
-        provider["display"]["nameColor"] = name_color
-    console_url = ask("控制台地址 consoleUrl（回车跳过）", None)
-    if console_url:
-        provider["consoleUrl"] = console_url
+    if provider is None:
+        # 手动填写
+        display_name = ask("平台显示名（如 OpenAI、Kimi）", required=True)
+        pid_default = display_name.lower().replace(" ", "-")
+        pid = ask("平台 id", pid_default)
+        keychain = ask("Keychain 服务名", display_name.upper().replace(" ", "_") + "_API_KEY")
+        ptype = ask("parser 类型（1=balance 2=plan_usage 3=status）", "1")
+        ptype_map = {"1": "balance", "2": "plan_usage", "3": "status"}
+        ptype = ptype_map.get(ptype, ptype)
+
+        builder = {"balance": build_balance, "plan_usage": build_plan_usage,
+                   "status": build_status}[ptype]
+        provider = builder(display_name, keychain)
+        provider["id"] = pid
+
+        print("\n▶ 可选：")
+        name_color = ask("平台名颜色 nameColor（十六进制，如 #FF0000，回车跳过）", None)
+        if name_color:
+            provider["display"]["nameColor"] = name_color
+        console_url = ask("控制台地址 consoleUrl（回车跳过）", None)
+        if console_url:
+            provider["consoleUrl"] = console_url
 
     print("\n=== 即将添加的配置 ===")
     print(json.dumps(provider, ensure_ascii=False, indent=2))

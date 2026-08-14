@@ -1,0 +1,183 @@
+[
+  {
+    "name": "OpenAI",
+    "id": "openai",
+    "keychainService": "OPENAI_API_KEY",
+    "consoleUrl": "https://platform.openai.com/usage",
+    "api": {
+      "url": "https://api.openai.com/v1/dashboard/billing/credit_grants",
+      "method": "GET",
+      "authHeader": "Authorization",
+      "authPrefix": "Bearer "
+    },
+    "parser": {
+      "type": "balance",
+      "fields": {
+        "balance": "total_granted",
+        "currency": "currency"
+      }
+    },
+    "display": {
+      "unit": "$",
+      "label": "余额",
+      "currencySymbols": { "USD": "$" }
+    }
+  },
+  {
+    "name": "DeepSeek",
+    "id": "deepseek",
+    "keychainService": "DEEPSEEK_API_KEY",
+    "consoleUrl": "https://platform.deepseek.com/usage",
+    "api": {
+      "url": "https://api.deepseek.com/user/balance",
+      "method": "GET",
+      "authHeader": "Authorization",
+      "authPrefix": "Bearer "
+    },
+    "parser": {
+      "type": "balance",
+      "fields": {
+        "balance": "balance_infos.0.total_balance",
+        "currency": "balance_infos.0.currency"
+      }
+    },
+    "display": {
+      "unit": "¥",
+      "label": "余额"
+    }
+  },
+  {
+    "name": "Anthropic",
+    "id": "anthropic",
+    "keychainService": "ANTHROPIC_API_KEY",
+    "consoleUrl": "https://console.anthropic.com/settings/usage",
+    "api": {
+      "url": "https://api.anthropic.com/v1/models",
+      "method": "GET",
+      "authHeader": "x-api-key",
+      "authPrefix": ""
+    },
+    "parser": {
+      "type": "status",
+      "okField": "data"
+    },
+    "display": {
+      "label": "可用"
+    }
+  },
+  {
+    "name": "Kimi (Moonshot)",
+    "id": "kimi",
+    "keychainService": "KIMI_API_KEY",
+    "consoleUrl": "https://platform.moonshot.cn/console/token-usage",
+    "api": {
+      "url": "https://api.moonshot.cn/v1/models",
+      "method": "GET",
+      "authHeader": "Authorization",
+      "authPrefix": "Bearer "
+    },
+    "parser": {
+      "type": "status",
+      "okField": "data"
+    },
+    "display": {
+      "label": "可用"
+    }
+  },
+  {
+    "name": "智谱 GLM",
+    "id": "glm",
+    "keychainService": "GLM_API_KEY",
+    "consoleUrl": "https://open.bigmodel.cn/console/overview",
+    "api": {
+      "url": "https://open.bigmodel.cn/api/paas/v4/models",
+      "method": "GET",
+      "authHeader": "Authorization",
+      "authPrefix": "Bearer "
+    },
+    "parser": {
+      "type": "status",
+      "okField": "data"
+    },
+    "display": {
+      "label": "可用"
+    }
+  },
+  {
+    "name": "阿里云百炼 Qwen",
+    "id": "qwen",
+    "keychainService": "QWEN_API_KEY",
+    "consoleUrl": "https://bailian.console.aliyun.com/",
+    "api": {
+      "url": "https://dashscope.aliyuncs.com/compatible-mode/v1/models",
+      "method": "GET",
+      "authHeader": "Authorization",
+      "authPrefix": "Bearer "
+    },
+    "parser": {
+      "type": "status",
+      "okField": "data"
+    },
+    "display": {
+      "label": "可用"
+    }
+  },
+  {
+    "name": "硅基流动 SiliconFlow",
+    "id": "siliconflow",
+    "keychainService": "SILICONFLOW_API_KEY",
+    "consoleUrl": "https://cloud.siliconflow.cn/account/usage",
+    "api": {
+      "url": "https://api.siliconflow.cn/v1/models",
+      "method": "GET",
+      "authHeader": "Authorization",
+      "authPrefix": "Bearer "
+    },
+    "parser": {
+      "type": "status",
+      "okField": "data"
+    },
+    "display": {
+      "label": "可用"
+    }
+  },
+  {
+    "name": "MiniMax",
+    "id": "minimax",
+    "keychainService": "MINIMAX_CN_API_KEY",
+    "consoleUrl": "https://platform.minimaxi.com/user-center/billing/bill-overview",
+    "api": {
+      "url": "https://www.minimaxi.com/v1/token_plan/remains",
+      "method": "GET",
+      "authHeader": "Authorization",
+      "authPrefix": "Bearer "
+    },
+    "parser": {
+      "type": "plan_usage",
+      "arrayPath": "model_remains",
+      "fields": {
+        "model": "model_name",
+        "intervalPct": "current_interval_remaining_percent",
+        "intervalStatus": "current_interval_status",
+        "weeklyPct": "current_weekly_remaining_percent",
+        "weeklyStatus": "current_weekly_status",
+        "intervalBoost": "interval_boost_permille",
+        "weeklyBoost": "weekly_boost_permille",
+        "resetMs": "remains_time"
+      },
+      "modelLabels": {
+        "general": "M2.7/M3 通用",
+        "video": "视频",
+        "speech-hd": "语音",
+        "image-01": "图片",
+        "music-2.5": "音乐"
+      },
+      "statusMap": { "1": "可用", "2": "耗尽临近", "3": "耗尽" },
+      "barLength": 20
+    },
+    "display": {
+      "unit": "%",
+      "label": "剩余"
+    }
+  }
+]

@@ -173,10 +173,15 @@ def send_notify(title, message):
         # 转义双引号
         safe_msg = message.replace('"', '\\"')
         safe_title = title.replace('"', '\\"')
-        subprocess.run([
-            "osascript", "-e",
-            f'display notification "{safe_msg}" with title "{safe_title}"'
-        ], timeout=5, capture_output=True)
+        # 系统提示音：TOKEN_EYE_SOUND 自定义声音名，设为 0 关闭（默认 Glass）
+        sound = os.environ.get("TOKEN_EYE_SOUND", "Glass")
+        if sound and sound != "0":
+            safe_sound = sound.replace('"', '\\"')
+            script = (f'display notification "{safe_msg}" with title "{safe_title}" '
+                      f'sound name "{safe_sound}"')
+        else:
+            script = f'display notification "{safe_msg}" with title "{safe_title}"'
+        subprocess.run(["osascript", "-e", script], timeout=5, capture_output=True)
     except Exception:
         pass
 
@@ -227,6 +232,54 @@ def load_history(hdir, pid, n=HISTORY_LEN):
     except Exception:
         pass
     return out
+
+
+HISTORY_RETENTION_DAYS = 30
+CLEANUP_INTERVAL = 86400  # 每天最多执行一次清理
+
+
+def _line_ts(line):
+    try:
+        return int(line.partition(",")[0])
+    except (ValueError, TypeError):
+        return 0
+
+
+def cleanup_history(hdir, retention_days=HISTORY_RETENTION_DAYS):
+    """清理超过保留期的历史行（按行时间戳），防 jsonl 无限增长。"""
+    cutoff = int(time.time()) - retention_days * 86400
+    try:
+        names = os.listdir(hdir)
+    except Exception:
+        return
+    for fname in names:
+        if not (fname.startswith("history-") and fname.endswith(".jsonl")):
+            continue
+        path = os.path.join(hdir, fname)
+        try:
+            with open(path) as f:
+                lines = f.readlines()
+            keep = [ln for ln in lines if _line_ts(ln) >= cutoff]
+            if len(keep) < len(lines):
+                with open(path, "w") as f:
+                    f.writelines(keep)
+        except Exception:
+            pass
+
+
+def maybe_cleanup_history(hdir):
+    """每天最多执行一次历史清理（last-cleanup.ts 标记）。"""
+    stamp = os.path.join(hdir, "last-cleanup.ts")
+    try:
+        if os.path.exists(stamp):
+            with open(stamp) as f:
+                last = int(f.read().strip() or 0)
+            if time.time() - last < CLEANUP_INTERVAL:
+                return
+        cleanup_history(hdir)
+        _write_flag(stamp, str(int(time.time())))
+    except Exception:
+        pass
 
 
 def start_of_day(ts=None):
@@ -988,6 +1041,8 @@ def run(args):
         os.makedirs(hdir, exist_ok=True)
     except Exception:
         pass
+    # 历史自动清理（每天一次，保留 30 天）
+    maybe_cleanup_history(hdir)
 
     try:
         with open(config_path) as f:

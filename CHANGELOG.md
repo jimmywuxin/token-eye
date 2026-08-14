@@ -1,5 +1,12 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- **平台模板库**：`scripts/provider-templates.json` 内置 8 个平台模板（OpenAI / DeepSeek / Anthropic / Kimi / 智谱 GLM / 阿里云百炼 / 硅基流动 / MiniMax），添加向导可选模板一键生成配置
+- **历史自动清理**：`history-*.jsonl` 保留 30 天，每天自动清理一次（`cleanup_history` / `last-cleanup.ts` 标记），防无限增长
+- **通知提示音**：告警通知默认带系统声音（Glass），`TOKEN_EYE_SOUND` 可换声音名或设 `0` 静音
+
 ## [0.13.0] - 2026-08-14
 
 ### Fixed
