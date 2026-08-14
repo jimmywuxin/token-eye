@@ -819,7 +819,7 @@ class TestSelfCheck(unittest.TestCase):
         with mock.patch.dict(os.environ, {"CONFIG_FILE": cfg}), \
              mock.patch.object(te, "check_keys", return_value=[("A", True)]), \
              mock.patch.object(te, "probe_network", return_value=True), \
-             mock.patch.object(te, "installed_version", return_value="0.14.0"), \
+             mock.patch.object(te, "installed_version", return_value=te.VERSION), \
              contextlib.redirect_stdout(io.StringIO()) as buf:
             rc = te.self_check()
         out = buf.getvalue()

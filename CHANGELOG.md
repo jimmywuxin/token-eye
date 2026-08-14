@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.15.0] - 2026-08-14
 
 ### Added
 - **自检菜单项**：菜单底部「🔧 自检」一键检查 Keychain Key / 网络连通 / 插件版本一致性（`--self-check`）
