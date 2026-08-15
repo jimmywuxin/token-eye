@@ -868,6 +868,59 @@ class TestLineParams(unittest.TestCase):
         self.assertIn({"href": "https://c.example"}, r.get("line_params", []))
 
 
+class TestAutoRefreshCooldown(unittest.TestCase):
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+
+    def flag_path(self):
+        return os.path.join(self.dir, "token-eye-autorefresh-mimo.flag")
+
+    def test_success_sets_ok_and_blocks(self):
+        with mock.patch.object(te.subprocess, "run",
+                               return_value=mock.Mock(returncode=0, stdout="HTTP=200")):
+            ok, _ = te.auto_refresh_cookie(self.dir, "mimo", "/x")
+        self.assertTrue(ok)
+        with open(self.flag_path()) as f:
+            self.assertTrue(f.read().strip().endswith(" ok"))
+        # 成功后 30 分钟内再次触发 → 冷却
+        with mock.patch.object(te.subprocess, "run") as m:
+            ok2, msg = te.auto_refresh_cookie(self.dir, "mimo", "/x")
+        self.assertFalse(ok2)
+        self.assertIn("冷却中", msg)
+        m.assert_not_called()
+
+    def test_failure_sets_fail_and_short_cooldown(self):
+        with mock.patch.object(te.subprocess, "run",
+                               return_value=mock.Mock(returncode=0, stdout="HTTP=401")):
+            ok, _ = te.auto_refresh_cookie(self.dir, "mimo", "/x")
+        self.assertFalse(ok)
+        with open(self.flag_path()) as f:
+            self.assertTrue(f.read().strip().endswith(" fail"))
+        # 失败后 5 分钟内 → 冷却（信息标注失败）
+        with mock.patch.object(te.subprocess, "run") as m:
+            ok2, msg = te.auto_refresh_cookie(self.dir, "mimo", "/x")
+        self.assertFalse(ok2)
+        self.assertIn("失败后 5 分钟", msg)
+        m.assert_not_called()
+
+    def test_old_format_flag_treated_as_ok(self):
+        # 旧版纯数字标记按成功处理（30 分钟冷却）
+        te._write_flag(self.flag_path(), str(int(time.time())))
+        with mock.patch.object(te.subprocess, "run") as m:
+            ok, msg = te.auto_refresh_cookie(self.dir, "mimo", "/x")
+        self.assertFalse(ok)
+        self.assertIn("成功", msg)
+        m.assert_not_called()
+
+    def test_fail_cooldown_expired_retries(self):
+        # 失败标记已超过 5 分钟 → 重新执行
+        te._write_flag(self.flag_path(), f"{int(time.time()) - 400} fail")
+        with mock.patch.object(te.subprocess, "run",
+                               return_value=mock.Mock(returncode=0, stdout="HTTP=200")):
+            ok, _ = te.auto_refresh_cookie(self.dir, "mimo", "/x")
+        self.assertTrue(ok)
+
+
 class TestVersion(unittest.TestCase):
     def test_ver_gt(self):
         self.assertTrue(te._ver_gt("0.10.0", "0.9.0"))
@@ -1060,7 +1113,7 @@ class TestProcessProvider(unittest.TestCase):
         self.assertEqual(m_fetch.call_count, 2)  # 刷新后重试了一次
 
     def test_auto_refresh_failed_falls_back_to_error(self):
-        """自愈失败（刷新脚本失败）→ 回退为错误渲染（菜单显示手动刷新入口）。"""
+        """自愈失败（刷新脚本失败）→ 回退为错误渲染，并展示失败原因。"""
         d = tempfile.mkdtemp()
         p = dict(BALANCE_P, refreshParam="refresh-mimo-cookie")
         cfg = {"cache": {"balance": 300}}
@@ -1068,9 +1121,13 @@ class TestProcessProvider(unittest.TestCase):
              mock.patch.object(te, "fetch_api", return_value={
                  "ok": False, "status": 401, "data": None,
                  "error_kind": "client", "message": "401"}), \
-             mock.patch.object(te, "auto_refresh_cookie", return_value=(False, "防抖中")):
+             mock.patch.object(te, "auto_refresh_cookie",
+                               return_value=(False, "冷却中（失败后 5 分钟内已尝试过）")):
             r = te.process_provider(p, cfg, COLORS, "dark", d, d, REPO_ROOT)
         self.assertEqual(r["status"], "error")
+        self.assertIn("配置/鉴权错误", r["lines"][0])
+        self.assertTrue(any("自动刷新未生效" in line for line in r["lines"]),
+                        f"缺自愈失败原因行: {r['lines']}")
         self.assertIn("配置/鉴权错误", r["lines"][0])
 
     def test_auto_refresh_debounce_flag(self):

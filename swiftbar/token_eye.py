@@ -699,26 +699,36 @@ def notify_recovered(pid, name, kind_label, current_str, flags_dir, was_alerted=
     send_notify("Token Eye 已恢复", f"{name} {kind_label}已恢复（当前 {current_str}）")
 
 
-def auto_refresh_cookie(flags_dir, pid, refresh_script):
-    """自动刷新 Cookie（401 自愈）。带 30 分钟防抖，避免反复打脚本。返回 (ok, 输出)"""
+def auto_refresh_cookie(flags_dir, pid, refresh_script, fail_cooldown=300, success_cooldown=1800):
+    """自动刷新 Cookie（401 自愈）。
+
+    - 失败后 fail_cooldown（默认 5 分钟）即可重试——会话可能很快恢复（如 Edge 重新打开）
+    - 成功后 30 分钟防抖，避免反复打脚本
+    标记内容：`<ts> ok|fail`（旧版纯数字视为 ok）
+    """
     flag = _flag_path(flags_dir, pid, "autorefresh")
     now = int(time.time())
     try:
         if os.path.exists(flag):
             with open(flag) as f:
-                last = int(f.read().strip() or 0)
-            if now - last < 1800:
-                return False, "防抖中（30 分钟内已自动尝试过）"
+                parts = f.read().strip().split()
+            last = int(parts[0])
+            kind = parts[1] if len(parts) > 1 else "ok"
+            cooldown = success_cooldown if kind == "ok" else fail_cooldown
+            if now - last < cooldown:
+                return False, f"冷却中（{'成功' if kind == 'ok' else '失败'}后 {cooldown // 60} 分钟内已尝试过）"
     except Exception:
         pass
-    _write_flag(flag, str(now))
     try:
         r = subprocess.run(["/usr/bin/python3", refresh_script],
                            capture_output=True, text=True, timeout=30)
         if r.returncode == 0 and "HTTP=200" in r.stdout:
+            _write_flag(flag, f"{now} ok")
             return True, ""
+        _write_flag(flag, f"{now} fail")
         return False, (r.stdout or r.stderr).strip()[-150:]
     except Exception as e:
+        _write_flag(flag, f"{now} fail")
         return False, str(e)
 
 
@@ -771,6 +781,7 @@ def process_provider(p, config, colors, appearance, cache_dir, hdir, project_dir
                         f"耗时={time.time() - t0:.2f}s")
 
         # 自动自愈：client 鉴权错误 + 配置了 refreshParam → 刷新 Cookie 后重试一次
+        self_heal_err = None
         if (not fetch_result["ok"] and fetch_result.get("error_kind") == "client"
                 and refresh_param):
             script = os.path.join(project_dir, "scripts", refresh_param + ".py")
@@ -788,6 +799,8 @@ def process_provider(p, config, colors, appearance, cache_dir, hdir, project_dir
                         )
                         log_debug(hdir, f"[{pid}] 自愈重试: ok={fetch_result['ok']} "
                                         f"status={fetch_result.get('status')}")
+                elif err:
+                    self_heal_err = err
 
         if fetch_result["ok"]:
             save_cache(cache_dir, pid, {"ts": now, "data": fetch_result["data"]})
@@ -797,8 +810,13 @@ def process_provider(p, config, colors, appearance, cache_dir, hdir, project_dir
                                         "message": fetch_result["message"]})
 
     if not fetch_result["ok"]:
-        return render_error(pid, name, fetch_result["error_kind"],
-                            fetch_result["message"], console_url, colors)
+        err_render = render_error(pid, name, fetch_result["error_kind"],
+                                  fetch_result["message"], console_url, colors)
+        if self_heal_err:
+            # 自愈失败原因展示在错误菜单里，用户知道为什么需要手动
+            err_render.setdefault("lines", []).append(f"  ↻ 自动刷新未生效: {self_heal_err[:60]}")
+            err_render.setdefault("colors", []).append(colors["MUTED"])
+        return err_render
 
     render = parse_provider(p, fetch_result, colors, appearance)
 

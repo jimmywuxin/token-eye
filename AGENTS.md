@@ -158,6 +158,7 @@ Python 核心逻辑：
 - SwiftBar 刷新间隔：30 秒（脚本内 `# <bitbar.refreshTime>30</bitbar.refreshTime>` 声明）
 - 缓存文件位于 `/tmp/token-eye-cache-{id}.json`，失败请求 10s 短缓存避免连续打 API
 - 告警去重/自愈防抖标记位于 `~/Library/Caches/token-eye/token-eye-{alerted|recovered|autorefresh}-{id}.flag`（持久化，重启不丢）；余额/用量恢复时发「已恢复」通知（去重）
+- 自愈冷却策略：`autorefresh` 标记内容为 `<ts> ok|fail`——**失败后 5 分钟可重试**（会话可能很快恢复），成功后 30 分钟防抖；自愈失败原因会显示在错误菜单
 - 历史文件（history-*.jsonl）保留 30 天，每天自动清理一次（`cleanup_history` / `last-cleanup.ts` 标记），防无限增长
 - 告警通知默认带提示音（`TOKEN_EYE_SOUND` 换声音名，`0` 静音）；`TOKEN_EYE_DEBUG=1` 时请求明细写入 `~/Library/Caches/token-eye/debug.log`
 - 趋势窗口 `HISTORY_LEN=288`（≈2.4h），`sparkline` 自动均匀降采样到 24 字符宽
