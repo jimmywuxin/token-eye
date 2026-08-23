@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.16.0] - 2026-08-24
 
 ### Added
 - **MiMo Cookie 半自动刷新**：新增 provider 配置 `refreshInterval`（秒），即使 cookie 仍有效也会按周期从浏览器复制最新 cookie（主动续期），保持 keychain 与浏览器会话同步、显著减少 401 触发面；当会话真正过期导致刷新失败时，自动在默认浏览器打开控制台登录页并发送系统通知（30 分钟限频防弹窗），登录后下个重试周期自动拾取新 cookie，无需再手动跑刷新脚本
