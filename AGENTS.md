@@ -131,6 +131,7 @@ Python 核心逻辑：
 - `parser.fields.intervalTotal` / `weeklyTotal` — 旧接口的套餐总量字段路径；仅当接口无百分比字段时生效（total=0 显示「无套餐」）。**注意：MiniMax 新接口该字段已废弃恒为 0，状态由百分比推断**
 - `display.nameColor` — 平台名颜色；支持深浅双套 `{"dark":"#xxx","light":"#xxx"}`，随系统外观切换（注意红绿色弱对比度）
 - `refreshParam` — 鉴权错误时自动刷新 + 菜单「🔄 刷新 Cookie」点击项（如 MiMo 的 `refresh-mimo-cookie`）
+- `refreshInterval` — 主动续期周期（秒，≥60）：即使 cookie 仍有效也定期从浏览器复制最新 cookie，保持 keychain 与浏览器会话同步、减少 401 触发面（仅对配置了 `refreshParam` 的 provider 生效）
 - `enabled` — 设为 false 临时禁用
 
 ### Cookie 鉴权（MiMo 特例）
@@ -138,6 +139,7 @@ Python 核心逻辑：
 - MiMo platform API（`/api/v1/balance`）要求**完整 Cookie 组合**（ph + serviceToken + slh + userId），仅单个 Cookie 返回 401
 - 完整 Cookie 串存 Keychain 单个条目 `MIMO_PLATFORM_TOKEN`，provider 配 `authHeader: "Cookie"` + `authPrefix: ""`
 - Cookie 为会话级，过期后运行 `scripts/refresh-mimo-cookie.py` 一键刷新（支持 Edge / Chrome / Brave / Arc，从任一已登录浏览器解密提取）
+- **半自动刷新机制**：`refreshInterval` 按周期主动续 cookie（浏览器会话存活时 keychain 始终最新）；当服务端会话真正过期、浏览器同步失效导致刷新失败时，自动在默认浏览器打开 `consoleUrl` 登录页并发系统通知（`token-eye-loginopened-*.flag` 30 分钟限频），登录后下个 5 分钟重试周期自动拾取新 cookie——**无需再手动跑刷新脚本**
 
 详细配置示例见 `README.md`。
 
@@ -159,6 +161,7 @@ Python 核心逻辑：
 - 缓存文件位于 `/tmp/token-eye-cache-{id}.json`，失败请求 10s 短缓存避免连续打 API
 - 告警去重/自愈防抖标记位于 `~/Library/Caches/token-eye/token-eye-{alerted|recovered|autorefresh}-{id}.flag`（持久化，重启不丢）；余额/用量恢复时发「已恢复」通知（去重）
 - 自愈冷却策略：`autorefresh` 标记内容为 `<ts> ok|fail`——**失败后 5 分钟可重试**（会话可能很快恢复），成功后 30 分钟防抖；自愈失败原因会显示在错误菜单
+- 半自动刷新额外标记（均在 `~/Library/Caches/token-eye/`）：`token-eye-loginopened-{id}.flag` 记录自动打开登录页的时间戳（30 分钟限频）；`token-eye-lastrefresh-{id}.flag` 记录主动续期成功的时间戳（用于 `refreshInterval` 节流）
 - 历史文件（history-*.jsonl）保留 30 天，每天自动清理一次（`cleanup_history` / `last-cleanup.ts` 标记），防无限增长
 - 告警通知默认带提示音（`TOKEN_EYE_SOUND` 换声音名，`0` 静音）；`TOKEN_EYE_DEBUG=1` 时请求明细写入 `~/Library/Caches/token-eye/debug.log`
 - 趋势窗口 `HISTORY_LEN=288`（≈2.4h），`sparkline` 自动均匀降采样到 24 字符宽

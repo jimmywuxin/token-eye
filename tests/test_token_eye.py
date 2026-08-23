@@ -921,6 +921,80 @@ class TestAutoRefreshCooldown(unittest.TestCase):
         self.assertTrue(ok)
 
 
+class TestSemiAutoRefresh(unittest.TestCase):
+    """半自动刷新：主动续期 + 会话失效自动打开登录页自动拾取。"""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+
+    def test_auto_refresh_failure_opens_login_page(self):
+        # 刷新失败（浏览器会话也过期）→ 应自动打开登录页并通知
+        with mock.patch.object(te.subprocess, "run",
+                               return_value=mock.Mock(returncode=0, stdout="HTTP=401")), \
+             mock.patch.object(te, "_open_login_page", return_value=True) as m_open, \
+             mock.patch.object(te, "send_notify") as m_notify:
+            ok, msg = te.auto_refresh_cookie(self.dir, "mimo", "/x", login_url="https://login")
+        self.assertFalse(ok)
+        m_open.assert_called_once()
+        # 通知由 _open_login_page 内部触发；此处被 mock 掉不会走到 send_notify
+        m_notify.assert_not_called()
+
+    def test_open_login_page_sends_notify(self):
+        # 真实 _open_login_page：真正打开登录页时发一条系统通知
+        with mock.patch.object(te.subprocess, "run") as m_open, \
+             mock.patch.object(te, "send_notify") as m_notify:
+            self.assertTrue(te._open_login_page(self.dir, "mimo", "https://login"))
+        m_open.assert_called_once()
+        m_notify.assert_called_once()
+
+    def test_auto_refresh_failure_without_login_url_no_open(self):
+        with mock.patch.object(te.subprocess, "run",
+                               return_value=mock.Mock(returncode=0, stdout="HTTP=401")), \
+             mock.patch.object(te, "_open_login_page", return_value=True) as m_open:
+            ok, _ = te.auto_refresh_cookie(self.dir, "mimo", "/x", login_url=None)
+        self.assertFalse(ok)
+        m_open.assert_not_called()
+
+    def test_auto_refresh_success_clears_login_opened_flag(self):
+        # 成功后清除 loginopened 标记，下次失效可再次弹登录页
+        te._write_flag(os.path.join(self.dir, "token-eye-loginopened-mimo.flag"), str(int(time.time())))
+        with mock.patch.object(te.subprocess, "run",
+                               return_value=mock.Mock(returncode=0, stdout="HTTP=200")):
+            ok, _ = te.auto_refresh_cookie(self.dir, "mimo", "/x")
+        self.assertTrue(ok)
+        self.assertFalse(os.path.exists(os.path.join(self.dir, "token-eye-loginopened-mimo.flag")))
+
+    def test_open_login_page_throttles(self):
+        # 同一会话周期内只弹一次登录页（send_notify 内部也用 subprocess.run，单独 patch）
+        with mock.patch.object(te.subprocess, "run") as m_open, \
+             mock.patch.object(te, "send_notify"):
+            first = te._open_login_page(self.dir, "mimo", "https://login")
+            second = te._open_login_page(self.dir, "mimo", "https://login")
+        self.assertTrue(first)
+        self.assertFalse(second)
+        # 只在第一次真正执行 open
+        self.assertEqual(m_open.call_count, 1)
+
+    def test_proactive_refresh_cooldown(self):
+        # 主动续期：间隔内不重复执行；间隔过后执行
+        with mock.patch.object(te.subprocess, "run",
+                               return_value=mock.Mock(returncode=0, stdout="HTTP=200")) as m:
+            r1 = te.proactive_refresh_cookie(self.dir, "mimo", "/x", 21600)
+            r2 = te.proactive_refresh_cookie(self.dir, "mimo", "/x", 21600)
+        self.assertTrue(r1)
+        self.assertIsNone(r2)  # 冷却中
+        self.assertEqual(m.call_count, 1)
+
+    def test_proactive_refresh_failure_does_not_advance_flag(self):
+        # 失败不推进标记 → 下一轮继续尝试
+        with mock.patch.object(te.subprocess, "run",
+                               return_value=mock.Mock(returncode=0, stdout="HTTP=401")):
+            self.assertFalse(te.proactive_refresh_cookie(self.dir, "mimo", "/x", 21600))
+        with mock.patch.object(te.subprocess, "run",
+                               return_value=mock.Mock(returncode=0, stdout="HTTP=200")):
+            self.assertTrue(te.proactive_refresh_cookie(self.dir, "mimo", "/x", 21600))
+
+
 class TestVersion(unittest.TestCase):
     def test_ver_gt(self):
         self.assertTrue(te._ver_gt("0.10.0", "0.9.0"))

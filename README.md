@@ -315,7 +315,12 @@ provider 配置 `consoleUrl`，详情菜单末尾出现「→ 打开 X 控制台
 }
 ```
 
-**Cookie 过期维护**：MiMo 的 Cookie 是会话级，Edge 关闭或长时间不用后失效（菜单栏显示「配置/鉴权错误」）。重新登录平台后运行一键刷新脚本（支持 Edge / Chrome / Brave / Arc 任一已登录浏览器）：
+**Cookie 过期维护（半自动刷新）**：MiMo 的 Cookie 是会话级，Edge 关闭或长时间不用后失效（菜单栏显示「配置/鉴权错误」）。Token Eye 提供两层自动维护：
+
+1. **主动续期**：在 provider 上配 `"refreshInterval": <秒>`，即使 Cookie 仍有效，也会按周期自动从浏览器复制最新 Cookie，保持 Keychain 与浏览器会话同步、减少 401 触发面（浏览器会话存活时全程无需干预）。
+2. **失效自动拾取**：当服务端会话真正过期、浏览器同步失效导致刷新失败时，Token Eye 会自动在默认浏览器打开 MiMo 控制台登录页并发系统通知，**你只需在浏览器登录一次**；登录后下个 5 分钟重试周期自动拾取新 Cookie，无需手动跑脚本。
+
+也可以随时手动运行一键刷新脚本（支持 Edge / Chrome / Brave / Arc 任一已登录浏览器）：
 
 ```bash
 /usr/bin/python3 scripts/refresh-mimo-cookie.py

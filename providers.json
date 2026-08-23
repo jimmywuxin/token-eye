@@ -91,6 +91,7 @@
       "name": "MiMo",
       "keychainService": "MIMO_PLATFORM_TOKEN",
       "refreshParam": "refresh-mimo-cookie",
+      "refreshInterval": 21600,
       "consoleUrl": "https://platform.xiaomimimo.com/console/balance?userId=8012371",
       "api": {
         "url": "https://platform.xiaomimimo.com/api/v1/balance",

@@ -699,11 +699,41 @@ def notify_recovered(pid, name, kind_label, current_str, flags_dir, was_alerted=
     send_notify("Token Eye 已恢复", f"{name} {kind_label}已恢复（当前 {current_str}）")
 
 
-def auto_refresh_cookie(flags_dir, pid, refresh_script, fail_cooldown=300, success_cooldown=1800):
+def _open_login_page(flags_dir, pid, login_url, cooldown=1800):
+    """浏览器会话失效时自动打开登录页并通知用户（限频，避免反复弹窗）。
+
+    返回 True 表示本次真的执行了打开动作；限频内返回 False。
+    一旦用户登录，后续自动刷新成功即会拾取新 cookie，无需再手动跑脚本。
+    """
+    if not login_url:
+        return False
+    flag = _flag_path(flags_dir, pid, "loginopened")
+    now = int(time.time())
+    try:
+        if os.path.exists(flag):
+            with open(flag) as f:
+                last = int(f.read().strip() or 0)
+            if now - last < cooldown:
+                return False
+    except Exception:
+        pass
+    _write_flag(flag, str(now))
+    try:
+        subprocess.run(["open", login_url], timeout=10, capture_output=True)
+    except Exception:
+        pass
+    send_notify("Token Eye: 登录已过期", f"{pid} 会话失效，已在浏览器打开登录页，登录后自动续期")
+    return True
+
+
+def auto_refresh_cookie(flags_dir, pid, refresh_script, fail_cooldown=300, success_cooldown=1800,
+                        login_url=None):
     """自动刷新 Cookie（401 自愈）。
 
     - 失败后 fail_cooldown（默认 5 分钟）即可重试——会话可能很快恢复（如 Edge 重新打开）
     - 成功后 30 分钟防抖，避免反复打脚本
+    - 刷新失败通常意味着浏览器会话也同步过期：此时自动打开 login_url（默认控制台，
+      未登录会重定向到登录页）并通知用户，登录后下一个重试周期自动拾取新 cookie。
     标记内容：`<ts> ok|fail`（旧版纯数字视为 ok）
     """
     flag = _flag_path(flags_dir, pid, "autorefresh")
@@ -724,12 +754,44 @@ def auto_refresh_cookie(flags_dir, pid, refresh_script, fail_cooldown=300, succe
                            capture_output=True, text=True, timeout=30)
         if r.returncode == 0 and "HTTP=200" in r.stdout:
             _write_flag(flag, f"{now} ok")
+            _clear_flag(_flag_path(flags_dir, pid, "loginopened"))
             return True, ""
         _write_flag(flag, f"{now} fail")
+        if login_url:
+            _open_login_page(flags_dir, pid, login_url)
         return False, (r.stdout or r.stderr).strip()[-150:]
     except Exception as e:
         _write_flag(flag, f"{now} fail")
         return False, str(e)
+
+
+def proactive_refresh_cookie(flags_dir, pid, refresh_script, interval):
+    """主动续期：即使当前 cookie 仍有效，也按 interval（秒）从浏览器复制最新 cookie。
+
+    只要浏览器会话还活着，keychain 里的 cookie 就一直与浏览器保持同步，
+    从而显著减少 401 触发面。成功才推进 lastrefresh 标记（避免反复打脚本）。
+
+    返回：成功 True / 失败 False / 冷却中 None
+    """
+    flag = _flag_path(flags_dir, pid, "lastrefresh")
+    now = int(time.time())
+    try:
+        if os.path.exists(flag):
+            with open(flag) as f:
+                last = int(f.read().strip() or 0)
+            if now - last < interval:
+                return None
+    except Exception:
+        pass
+    try:
+        r = subprocess.run(["/usr/bin/python3", refresh_script],
+                           capture_output=True, text=True, timeout=30)
+        if r.returncode == 0 and "HTTP=200" in r.stdout:
+            _write_flag(flag, str(now))
+            return True
+        return False
+    except Exception:
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -786,7 +848,7 @@ def process_provider(p, config, colors, appearance, cache_dir, hdir, project_dir
                 and refresh_param):
             script = os.path.join(project_dir, "scripts", refresh_param + ".py")
             if os.path.exists(script):
-                refreshed, err = auto_refresh_cookie(hdir, pid, script)
+                refreshed, err = auto_refresh_cookie(hdir, pid, script, login_url=console_url)
                 log_debug(hdir, f"[{pid}] 自愈刷新: ok={refreshed} {err}")
                 if refreshed:
                     key2 = get_key(keychain)
@@ -801,6 +863,16 @@ def process_provider(p, config, colors, appearance, cache_dir, hdir, project_dir
                                         f"status={fetch_result.get('status')}")
                 elif err:
                     self_heal_err = err
+
+        # 主动续期：配置了 refreshInterval 时，即使当前 cookie 有效也按周期从浏览器
+        # 复制最新 cookie，保持 keychain 与浏览器会话同步，减少 401 触发面。
+        refresh_interval = p.get("refreshInterval")
+        if refresh_param and refresh_interval:
+            script = os.path.join(project_dir, "scripts", refresh_param + ".py")
+            if os.path.exists(script):
+                prev = proactive_refresh_cookie(hdir, pid, script, refresh_interval)
+                if prev is not None:
+                    log_debug(hdir, f"[{pid}] 主动续期: ok={prev}")
 
         if fetch_result["ok"]:
             save_cache(cache_dir, pid, {"ts": now, "data": fetch_result["data"]})

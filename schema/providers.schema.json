@@ -68,6 +68,11 @@
           "type": "string",
           "description": "鉴权错误时自动刷新 + 菜单手动刷新的脚本名（scripts/<refreshParam>.py）"
         },
+        "refreshInterval": {
+          "type": "integer",
+          "minimum": 60,
+          "description": "主动续期周期（秒）：即使 cookie 仍有效也定期从浏览器复制最新 cookie，保持 keychain 与浏览器会话同步，减少 401 触发面（仅对配置了 refreshParam 的 provider 生效）"
+        },
         "api": { "$ref": "#/definitions/api" },
         "parser": { "$ref": "#/definitions/parser" },
         "display": { "$ref": "#/definitions/display" },
