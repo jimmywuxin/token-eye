@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.17.0] - 2026-08-26
+
+### Changed
+- **详情菜单简约化（统一跨 provider 视觉）**：
+  - **MiniMax（plan_usage）**：详情从 4 行收敛为 2 行（5h / 7d 各一行 label + 进度条 + %），重置时间融入 5h 行末；移除括号内「可用/耗尽临近」文字（由图标 + 颜色传达）；窗口名默认 `5h / 7d`（可由 `parser.windowLabels` 覆盖）；移除 trend 趋势行（历史继续写入以便恢复）
+  - **DeepSeek / MiMo（balance）**：详情从 5–6 行收敛到 1–2 行（余额 + 今日消耗/预计可用合并行 + 近 7 天柱状）；移除 2.4h 趋势、本周/本月、「可用/不可用」副行；无消耗数据时详情退化到 1 行
+  - **菜单栏图标统一**：所有 provider menu_bar 前缀加 `✅ / ⚠️ / 🔴`（余额阈值 / 用量阈值 / 不可用），跨 provider 健康度一眼可见
+- **进度条口径切到「已用%」**（与 dsh-cost-meter coding plan 卡片一致）：阈值翻向 `>=80 warn / >=100 over`；源字段为剩余%的 provider（如 MiniMax）由 `parser.pctDirection: "remaining"`（默认）自动翻转；`alert.minPct` 阈值语义同步翻向（MiniMax 20 → 80）
+
+### Added
+- **告警阈值优先级链**（余额型）：API 字段（`parser.fields.alertThreshold`，预留接口）> `provider.alert.minBalance` > `parser.defaultMinBalance` > 不告警；优先级链解析集中在 `resolve_alert_threshold()`，menu_bar 图标与 `alert_check` 共用同一阈值（避免两处各算各的不一致）
+- **`parser.windowLabels`**（plan_usage）：自定义窗口显示名，默认 `{"interval":"5h","weekly":"7d"}`
+- **`parser.pctDirection`**（plan_usage）：`remaining | used`，默认 `remaining`（兼容 MiniMax 等历史 provider）；未来直接返回已用%的 provider 配 `"used"` 跳过翻转
+- **`parser.defaultMinBalance`**（balance）：按 parser 类型兜底的余额告警阈值
+- **`parser.fields.alertThreshold`**（balance）：指向 API 返回的告警阈值字段路径，平台有则自动读
+
 ## [0.16.0] - 2026-08-24
 
 ### Added
