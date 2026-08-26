@@ -515,11 +515,25 @@ def parse_provider(p, fetch_result, colors, appearance):
         raw = resolve_field(data, parser.get("arrayPath", "")) or []
         show = parser.get("showModels")
         labels = parser.get("modelLabels", {})
-        # status_map 兼容 int/str key
-        raw_status_map = parser.get("statusMap", {"1": "可用", "2": "耗尽临近", "3": "耗尽"})
-        status_map = {str(k): v for k, v in raw_status_map.items()}
         bar_length = parser.get("barLength", 20)
+        # 窗口显示名（label 后缀）：可由 provider.parser.windowLabels 覆盖，默认 5h / 7d
+        win_labels = parser.get("windowLabels", {"interval": "5h", "weekly": "7d"})
+        interval_label = win_labels.get("interval", "5h")
+        weekly_label = win_labels.get("weekly", "7d")
         item_lines, item_colors, menu_parts, boost_texts = [], [], [], []
+        # 已用%口径告警阈值（与 dsh-cost-meter coding plan 卡片一致：issue #57 统一方向）
+        USED_WARN_PCT = 80
+        USED_OVER_PCT = 100
+        # 字段语义：fields.intervalPct / weeklyPct 源数据的口径，由 parser.pctDirection 控制（默认 "remaining"，
+        # 因为 MiniMax / 当前所有已知 provider 返回的是剩余 %），解析层统一翻转为已用 % 后再渲染/告警。
+        # 未来有 provider 直接返回已用 % 时，配 "used" 即可跳过翻转。
+        pct_direction = parser.get("pctDirection", "remaining")
+
+        def _to_used(raw):
+            if pct_direction == "used":
+                return max(0, min(100, raw))
+            return max(0, min(100, 100 - raw))
+
         min_pct = None
         for item in raw:
             mname = str(resolve_field(item, fields.get("model", "")) or "")
@@ -532,65 +546,47 @@ def parse_provider(p, fetch_result, colors, appearance):
                 except (ValueError, TypeError):
                     return default
 
-            def _int_or_none(v):
-                val = resolve_field(item, fields.get(v, ""))
-                try:
-                    return int(val) if val is not None and str(val).strip() != "" else None
-                except (ValueError, TypeError):
-                    return None
-
-            pct = _int("intervalPct", 0)
-            interval_status = _int("intervalStatus", 0)
-            weekly_pct = _int("weeklyPct", 0)
-            weekly_status = _int("weeklyStatus", 0)
+            pct_raw = _int("intervalPct", 0)
+            weekly_pct_raw = _int("weeklyPct", 0)
             interval_boost = _int("intervalBoost", 1000)
             weekly_boost = _int("weeklyBoost", 1000)
             reset_ms = _int("resetMs", 0)
             reset = format_ms(reset_ms)
+            # 转为已用%供后续展示 / 告警 / min_pct 兜底
+            pct = _to_used(pct_raw)
+            weekly_pct = _to_used(weekly_pct_raw)
             label = labels.get(mname, mname)
             filled = max(1, pct * bar_length // 100) if pct > 0 else 0
             bar = "█" * filled + "░" * (bar_length - filled)
+            wfilled = max(1, weekly_pct * bar_length // 100) if weekly_pct > 0 else 0
+            wbar = "█" * wfilled + "░" * (bar_length - wfilled)
+            # 已用%口径：<80 ok / 80-99 warn / >=100 over
             color = colors["OK"]
-            if pct < 10:
+            if pct >= USED_OVER_PCT:
                 color = colors["ERR"]
-            elif pct < 20:
+            elif pct >= USED_WARN_PCT:
                 color = colors["WARN"]
-            icon = "✅" if pct >= 20 else ("⚠️" if pct >= 10 else "🔴")
+            wcolor = colors["OK"]
+            if weekly_pct >= USED_OVER_PCT:
+                wcolor = colors["ERR"]
+            elif weekly_pct >= USED_WARN_PCT:
+                wcolor = colors["WARN"]
+            icon = "🔴" if pct >= USED_OVER_PCT else ("⚠️" if pct >= USED_WARN_PCT else "✅")
             max_boost = max(interval_boost, weekly_boost)
             boost_tag = f" 🔥x{max_boost/1000:.1f}" if max_boost > 1000 else ""
             if boost_tag and boost_tag not in boost_texts:
                 boost_texts.append(boost_tag)
-            # 状态推导：percent 字段存在时优先按 pct 推断（与图标阈值一致）；
-            # percent 缺失（旧按次数平台）时用 statusMap，total=0 视为无套餐。
-            # 注意：total_count 字段在 MiniMax 新接口中已废弃、恒为 0，不能用于判断有无套餐。
-            no_quota_label = parser.get("noQuotaLabel", "无套餐")
-
-            def _state(pct_raw, status_val, total_val):
-                if pct_raw is not None:
-                    p = int(pct_raw)
-                    if p >= 20:
-                        return "可用"
-                    if p >= 10:
-                        return "耗尽临近"
-                    return "耗尽"
-                state = status_map.get(str(status_val), "未知")
-                if total_val == 0:
-                    return no_quota_label
-                return state
-
-            interval_state = _state(resolve_field(item, fields.get("intervalPct", "")),
-                                    interval_status, _int_or_none("intervalTotal"))
-            weekly_state = _state(resolve_field(item, fields.get("weeklyPct", "")),
-                                  weekly_status, _int_or_none("weeklyTotal"))
-            menu_parts.append(f"{icon} {label} {pct}%{boost_tag}")
+            # 简约风格：两行 label+进度条+%，重置时间放在 5h 行末（参考 dsh-cost-meter coding plan 卡片）。
+            # label 为空时省略前缀和冒号（如单模型 provider）。
+            prefix = f"{label}: " if label else ""
             item_lines.extend([
-                f"{label}: 5小时窗口 {pct}%（{interval_state}）",
-                f"  周窗口 {weekly_pct}%（{weekly_state}）",
-                f"  重置: {reset}",
-                f"  {bar} {pct}%",
+                f"{prefix}{interval_label} {pct}%  {bar}  重置 {reset}",
+                f"  {weekly_label} {weekly_pct}%  {wbar}",
             ])
-            item_colors.extend([NC, colors["SECONDARY"], colors["SECONDARY"], color])
-            if min_pct is None or pct < min_pct:
+            item_colors.extend([color, wcolor])
+            menu_tag = f"{icon} {pct}%{boost_tag}"
+            menu_parts.append(menu_tag)
+            if min_pct is None or pct > min_pct:
                 min_pct = pct
 
         if menu_parts:
@@ -940,19 +936,9 @@ def process_provider(p, config, colors, appearance, cache_dir, hdir, project_dir
             render.setdefault("colors", []).append(colors["SECONDARY"])
             render.setdefault("line_params", []).append(None)
 
-    # plan_usage 趋势（剩余百分比历史）
+    # plan_usage 趋势：用户要求不显示（迷你化菜单），历史继续写入以备将来恢复
     elif ptype == "plan_usage" and render.get("min_pct") is not None:
         append_history(hdir, pid, render["min_pct"])
-        hist = load_history(hdir, pid, HISTORY_LEN)
-        if len(hist) >= 2:
-            first_val, last_val = hist[0][1], hist[-1][1]
-            diff = last_val - first_val
-            change = f"{'+' if diff > 0 else ''}{diff:.0f}"
-            trend = sparkline([v for _, v in hist])
-            render.setdefault("lines", []).append(
-                f"  趋势: {trend}  {first_val:.0f}%→{last_val:.0f}% ({change}%)")
-            render.setdefault("colors", []).append(colors["SECONDARY"])
-            render.setdefault("line_params", []).append(None)
 
     # Alert check (balance 余额 / plan_usage 用量百分比) + 恢复通知
     if os.environ.get("TOKEN_EYE_NOTIFY", "1") != "0":
@@ -996,22 +982,24 @@ def process_provider(p, config, colors, appearance, cache_dir, hdir, project_dir
             else:
                 _clear_flag(_flag_path(hdir, pid, "daysalerted"))
         elif ptype == "plan_usage" and render.get("min_pct") is not None and alert_cfg:
-            min_pct = alert_cfg.get("minPct")
-            if min_pct is not None:
+            # min_pct 现为「已用%」（口径与 dsh-cost-meter coding plan 卡片一致）；告警阈值
+            # alert.minPct 也按已用% 配置——已用% 超过阈值才告警（与原「剩余% 低于阈值」语义镜像）。
+            max_used = alert_cfg.get("minPct")
+            if max_used is not None:
                 alerted = _flag_path(hdir, pid, "alerted")
                 was_alerted = os.path.exists(alerted)
-                if render["min_pct"] < int(min_pct):
+                if render["min_pct"] > int(max_used):
                     if not was_alerted:
                         _write_flag(alerted, str(render["min_pct"]))
                         send_notify("Token Eye 告警",
-                                    f"{name} 用量剩余仅 {render['min_pct']}%，低于阈值 {min_pct}%")
-                        log_debug(hdir, f"[{pid}] 触发用量告警（{render['min_pct']}% < {min_pct}%）")
+                                    f"{name} 用量已用 {render['min_pct']}%，超过阈值 {max_used}%")
+                        log_debug(hdir, f"[{pid}] 触发用量告警（{render['min_pct']}% > {max_used}%）")
                     _clear_flag(_flag_path(hdir, pid, "recovered"))
                 else:
                     _clear_flag(alerted)
                     if was_alerted:
                         notify_recovered(pid, name, "用量",
-                                         f"剩余 {render['min_pct']}%", hdir,
+                                         f"已用 {render['min_pct']}%", hdir,
                                          was_alerted=was_alerted)
 
     log_debug(hdir, f"[{pid}] 完成，总耗时 {time.time() - t0:.2f}s")

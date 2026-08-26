@@ -112,6 +112,20 @@
           "type": "object",
           "description": "状态码 -> 文案，默认 {1:可用, 2:耗尽临近, 3:耗尽}"
         },
+        "windowLabels": {
+          "type": "object",
+          "description": "plan_usage 详情菜单行首的窗口显示名，默认 {\"interval\":\"5h\",\"weekly\":\"7d\"}",
+          "properties": {
+            "interval": { "type": "string" },
+            "weekly": { "type": "string" }
+          },
+          "additionalProperties": true
+        },
+        "pctDirection": {
+          "type": "string",
+          "enum": ["remaining", "used"],
+          "description": "fields.intervalPct / weeklyPct 源数据的口径：remaining 表示剩余%（解析层会翻转为已用%渲染），used 表示已是已用%（直接用）。默认 remaining（兼容 MiniMax 等历史 provider）。"
+        },
         "barLength": { "type": "integer", "minimum": 1 },
         "noQuotaLabel": { "type": "string" },
         "okField": { "type": "string" },

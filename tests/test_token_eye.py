@@ -67,8 +67,9 @@ MINIMAX_P = {
             "weeklyBoost": "weekly_boost_permille",
             "resetMs": "remains_time",
         },
-        "modelLabels": {"general": "M2.7/M3 通用", "video": "视频"},
-        "showModels": ["general", "video"],
+        "modelLabels": {"general": "", "video": "视频"},
+        "showModels": ["general"],
+        "windowLabels": {"interval": "5h", "weekly": "7d"},
         "statusMap": {"1": "可用", "2": "耗尽临近", "3": "耗尽"},
         "barLength": 20,
     },
@@ -322,12 +323,20 @@ class TestParsePlanUsage(unittest.TestCase):
     def test_render(self):
         r = te.parse_provider(MINIMAX_P, ok_result(self.sample_data()), COLORS, "dark")
         self.assertEqual(r["status"], "ok")
-        self.assertIn("✅ M2.7/M3 通用 92% 🔥x2.0", r["menu_bar"])
-        self.assertEqual(r["min_pct"], 40)
-        self.assertIn("M2.7/M3 通用: 5小时窗口 92%（可用）", r["lines"])
-        self.assertIn("  周窗口 100%（可用）", r["lines"])
-        self.assertIn("  重置: 1h0m", r["lines"])
-        self.assertIn("  ██████████████████░░ 92%", r["lines"])
+        # 仅显示 general（已停 video），label 为空 → menu_bar 只剩图标+%
+        # 进度条 / 图标 / min_pct 全部按「已用%」口径（与 dsh-cost-meter 一致）：
+        # general: 剩余 92% → 已用 8%；周: 剩余 100% → 已用 0%
+        self.assertIn("✅ 8% 🔥x2.0", r["menu_bar"])
+        self.assertNotIn("视频", r["menu_bar"])
+        self.assertEqual(r["min_pct"], 8)
+        # 简约风格：label 为空 → 去掉前缀；窗口名 5h / 7d；进度条按已用%填充（8% 几乎全空）
+        self.assertIn("5h 8%  █░░░░░░░░░░░░░░░░░░░  重置 1h0m", r["lines"])
+        self.assertIn("  7d 0%  ░░░░░░░░░░░░░░░░░░░░", r["lines"])
+        # 旧格式（带括号状态文字 / 「M2.7/M3 通用:」前缀 / 「周窗口」/「视频」）已停用
+        self.assertFalse(any("5小时窗口" in line for line in r["lines"]))
+        self.assertFalse(any("（可用）" in line or "（耗尽）" in line for line in r["lines"]))
+        self.assertFalse(any("M2.7/M3 通用:" in line for line in r["lines"]))
+        self.assertFalse(any("周窗口" in line for line in r["lines"]))
 
     def test_show_models_filter(self):
         data = {"model_remains": self.sample_data()["model_remains"] +
@@ -343,7 +352,7 @@ class TestParsePlanUsage(unittest.TestCase):
         self.assertNotIn("speech-hd", r["menu_bar"])
 
     def test_status_percent_priority(self):
-        """percent 存在时优先按 pct 推断状态，忽略 status 码与废弃的 total_count 字段
+        """percent 存在时优先按 pct 推断状态（图标 + 颜色），忽略 status 码与废弃的 total_count 字段
         （MiniMax 新接口 total_count 恒为 0，即使有真实套餐）。"""
         data = {"model_remains": [{
             "model_name": "general",
@@ -355,13 +364,17 @@ class TestParsePlanUsage(unittest.TestCase):
             "remains_time": 3600000}]}
         r = te.parse_provider(MINIMAX_P, ok_result(data), COLORS, "dark")
         lines = r["lines"]
-        # 90% → 可用；周窗口 100% + status 3（矛盾）→ 按 pct 显示可用，不再误报「耗尽/无套餐」
-        self.assertTrue(any("5小时窗口 90%（可用）" in line for line in lines))
-        self.assertTrue(any("周窗口 100%（可用）" in line for line in lines))
+        # 已用%：剩余 90% → 已用 10%；剩余 100% → 已用 0%
+        self.assertTrue(any("5h 10%" in line for line in lines))
+        self.assertTrue(any("7d 0%" in line for line in lines))
         self.assertFalse(any("无套餐" in line for line in lines))
         self.assertFalse(any("耗尽" in line for line in lines))
+        # 已用% < 80 → OK 色
+        self.assertEqual(r["colors"][1], COLORS["OK"])
+        self.assertEqual(r["colors"][2], COLORS["OK"])
 
     def test_status_low_pct_maps_to_warning(self):
+        """已用% ≥ 80 → WARN 色 + ⚠️ 图标（已用口径，与 dsh-cost-meter 一致）。"""
         data = {"model_remains": [{
             "model_name": "general",
             "current_interval_remaining_percent": 15, "current_interval_status": 1,
@@ -372,10 +385,14 @@ class TestParsePlanUsage(unittest.TestCase):
             "remains_time": 3600000}]}
         r = te.parse_provider(MINIMAX_P, ok_result(data), COLORS, "dark")
         lines = r["lines"]
-        self.assertTrue(any("5小时窗口 15%（耗尽临近）" in line for line in lines))
+        # 剩余 15% → 已用 85%（>= 80 → WARN）
+        self.assertTrue(any("5h 85%" in line for line in lines))
+        self.assertEqual(r["colors"][1], COLORS["WARN"])
+        self.assertIn("⚠️", r["menu_bar"])
 
     def test_status_fallback_without_percent(self):
-        """percent 缺失（旧按次数平台）→ 用 statusMap；total=0 时才显示「无套餐」。"""
+        """percent 缺失（旧按次数平台）：源字段缺省视为 0，按 remaining 翻转即已用 100%（ERR 色 + 🔴）。
+        这是当前实现的硬性约定——若无 pct 字段，渲染为「已用 100%」告警态。"""
         import copy
         p = copy.deepcopy(MINIMAX_P)
         p["parser"]["fields"] = {k: v for k, v in p["parser"]["fields"].items()
@@ -390,8 +407,10 @@ class TestParsePlanUsage(unittest.TestCase):
             "remains_time": 3600000}]}
         r = te.parse_provider(p, ok_result(data), COLORS, "dark")
         lines = r["lines"]
-        self.assertTrue(any("5小时窗口 0%（无套餐）" in line for line in lines))
-        self.assertTrue(any("周窗口 0%（可用）" in line for line in lines))
+        # 源缺省 0 → 翻转后已用 100%（≥100 ERR + 🔴）
+        self.assertTrue(any("5h 100%" in line for line in lines))
+        self.assertTrue(any("7d 100%" in line for line in lines))
+        self.assertFalse(any("（无套餐）" in line for line in lines))
 
     def test_warning_colors_below_threshold(self):
         data = {"model_remains": [{
@@ -403,8 +422,10 @@ class TestParsePlanUsage(unittest.TestCase):
             "interval_boost_permille": 1000, "weekly_boost_permille": 1000,
             "remains_time": 3600000}]}
         r = te.parse_provider(MINIMAX_P, ok_result(data), COLORS, "dark")
+        # 剩余 15% → 已用 85%（≥80 WARN + ⚠️）；周剩余 90% → 已用 10%（OK）
         self.assertIn("⚠️", r["menu_bar"])
-        self.assertEqual(r["colors"][-1], COLORS["WARN"])
+        self.assertEqual(r["colors"][1], COLORS["WARN"])
+        self.assertEqual(r["colors"][2], COLORS["OK"])
 
     def test_empty(self):
         r = te.parse_provider(MINIMAX_P, ok_result({"model_remains": []}), COLORS, "dark")
@@ -1096,8 +1117,8 @@ class TestProcessProvider(unittest.TestCase):
         self.assertIn("¥50.00→48.00", trend)
         self.assertIn("(-2.00)", trend)
 
-    def test_plan_usage_trend_line(self):
-        """用量类：剩余百分比历史 → 详情菜单出现趋势线。"""
+    def test_plan_usage_no_trend_line(self):
+        """用量类详情菜单不再出现趋势行（简约化）；历史仍继续写入以便将来恢复。"""
         day0 = te.start_of_day()
         with open(os.path.join(self.dir, "history-minimax.jsonl"), "w") as f:
             f.write(f"{day0 + 100},{80.0}\n")
@@ -1112,8 +1133,8 @@ class TestProcessProvider(unittest.TestCase):
         r = te.process_provider(MINIMAX_P, {"cache": {"plan_usage": 30}}, COLORS, "dark",
                                 self.dir, self.dir, "/tmp")
         self.assertEqual(r["status"], "ok")
-        self.assertTrue(any("趋势" in line and "(+10%)" in line for line in r["lines"]),
-                        f"缺趋势行: {r['lines']}")
+        self.assertFalse(any("趋势" in line for line in r["lines"]),
+                         f"不应出现趋势行: {r['lines']}")
 
     def test_balance_consumption_lines(self):
         """余额类：预计可用 / 本周本月 / 近7天柱状 三行都出现。"""

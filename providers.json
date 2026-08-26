@@ -57,16 +57,19 @@
           "resetMs": "remains_time"
         },
         "modelLabels": {
-          "general": "M2.7/M3 通用",
+          "general": "",
           "video": "视频",
           "speech-hd": "语音",
           "image-01": "图片",
           "music-2.5": "音乐"
         },
         "showModels": [
-          "general",
-          "video"
+          "general"
         ],
+        "windowLabels": {
+          "interval": "5h",
+          "weekly": "7d"
+        },
         "statusMap": {
           "1": "可用",
           "2": "耗尽临近",
@@ -83,7 +86,7 @@
         }
       },
       "alert": {
-        "minPct": 20
+        "minPct": 80
       }
     },
     {
