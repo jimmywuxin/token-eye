@@ -168,13 +168,13 @@ class TestCurrencySymbol(unittest.TestCase):
         })
         r = te.parse_provider(p, ok_result({
             "balance_infos": [{"total_balance": 13.5, "currency": "EUR"}]}), COLORS, "dark")
-        self.assertEqual(r["menu_bar"], "€13.5")
+        self.assertEqual(r["menu_bar"], "✅ €13.5")
         self.assertEqual(r["symbol"], "€")
 
     def test_unknown_currency_defaults_yen(self):
         r = te.parse_provider(BALANCE_P, ok_result({
             "balance_infos": [{"total_balance": 13.5, "currency": "XYZ"}]}), COLORS, "dark")
-        self.assertEqual(r["menu_bar"], "¥13.5")
+        self.assertEqual(r["menu_bar"], "✅ ¥13.5")
 
 
 class TestNotifyRecovered(unittest.TestCase):
@@ -262,19 +262,20 @@ class TestParseBalance(unittest.TestCase):
         r = te.parse_provider(BALANCE_P, ok_result({
             "balance_infos": [{"total_balance": 13.5, "currency": "CNY"}]}), COLORS, "dark")
         self.assertEqual(r["status"], "ok")
-        self.assertEqual(r["menu_bar"], "¥13.5")
+        self.assertEqual(r["menu_bar"], "✅ ¥13.5")
         self.assertEqual(r["balance_num"], 13.5)
-        self.assertEqual(r["lines"], ["DeepSeek: ¥13.5", "可用"])
+        # 简约化：余额类详情只有 1 行（不再有"可用"行，状态由 menu_bar 图标传达）
+        self.assertEqual(r["lines"], ["DeepSeek: ¥13.5"])
 
     def test_usd(self):
         r = te.parse_provider(BALANCE_P, ok_result({
             "balance_infos": [{"total_balance": 8.0, "currency": "USD"}]}), COLORS, "dark")
-        self.assertEqual(r["menu_bar"], "$8.0")
+        self.assertEqual(r["menu_bar"], "✅ $8.0")
 
     def test_missing_balance(self):
         r = te.parse_provider(BALANCE_P, ok_result({
             "balance_infos": [{"currency": "CNY"}]}), COLORS, "dark")
-        self.assertEqual(r["menu_bar"], "¥?")
+        self.assertEqual(r["menu_bar"], "✅ ¥?")
         self.assertIsNone(r["balance_num"])
 
     def test_not_available(self):
@@ -282,7 +283,9 @@ class TestParseBalance(unittest.TestCase):
             "balance_infos": [{"total_balance": 1.0, "currency": "CNY"}],
             "is_available": False}), COLORS, "dark")
         self.assertEqual(r["status"], "warn")
-        self.assertIn("不可用", r["lines"][1])
+        # 🔴 图标 + 警告状态；余额展示仍走"可用"路径（avail 标志仅影响图标/status）
+        self.assertIn("🔴", r["menu_bar"])
+        self.assertNotIn("✅", r["menu_bar"])
 
 
 class TestParseStatus(unittest.TestCase):
@@ -862,7 +865,8 @@ class TestLineParams(unittest.TestCase):
         r = te.parse_provider(BALANCE_P, ok_result({
             "balance_infos": [{"total_balance": 13.5, "currency": "CNY"}]}), COLORS, "dark")
         self.assertEqual(r["line_params"][0], {"param1": "copy-balance", "param2": "¥13.5"})
-        self.assertIsNone(r["line_params"][1])
+        # 简约化后余额类详情只有 1 行（去掉了"可用/不可用"行），line_params 仅 1 项
+        self.assertEqual(len(r["line_params"]), 1)
 
     def test_line_params_rendered(self):
         r = {"id": "a", "name": "A", "status": "ok", "menu_bar": "¥1",
@@ -1052,7 +1056,7 @@ class TestProcessProvider(unittest.TestCase):
         r = te.process_provider(p, {"cache": {"balance": 300}}, COLORS, "dark",
                                 self.dir, self.dir, "/tmp")
         self.assertEqual(r["status"], "ok")
-        self.assertEqual(r["menu_bar"], "¥8.41")
+        self.assertEqual(r["menu_bar"], "✅ ¥8.41")
 
     def test_cache_error_hit(self):
         self.cache("deepseek", {"ts": int(time.time()), "data": None,
@@ -1099,11 +1103,13 @@ class TestProcessProvider(unittest.TestCase):
         r = te.process_provider(BALANCE_P, {"cache": {"balance": 300}}, COLORS, "dark",
                                 self.dir, self.dir, "/tmp")
         self.assertEqual(r["status"], "ok")
-        self.assertTrue(any("今日消耗: ¥2.00" in line for line in r["lines"]),
-                        f"缺今日消耗行: {r['lines']}")
+        merged = [line for line in r["lines"] if "今日消耗" in line]
+        self.assertEqual(len(merged), 1, f"合并行应唯一: {merged}")
+        self.assertIn("今日消耗 ¥2.00", merged[0])
+        self.assertIn("预计可用", merged[0])
 
     def test_balance_trend_shows_range_and_window_delta(self):
-        """趋势行：显示窗口首尾绝对值 + 首尾差值（与走势图形状一致，而非相邻差值）。"""
+        """余额类详情菜单不再出现 2.4h 趋势行（简约化）；历史继续写入以便将来恢复。"""
         day0 = te.start_of_day()
         with open(os.path.join(self.dir, "history-deepseek.jsonl"), "w") as f:
             f.write(f"{day0 + 100},{50.0}\n")
@@ -1113,9 +1119,9 @@ class TestProcessProvider(unittest.TestCase):
                                 "data": {"balance_infos": [{"total_balance": 48.0, "currency": "CNY"}]}})
         r = te.process_provider(BALANCE_P, {"cache": {"balance": 300}}, COLORS, "dark",
                                 self.dir, self.dir, "/tmp")
-        trend = [line for line in r["lines"] if "趋势" in line][0]
-        self.assertIn("¥50.00→48.00", trend)
-        self.assertIn("(-2.00)", trend)
+        self.assertEqual(r["status"], "ok")
+        self.assertFalse(any("趋势" in line for line in r["lines"]),
+                         f"不应出现趋势行: {r['lines']}")
 
     def test_plan_usage_no_trend_line(self):
         """用量类详情菜单不再出现趋势行（简约化）；历史仍继续写入以便将来恢复。"""
@@ -1137,7 +1143,7 @@ class TestProcessProvider(unittest.TestCase):
                          f"不应出现趋势行: {r['lines']}")
 
     def test_balance_consumption_lines(self):
-        """余额类：预计可用 / 本周本月 / 近7天柱状 三行都出现。"""
+        """余额类：今日消耗+预计可用合并行 + 近7天柱状 都出现（不再有本周/本月）。"""
         day0 = te.start_of_day()
         with open(os.path.join(self.dir, "history-deepseek.jsonl"), "w") as f:
             f.write(f"{day0 + 100},{50.0}\n")
@@ -1147,9 +1153,13 @@ class TestProcessProvider(unittest.TestCase):
         r = te.process_provider(BALANCE_P, {"cache": {"balance": 300}}, COLORS, "dark",
                                 self.dir, self.dir, "/tmp")
         lines = "\n".join(r["lines"])
+        self.assertIn("今日消耗", lines)
         self.assertIn("预计可用", lines)
-        self.assertIn("本周", lines)
         self.assertIn("近7天", lines)
+        # 本周/本月 / 趋势 已合并/删除
+        self.assertNotIn("本周", lines)
+        self.assertNotIn("本月", lines)
+        self.assertNotIn("趋势:", lines)
 
     def test_daily_spend_max_alert_dedup(self):
         """alert.dailySpendMax：当日消耗超上限 → 告警一次，去重。"""
@@ -1203,7 +1213,7 @@ class TestProcessProvider(unittest.TestCase):
              mock.patch.object(te, "send_notify"):
             r = te.process_provider(p, cfg, COLORS, "dark", d, d, REPO_ROOT)
         self.assertEqual(r["status"], "ok")
-        self.assertEqual(r["menu_bar"], "¥5.0")
+        self.assertEqual(r["menu_bar"], "✅ ¥5.0")
         m_refresh.assert_called_once()
         self.assertEqual(m_fetch.call_count, 2)  # 刷新后重试了一次
 

@@ -116,7 +116,7 @@ Python 核心逻辑：
 
 - `cache` — 按 parser 类型设置缓存 TTL（秒），默认 balance 300 / plan_usage 30 / status 60
 - `menuBar.showSummary` — 菜单栏汇总：false 不显示 / true 全部 / id 数组（如 `["deepseek","mimo"]`）只显示指定平台
-- `alerts.{id}.minBalance` — balance 类余额阈值告警
+- `alerts.{id}.minBalance` — balance 类余额阈值告警（按 parser 类型 balance 的阈值优先级链：API 字段阈值 `parser.fields.alertThreshold` > `provider.alert.minBalance` > `parser.defaultMinBalance` > 不告警；前两项均无则用兜底默认）
 - `alerts.{id}.minPct` — plan_usage 类用量告警阈值（**已用%** 方向，与 dsh-cost-meter coding plan 卡片一致；已用% 超过阈值触发告警，如 minimax `{"minPct": 80}`）
 - `colors.{dark,light}` — 自适应配色
 

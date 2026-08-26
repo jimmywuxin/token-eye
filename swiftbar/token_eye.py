@@ -472,7 +472,6 @@ def parse_provider(p, fetch_result, colors, appearance):
         currency = resolve_field(data, fields.get("currency", "CNY")) or "CNY"
         symbol = currency_symbol(display, currency)
         avail = data.get("is_available", True) if isinstance(data, dict) else True
-        status = "ok" if avail else "warn"
         balance_num = None
         if balance is not None:
             try:
@@ -482,18 +481,30 @@ def parse_provider(p, fetch_result, colors, appearance):
                 balance_str = str(balance)
         else:
             balance_str = "?"
-        return {
+        # 阈值解析（API 字段 > provider.alert.minBalance > parser.defaultMinBalance > None）
+        min_balance = resolve_alert_threshold(p.get("alert"), parser, data)
+        # 图标：余额 < 阈值 → ⚠️；不可用（avail=False）→ 🔴；其余 ✅。阈值未配默认 ✅
+        if not avail:
+            icon, status = "🔴", "warn"
+        elif min_balance is not None and balance_num is not None and balance_num < min_balance:
+            icon, status = "⚠️", "warn"
+        else:
+            icon, status = "✅", "ok"
+        result = {
             "id": pid, "name": name, "status": status,
-            "menu_bar": f"{symbol}{balance_str}",
-            "lines": [f"{name}: {symbol}{balance_str}", "可用" if avail else "不可用"],
-            "colors": [NC, colors["OK"] if avail else colors["ERR"]],
+            "menu_bar": f"{icon} {symbol}{balance_str}",
+            "lines": [f"{name}: {symbol}{balance_str}"],
+            "colors": [NC],
             "console_url": console_url,
             "balance_num": balance_num,
             "currency": currency,
             "symbol": symbol,
             # 行级交互：第一行点击复制余额到剪贴板
-            "line_params": [{"param1": "copy-balance", "param2": f"{symbol}{balance_str}"}, None],
+            "line_params": [{"param1": "copy-balance", "param2": f"{symbol}{balance_str}"}],
         }
+        if min_balance is not None:
+            result["min_balance"] = min_balance
+        return result
 
     elif ptype == "status":
         ok_field = parser.get("okField", "")
@@ -663,11 +674,47 @@ def log_debug(hdir, msg):
         pass
 
 
-def alert_check(pid, name, balance_val, alert_cfg, flags_dir):
-    """余额告警（去重）：低于阈值且未标记过 → 返回通知文案并打标记。"""
-    if not alert_cfg:
-        return None
-    min_bal = alert_cfg.get("minBalance")
+def resolve_alert_threshold(alert_cfg, parser_cfg, fetched_data):
+    """余额告警阈值优先级链：
+      1. API 返回的阈值字段（parser.fields.alertThreshold 指向的路径，非空数值）— 自动跟随平台规则
+      2. provider.alert.minBalance（显式配置）
+      3. provider.parser.defaultMinBalance（按 parser 类型兜底）
+      4. 全都不配 → None（不告警）
+    返回最小余额阈值（float）或 None。"""
+    # 1) API 阈值字段（预留：未来哪个 balance API 真返回阈值字段就能自动接）
+    fields = (parser_cfg or {}).get("fields", {}) or {}
+    threshold_path = fields.get("alertThreshold")
+    if threshold_path and isinstance(fetched_data, dict):
+        v = resolve_field(fetched_data, threshold_path)
+        if v is not None:
+            try:
+                return float(v)
+            except (ValueError, TypeError):
+                pass
+    # 2) provider.alert.minBalance
+    if alert_cfg:
+        v = alert_cfg.get("minBalance")
+        if v is not None:
+            try:
+                return float(v)
+            except (ValueError, TypeError):
+                pass
+    # 3) provider.parser.defaultMinBalance（按 parser 类型兜底）
+    if parser_cfg:
+        v = parser_cfg.get("defaultMinBalance")
+        if v is not None:
+            try:
+                return float(v)
+            except (ValueError, TypeError):
+                pass
+    return None
+
+
+def alert_check(pid, name, balance_val, alert_cfg, flags_dir, min_bal=None):
+    """余额告警（去重）：低于阈值且未标记过 → 返回通知文案并打标记。
+    min_bal 优先（process_provider 已 resolve 过阈值）；alert_cfg.minBalance 作为兜底。"""
+    if min_bal is None and alert_cfg:
+        min_bal = alert_cfg.get("minBalance")
     if min_bal is None:
         return None
     try:
@@ -888,47 +935,32 @@ def process_provider(p, config, colors, appearance, cache_dir, hdir, project_dir
 
     render = parse_provider(p, fetch_result, colors, appearance)
 
-    # Balance history（趋势 + 当日变化 + 消耗统计与预测）
+    # 阈值已由 parse_provider 统一解析并写入 render["min_balance"]；此处读出来给 alert_check 用，
+    # 避免两处各算各的不一致（特别是 API 字段阈值场景下）。
+    min_balance = render.get("min_balance")
+
+    # Balance history + 简约消耗视图（今日消耗 + 预计可用合并为一行；近 7 天柱状独立一行）
+    # 余额型 provider（DeepSeek / MiMo 等）无总额上限，故不展示进度条。
     if ptype == "balance" and render.get("balance_num") is not None:
         append_history(hdir, pid, render["balance_num"])
-        hist = load_history(hdir, pid, HISTORY_LEN)
-        if len(hist) >= 2:
-            first_val, last_val = hist[0][1], hist[-1][1]
-            diff = last_val - first_val
-            symbol = render.get("symbol", "¥")
-            change = f"{'+' if diff > 0 else ''}{diff:.2f}"
-            trend = sparkline([v for _, v in hist])
-            render.setdefault("lines", []).append(
-                f"  趋势: {trend}  {symbol}{first_val:.2f}→{last_val:.2f} ({change})")
-            render.setdefault("colors", []).append(colors["SECONDARY"])
-            render.setdefault("line_params", []).append(None)
         symbol = render.get("symbol", "¥")
-        # 今日消耗估算：相邻余额快照下降量之和（充值会抬升余额，下降量不受干扰）
+        # 今日消耗估算（相邻余额快照下降量之和，充值抬升余额的尖刺不受干扰）
         spend, pts = daily_spend(hdir, pid)
         render["_daily_spend"] = spend
-        if pts >= 2 and spend > 0:
-            render.setdefault("lines", []).append(f"  今日消耗: {symbol}{spend:.2f}")
-            render.setdefault("colors", []).append(colors["SECONDARY"])
-            # 行级交互：点今日消耗行 → 打开控制台（充值/账单）
-            render.setdefault("line_params", []).append(
-                {"href": console_url} if console_url else None)
         # 预计可用天数（按最近 24h 消耗速率外推）
         days = days_left(hdir, pid, render["balance_num"])
         render["_days_left"] = days
-        if days is not None:
-            text = f"  预计可用: ~{days:.1f} 天" if days < 30 else f"  预计可用: 充足（>{days:.0f} 天）"
-            render.setdefault("lines", []).append(text)
+        # 行 1：今日消耗 + 预计可用（合并显示，最有业务价值的一行）
+        if pts >= 2 and spend > 0:
+            left = f"  今日消耗 {symbol}{spend:.2f}"
+            if days is not None:
+                left += "  预计可用 " + (f"~{days:.1f} 天" if days < 30 else f"充足（>{days:.0f} 天）")
+            render.setdefault("lines", []).append(left)
             render.setdefault("colors", []).append(colors["SECONDARY"])
-            render.setdefault("line_params", []).append(None)
-        # 本周 / 本月消耗
-        wk, wp = consumption_since(hdir, pid, start_of_week())
-        mo, mp = consumption_since(hdir, pid, start_of_month())
-        if (wp >= 2 and wk > 0) or (mp >= 2 and mo > 0):
-            render.setdefault("lines", []).append(
-                f"  本周 {symbol}{wk:.2f} · 本月 {symbol}{mo:.2f}")
-            render.setdefault("colors", []).append(colors["SECONDARY"])
-            render.setdefault("line_params", []).append(None)
-        # 近 7 天每日消耗柱状图（右 = 今天）
+            # 点这一行打开控制台（充值/账单）
+            render.setdefault("line_params", []).append(
+                {"href": console_url} if console_url else None)
+        # 行 2：近 7 天每日消耗柱状图（右 = 今天）
         series = daily_spend_series(hdir, pid, 7)
         if any(v > 0 for v in series):
             bars = sparkline(series) if max(series) > 0 else "·" * 7
@@ -945,7 +977,7 @@ def process_provider(p, config, colors, appearance, cache_dir, hdir, project_dir
         if ptype == "balance" and render.get("balance_num") is not None:
             alerted = _flag_path(hdir, pid, "alerted")
             was_alerted = os.path.exists(alerted)
-            notify_msg = alert_check(pid, name, render["balance_num"], alert_cfg, hdir)
+            notify_msg = alert_check(pid, name, render["balance_num"], alert_cfg, hdir, min_bal=min_balance)
             if notify_msg:
                 _clear_flag(_flag_path(hdir, pid, "recovered"))
                 send_notify("Token Eye 告警", notify_msg)
