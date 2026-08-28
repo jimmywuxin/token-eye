@@ -21,7 +21,7 @@ import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-VERSION = "0.17.0"
+VERSION = "0.17.1"
 
 # 按 parser 类型的默认缓存 TTL（秒）
 DEFAULT_CACHE_TTL = {"balance": 300, "plan_usage": 30, "status": 60}
@@ -769,11 +769,12 @@ def _open_login_page(flags_dir, pid, login_url, cooldown=1800):
     return True
 
 
-def auto_refresh_cookie(flags_dir, pid, refresh_script, fail_cooldown=300, success_cooldown=1800,
+def auto_refresh_cookie(flags_dir, pid, refresh_script, fail_cooldown=60, success_cooldown=1800,
                         login_url=None):
     """自动刷新 Cookie（401 自愈）。
 
-    - 失败后 fail_cooldown（默认 5 分钟）即可重试——会话可能很快恢复（如 Edge 重新打开）
+    - 失败后 fail_cooldown（默认 1 分钟）即可重试——会话可能很快恢复（如 Edge 重新打开；
+      用户重新登录后最多等 1 分钟即自动拾取新 cookie，不愿等可点菜单「🔄 刷新 Cookie」立即重试）
     - 成功后 30 分钟防抖，避免反复打脚本
     - 刷新失败通常意味着浏览器会话也同步过期：此时自动打开 login_url（默认控制台，
       未登录会重定向到登录页）并通知用户，登录后下一个重试周期自动拾取新 cookie。
@@ -789,7 +790,8 @@ def auto_refresh_cookie(flags_dir, pid, refresh_script, fail_cooldown=300, succe
             kind = parts[1] if len(parts) > 1 else "ok"
             cooldown = success_cooldown if kind == "ok" else fail_cooldown
             if now - last < cooldown:
-                return False, f"冷却中（{'成功' if kind == 'ok' else '失败'}后 {cooldown // 60} 分钟内已尝试过）"
+                return False, (f"冷却中（{'成功' if kind == 'ok' else '失败'}后 {cooldown // 60} 分钟内已尝试过），"
+                               f"可点菜单「🔄 刷新 Cookie」立即重试")
     except Exception:
         pass
     try:

@@ -184,6 +184,12 @@ def main():
     code = body[1] if len(body) > 1 else "?"
     print(f"balance API: HTTP={code}")
     if code == "200":
+        # 刷新成功 → 清掉 Token Eye 的错误短缓存（路径约定见 swiftbar/token_eye.py cache_path），
+        # 让下一次渲染（菜单点击自带的 refresh=true）立即重拉余额，不用等 10s 错误缓存过期
+        try:
+            os.unlink("/tmp/token-eye-cache-mimo.json")
+        except OSError:
+            pass
         print("✅ Cookie 有效，Token Eye 余额显示已可用")
     else:
         print(f"⚠️ HTTP {code}，Cookie 可能无效或过期: {body[0][:150]}")

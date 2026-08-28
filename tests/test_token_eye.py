@@ -921,11 +921,12 @@ class TestAutoRefreshCooldown(unittest.TestCase):
         self.assertFalse(ok)
         with open(self.flag_path()) as f:
             self.assertTrue(f.read().strip().endswith(" fail"))
-        # 失败后 5 分钟内 → 冷却（信息标注失败）
+        # 失败后 1 分钟内 → 冷却（信息标注失败，并引导点菜单立即重试）
         with mock.patch.object(te.subprocess, "run") as m:
             ok2, msg = te.auto_refresh_cookie(self.dir, "mimo", "/x")
         self.assertFalse(ok2)
-        self.assertIn("失败后 5 分钟", msg)
+        self.assertIn("失败后 1 分钟", msg)
+        self.assertIn("立即重试", msg)
         m.assert_not_called()
 
     def test_old_format_flag_treated_as_ok(self):
@@ -938,7 +939,7 @@ class TestAutoRefreshCooldown(unittest.TestCase):
         m.assert_not_called()
 
     def test_fail_cooldown_expired_retries(self):
-        # 失败标记已超过 5 分钟 → 重新执行
+        # 失败标记已超过 1 分钟 → 重新执行
         te._write_flag(self.flag_path(), f"{int(time.time()) - 400} fail")
         with mock.patch.object(te.subprocess, "run",
                                return_value=mock.Mock(returncode=0, stdout="HTTP=200")):

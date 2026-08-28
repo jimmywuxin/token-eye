@@ -139,7 +139,7 @@ Python 核心逻辑：
 - MiMo platform API（`/api/v1/balance`）要求**完整 Cookie 组合**（ph + serviceToken + slh + userId），仅单个 Cookie 返回 401
 - 完整 Cookie 串存 Keychain 单个条目 `MIMO_PLATFORM_TOKEN`，provider 配 `authHeader: "Cookie"` + `authPrefix: ""`
 - Cookie 为会话级，过期后运行 `scripts/refresh-mimo-cookie.py` 一键刷新（支持 Edge / Chrome / Brave / Arc，从任一已登录浏览器解密提取）
-- **半自动刷新机制**：`refreshInterval` 按周期主动续 cookie（浏览器会话存活时 keychain 始终最新）；当服务端会话真正过期、浏览器同步失效导致刷新失败时，自动在默认浏览器打开 `consoleUrl` 登录页并发系统通知（`token-eye-loginopened-*.flag` 30 分钟限频），登录后下个 5 分钟重试周期自动拾取新 cookie——**无需再手动跑刷新脚本**
+- **半自动刷新机制**：`refreshInterval` 按周期主动续 cookie（浏览器会话存活时 keychain 始终最新）；当服务端会话真正过期、浏览器同步失效导致刷新失败时，自动在默认浏览器打开 `consoleUrl` 登录页并发系统通知（`token-eye-loginopened-*.flag` 30 分钟限频），登录后下个 1 分钟重试周期自动拾取新 cookie——**无需再手动跑刷新脚本**；不愿等可点菜单「🔄 刷新 Cookie」立即重试（该菜单项不受冷却限制）
 
 详细配置示例见 `README.md`。
 
@@ -160,7 +160,7 @@ Python 核心逻辑：
 - SwiftBar 刷新间隔：30 秒（脚本内 `# <bitbar.refreshTime>30</bitbar.refreshTime>` 声明）
 - 缓存文件位于 `/tmp/token-eye-cache-{id}.json`，失败请求 10s 短缓存避免连续打 API
 - 告警去重/自愈防抖标记位于 `~/Library/Caches/token-eye/token-eye-{alerted|recovered|autorefresh}-{id}.flag`（持久化，重启不丢）；余额/用量恢复时发「已恢复」通知（去重）
-- 自愈冷却策略：`autorefresh` 标记内容为 `<ts> ok|fail`——**失败后 5 分钟可重试**（会话可能很快恢复），成功后 30 分钟防抖；自愈失败原因会显示在错误菜单
+- 自愈冷却策略：`autorefresh` 标记内容为 `<ts> ok|fail`——**失败后 1 分钟可重试**（会话可能很快恢复），成功后 30 分钟防抖；自愈失败原因会显示在错误菜单（含「点菜单 🔄 刷新 Cookie 立即重试」引导）；`refresh-mimo-cookie.py` 刷新成功时会清掉错误短缓存，下次渲染立即重拉余额
 - 半自动刷新额外标记（均在 `~/Library/Caches/token-eye/`）：`token-eye-loginopened-{id}.flag` 记录自动打开登录页的时间戳（30 分钟限频）；`token-eye-lastrefresh-{id}.flag` 记录主动续期成功的时间戳（用于 `refreshInterval` 节流）
 - 历史文件（history-*.jsonl）保留 30 天，每天自动清理一次（`cleanup_history` / `last-cleanup.ts` 标记），防无限增长
 - 告警通知默认带提示音（`TOKEN_EYE_SOUND` 换声音名，`0` 静音）；`TOKEN_EYE_DEBUG=1` 时请求明细写入 `~/Library/Caches/token-eye/debug.log`
