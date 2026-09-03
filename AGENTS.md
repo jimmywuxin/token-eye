@@ -11,6 +11,7 @@ macOS 菜单栏 LLM Token 用量实时监控插件，基于 SwiftBar + Bash + Py
 - **Python** — 核心逻辑（token_eye.py），处理 JSON 解析、Keychain 读取、API 调用、菜单渲染
 - **macOS Keychain** — API Key 安全管理
 - **curl + security CLI** — API 请求和 Keychain 读取
+- **Android 版（android/ 目录）** — Kotlin + Compose + Glance 小部件 + WorkManager，密钥存 Android Keystore；构建见 `android/README.md`
 
 ## 项目结构
 
@@ -32,13 +33,20 @@ token-eye/
 ├── providers.json         ← 核心配置（JSON），定义所有平台
 ├── Makefile               ← make install / test / check
 ├── .github/workflows/ci.yml    ← CI（语法/测试/Schema/配色/版本一致性）
+├── linux/                ← Linux 版（独立实现）
+├── android/              ← Android 版（Kotlin + Compose + Glance，详见 android/README.md）
+│   ├── app/src/main/java/com/coffeelab/tokeneye/
+│   │   ├── core/             ← 核心逻辑（移植 token_eye.py：配置/解析/刷新/告警）
+│   │   ├── widget/           ← Glance 桌面小部件
+│   │   └── work/             ← WorkManager 定时刷新（15 分钟，系统下限）
+│   └── app/src/test/         ← 单元测试（ParserTest）
 ├── AGENTS.md              ← 本文件（项目指南）
 ├── README.md
 ├── CHANGELOG.md
 └── DESIGN.md
 ```
 
-**无 src/、无 dist/、无 package.json** — 项目本身不需要编译构建。
+**Mac/Linux 版无 src/、无 dist/、无 package.json — 不需要编译构建；Android 版是独立 Gradle 工程（android/ 内自带 wrapper），不与 Mac 版共用构建。**
 
 ## 环境要求
 

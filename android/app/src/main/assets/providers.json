@@ -1,0 +1,126 @@
+{
+  "providers": [
+    {
+      "id": "deepseek",
+      "name": "DeepSeek",
+      "keychainService": "DEEPSEEK_API_KEY",
+      "consoleUrl": "https://platform.deepseek.com/usage",
+      "api": {
+        "url": "https://api.deepseek.com/user/balance",
+        "method": "GET",
+        "authHeader": "Authorization",
+        "authPrefix": "Bearer "
+      },
+      "parser": {
+        "type": "balance",
+        "fields": {
+          "balance": "balance_infos.0.total_balance",
+          "currency": "balance_infos.0.currency"
+        }
+      },
+      "display": {
+        "unit": "¥",
+        "label": "余额",
+        "nameColor": {
+          "dark": "#FF375F",
+          "light": "#B3154A"
+        }
+      },
+      "alert": {
+        "minBalance": 5.0
+      }
+    },
+    {
+      "id": "minimax",
+      "name": "MiniMax",
+      "keychainService": "MINIMAX_CN_API_KEY",
+      "consoleUrl": "https://platform.minimaxi.com/user-center/billing/bill-overview",
+      "api": {
+        "url": "https://www.minimaxi.com/v1/token_plan/remains",
+        "method": "GET",
+        "authHeader": "Authorization",
+        "authPrefix": "Bearer "
+      },
+      "parser": {
+        "type": "plan_usage",
+        "arrayPath": "model_remains",
+        "fields": {
+          "model": "model_name",
+          "intervalPct": "current_interval_remaining_percent",
+          "intervalStatus": "current_interval_status",
+          "intervalTotal": "current_interval_total_count",
+          "weeklyPct": "current_weekly_remaining_percent",
+          "weeklyStatus": "current_weekly_status",
+          "weeklyTotal": "current_weekly_total_count",
+          "intervalBoost": "interval_boost_permille",
+          "weeklyBoost": "weekly_boost_permille",
+          "resetMs": "remains_time"
+        },
+        "modelLabels": {
+          "general": "",
+          "video": "视频",
+          "speech-hd": "语音",
+          "image-01": "图片",
+          "music-2.5": "音乐"
+        },
+        "showModels": [
+          "general"
+        ],
+        "windowLabels": {
+          "interval": "5h",
+          "weekly": "7d"
+        },
+        "statusMap": {
+          "1": "可用",
+          "2": "耗尽临近",
+          "3": "耗尽"
+        },
+        "barLength": 20
+      },
+      "display": {
+        "unit": "%",
+        "label": "剩余",
+        "nameColor": {
+          "dark": "#1D9E75",
+          "light": "#0F6E56"
+        }
+      },
+      "alert": {
+        "minPct": 80
+      }
+    }
+  ],
+  "colors": {
+    "dark": {
+      "default": "#ffffff",
+      "secondary": "#aaaaaa",
+      "muted": "#888888",
+      "header": "#FFD60A",
+      "ok": "#56B4E9",
+      "warn": "#E69F00",
+      "err": "#CC79A7"
+    },
+    "light": {
+      "default": "#000000",
+      "secondary": "#2c2c2e",
+      "muted": "#48484a",
+      "header": "#0066CC",
+      "ok": "#0072B2",
+      "warn": "#8A5A00",
+      "err": "#8E1A4A"
+    }
+  },
+  "cache": {
+    "balance": 300,
+    "plan_usage": 30,
+    "status": 60
+  },
+  "menuBar": {
+    "showSummary": false
+  },
+  "alerts": {
+    "deepseek": {
+      "minBalance": 5.0
+    }
+  }
+}
