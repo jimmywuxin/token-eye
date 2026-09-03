@@ -1,10 +1,12 @@
 # Token Eye 👁
 
-> macOS 菜单栏 / Linux (UKUI/银河麒麟) 系统托盘 LLM Token 用量实时监控
+> macOS 菜单栏 / Linux (UKUI/银河麒麟) 系统托盘 / Android 桌面小部件 — LLM Token 用量实时监控
 
 在日常使用多个大模型（DeepSeek、MiniMax、MiMo 等）时，各平台的用量查看方式碎片化，需要分别登录各个开发者平台。Token Eye 把它们汇聚到菜单栏一个 👁 图标里，点击即看，无需离开当前工作。
 
 **🐧 Linux 版**：`linux/` 目录提供 UKUI/Wayland 系统托盘移植版（AppIndicator 常驻进程 + gnome-keyring 密钥管理），复用全部核心逻辑、不改上游代码，见 [linux/README.md](linux/README.md)。
+
+**🤖 Android 版**：`android/` 目录提供 Glance 桌面小部件 + 告警通知（Kotlin + Jetpack Compose），密钥存 Android Keystore，核心逻辑从 Mac 版移植，见 [android/README.md](android/README.md)。
 
 <p align="center">
   <img src="docs/screenshot.png" alt="Token Eye 菜单栏详情" width="400">
@@ -37,6 +39,33 @@
 | DeepSeek | 余额 ¥13.5 | `/user/balance` | platform.deepseek.com/usage |
 | MiniMax | M2.7/M3 92% · 周窗 100% · 🔥x2.0 加成中 | `/v1/token_plan/remains` | platform.minimaxi.com |
 | MiMo | 余额 ¥5.0（Cookie 鉴权） | `/api/v1/balance` | platform.xiaomimimo.com |
+
+> **平台支持范围**：Mac / Linux 版支持上表全部三平台；**Android 版支持 DeepSeek 与 MiniMax**，MiMo 因依赖浏览器 Cookie 会话鉴权、无法在 Android 移植，已主动移除（详见 [android/README.md](android/README.md) 的「已知差异」）。
+
+## 🤖 Android 版
+
+桌面小部件形态（非菜单栏），基于 Jetpack Glance 实现。完整架构、小部件排版规则、已知差异见 [android/README.md](android/README.md)。
+
+### 构建与安装
+
+```bash
+export JAVA_HOME=/opt/homebrew/opt/openjdk@21
+cd android
+./gradlew assembleDebug           # debug APK（约 31MB）
+# 或 ./gradlew assembleRelease    # release APK（约 3.6MB，需自配签名 keystore）
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+```
+
+SDK 路径写在 `android/local.properties`（本机 `/opt/homebrew/share/android-commandlinetools`，已 gitignore）。
+
+### 使用
+
+1. 安装后打开 App，允许通知权限弹窗
+2. 各平台点「填写密钥」粘贴 API Key（存 Android Keystore，加密持久化）
+3. 桌面添加「Token Eye」小部件
+   - **小米 HyperOS 坑**：「添加小部件」面板默认只列 HyperOS 风格件，传统 AppWidget 全在列表**最底部「安卓小部件」入口**，进去按 App 名找 Token Eye
+4. 小部件每 15 分钟自动刷新（WorkManager 系统下限），点按立即刷新；仅显示已配置密钥的平台，错误行压缩为关键词（如「鉴权失败 401」）
+5. 默认 3×1（最小只占 1 格高），横竖可拖；已放置的小部件改默认尺寸需删掉重拖
 
 ## 使用方法
 
@@ -409,6 +438,7 @@ token-eye/
 │   └── test_token_eye.py  ← 单元测试（unittest，零依赖）
 ├── providers.json         ← 核心配置，脚本从项目目录自动读取
 ├── linux/                 ← 🐧 Linux (UKUI/麒麟) 托盘移植层（见 linux/README.md）
+├── android/               ← 🤖 Android 版：Glance 小部件 + 告警（Kotlin + Compose，见 android/README.md）
 ├── Makefile               ← make install / test / check
 ├── .github/workflows/     ← CI（语法/测试/Schema/配色/版本一致性）
 ├── AGENTS.md

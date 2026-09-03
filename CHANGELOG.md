@@ -1,8 +1,16 @@
 # Changelog
 
-## [Unreleased]
+## [0.18.0] - 2026-09-03
 
 ### Added
+- **🤖 Android 版**（`android/` 目录，详见 [android/README.md](android/README.md)）：
+  - Kotlin + Jetpack Compose + Glance 桌面小部件，Gradle 工程（AGP 8.10 / Kotlin 2.1.20），核心逻辑从 `token_eye.py` 移植（配置解析 / balance·plan_usage 解析 / 阈值链 / 刷新引擎 / 告警去重）
+  - Glance 小部件：尺寸自适应（默认 3×1、最小只占 1 格高）、固定 13sp 单行自上而下排列、宽度不足时摘要降级（不换行/不放大字号）、点按立即刷新；仅显示已配置密钥的平台，错误行压缩为关键词
+  - WorkManager 15 分钟周期刷新（系统下限）+ 打开 App 即时刷新
+  - 密钥存 Android Keystore（EncryptedSharedPreferences），支持剪贴板导入 `providers.json`
+  - 告警：NotificationChannel + 去重/恢复通知，逻辑照搬 Mac 版
+  - 单元测试（ParserTest）覆盖点路径 / 余额 / 阈值 / 用量状态
+  - **刻意不做**：MiMo Cookie 自动刷新（依赖本机浏览器解密，Android 无法移植），加载时剔除所有带 `refreshParam` 的平台
 - **🐧 Linux (UKUI/银河麒麟) 系统托盘版**（`linux/` 目录，详见 [linux/README.md](linux/README.md)）：
   - `token-eye-tray.py`：AppIndicator3 常驻进程，复用上游核心（fetch/缓存/解析/告警/历史全部 import，零改动），GLib 定时器 30s 刷新，状态三图标（ok/warn/err），菜单行点击复制余额/打开控制台
   - `setup-keys.py`：gnome-keyring (secretstorage) 密钥管理，替代 macOS Keychain
