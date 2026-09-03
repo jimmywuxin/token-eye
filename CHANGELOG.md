@@ -1,5 +1,15 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- **🐧 Linux (UKUI/银河麒麟) 系统托盘版**（`linux/` 目录，详见 [linux/README.md](linux/README.md)）：
+  - `token-eye-tray.py`：AppIndicator3 常驻进程，复用上游核心（fetch/缓存/解析/告警/历史全部 import，零改动），GLib 定时器 30s 刷新，状态三图标（ok/warn/err），菜单行点击复制余额/打开控制台
+  - `setup-keys.py`：gnome-keyring (secretstorage) 密钥管理，替代 macOS Keychain
+  - `scripts/refresh-mimo-cookie.py`：MiMo Cookie 自动提取的 Linux 版（Edge/Chrome/Chromium v10/v11 AES-CBC 解密，密钥读 gnome-keyring）
+  - `install.sh` + `token-eye.service`：systemd user service 一键安装（崩溃自动重启）
+  - 平台适配细节：`send_notify`→notify-send、`open`→xdg-open、无 emoji 字体时菜单图标自动降级为纯文本（`fix_glyphs`）
+
 ## [0.17.1] - 2026-08-27
 
 ### Fixed

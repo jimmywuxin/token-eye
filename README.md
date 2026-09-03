@@ -1,8 +1,10 @@
 # Token Eye 👁
 
-> macOS 菜单栏 LLM Token 用量实时监控
+> macOS 菜单栏 / Linux (UKUI/银河麒麟) 系统托盘 LLM Token 用量实时监控
 
 在日常使用多个大模型（DeepSeek、MiniMax、MiMo 等）时，各平台的用量查看方式碎片化，需要分别登录各个开发者平台。Token Eye 把它们汇聚到菜单栏一个 👁 图标里，点击即看，无需离开当前工作。
+
+**🐧 Linux 版**：`linux/` 目录提供 UKUI/Wayland 系统托盘移植版（AppIndicator 常驻进程 + gnome-keyring 密钥管理），复用全部核心逻辑、不改上游代码，见 [linux/README.md](linux/README.md)。
 
 <p align="center">
   <img src="docs/screenshot.png" alt="Token Eye 菜单栏详情" width="400">
@@ -406,6 +408,7 @@ token-eye/
 ├── tests/
 │   └── test_token_eye.py  ← 单元测试（unittest，零依赖）
 ├── providers.json         ← 核心配置，脚本从项目目录自动读取
+├── linux/                 ← 🐧 Linux (UKUI/麒麟) 托盘移植层（见 linux/README.md）
 ├── Makefile               ← make install / test / check
 ├── .github/workflows/     ← CI（语法/测试/Schema/配色/版本一致性）
 ├── AGENTS.md

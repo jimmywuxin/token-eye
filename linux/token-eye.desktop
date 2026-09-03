@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Token Eye
+Name[zh_CN]=Token Eye（LLM 用量监控）
+Comment=LLM token usage monitor in system tray (DeepSeek/MiniMax/MiMo)
+Comment[zh_CN]=系统托盘 LLM Token 用量监控（DeepSeek/MiniMax/MiMo）
+Exec=sh -c "/usr/bin/python3 $HOME/dev/token-eye/linux/token-eye-tray.py"
+Icon=token-eye-ok
+Terminal=false
+X-GNOME-Autostart-enabled=true
+StartupNotify=false
+Categories=Utility;
