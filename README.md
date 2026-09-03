@@ -4,15 +4,27 @@
 
 在日常使用多个大模型（DeepSeek、MiniMax、MiMo 等）时，各平台的用量查看方式碎片化，需要分别登录各个开发者平台。Token Eye 把它们汇聚到菜单栏一个 👁 图标里，点击即看，无需离开当前工作。
 
-**🐧 Linux 版**：`linux/` 目录提供 UKUI/Wayland 系统托盘移植版（AppIndicator 常驻进程 + gnome-keyring 密钥管理），复用全部核心逻辑、不改上游代码，见 [linux/README.md](linux/README.md)。
-
-**🤖 Android 版**：`android/` 目录提供 Glance 桌面小部件 + 告警通知（Kotlin + Jetpack Compose），密钥存 Android Keystore，核心逻辑从 Mac 版移植，见 [android/README.md](android/README.md)。
+| 平台 | 形态 | 说明 |
+|---|---|---|
+| 🍎 **macOS** | SwiftBar 菜单栏 | **主版本**，功能最全，见下方「macOS 版」 |
+| 🐧 **Linux** | 系统托盘（UKUI/银河麒麟） | 零改动复用核心逻辑，见 [linux/README.md](linux/README.md) |
+| 🤖 **Android** | Glance 桌面小部件 | Kotlin + Compose + Glance，见 [android/README.md](android/README.md) |
 
 <p align="center">
   <img src="docs/screenshot.png" alt="Token Eye 菜单栏详情" width="400">
 </p>
 
-## 功能
+## 支持平台
+
+| 平台 | 展示内容 | API | 控制台 |
+|------|---------|-----|--------|
+| DeepSeek | 余额 ¥13.5 | `/user/balance` | platform.deepseek.com/usage |
+| MiniMax | M2.7/M3 92% · 周窗 100% · 🔥x2.0 加成中 | `/v1/token_plan/remains` | platform.minimaxi.com |
+| MiMo | 余额 ¥5.0（Cookie 鉴权） | `/api/v1/balance` | platform.xiaomimimo.com |
+
+> **平台支持范围**：macOS / Linux 版支持上表全部三平台；**Android 版支持 DeepSeek 与 MiniMax**，MiMo 因依赖浏览器 Cookie 会话鉴权、无法在 Android 移植，已主动移除（详见 [android/README.md](android/README.md) 的「已知差异」）。
+
+## 🍎 macOS 版（SwiftBar 菜单栏）
 
 - 👁 菜单栏常驻图标，点击展开详情面板（可选显示汇总数字）
 - 💰 DeepSeek 余额监控（¥）+ 余额阈值告警
@@ -32,19 +44,98 @@
 - 🔄 每 30 秒自动刷新，支持手动刷新；新版本出现时菜单可「一键升级」
 - 🪶 零依赖、零后台进程，仅一个 Shell 脚本
 
-## 支持平台
+### 安装与使用
 
-| 平台 | 展示内容 | API | 控制台 |
-|------|---------|-----|--------|
-| DeepSeek | 余额 ¥13.5 | `/user/balance` | platform.deepseek.com/usage |
-| MiniMax | M2.7/M3 92% · 周窗 100% · 🔥x2.0 加成中 | `/v1/token_plan/remains` | platform.minimaxi.com |
-| MiMo | 余额 ¥5.0（Cookie 鉴权） | `/api/v1/balance` | platform.xiaomimimo.com |
+#### 1. 安装 SwiftBar
 
-> **平台支持范围**：Mac / Linux 版支持上表全部三平台；**Android 版支持 DeepSeek 与 MiniMax**，MiMo 因依赖浏览器 Cookie 会话鉴权、无法在 Android 移植，已主动移除（详见 [android/README.md](android/README.md) 的「已知差异」）。
+```bash
+brew install --cask swiftbar
+```
 
-## 🤖 Android 版
+启动 SwiftBar，首次运行选择一个插件目录，选 `~/SwiftBar/`。
 
-桌面小部件形态（非菜单栏），基于 Jetpack Glance 实现。完整架构、小部件排版规则、已知差异见 [android/README.md](android/README.md)。
+#### 2. 添加 API Key 到 Keychain
+
+```bash
+security add-generic-password -s "DEEPSEEK_API_KEY" -a "" -w "sk-你的key"
+security add-generic-password -s "MINIMAX_CN_API_KEY" -a "" -w "你的key"
+security add-generic-password -s "MIMO_API_KEY" -a "" -w "你的key"
+```
+
+Keychain 服务名约定：`<平台名大写>_API_KEY`。
+
+#### 3. 将脚本放入 SwiftBar 插件目录
+
+只需复制 `token-eye.sh` 到 `~/SwiftBar/` 即可，**不需要复制 `providers.json`** — 脚本会自动从项目目录读取：
+
+```bash
+cp swiftbar/token-eye.sh ~/SwiftBar/
+chmod +x ~/SwiftBar/token-eye.sh
+```
+
+SwiftBar 自动检测新脚本，菜单栏出现 👁 图标即完成。
+
+#### 工作原理
+
+```
+~/SwiftBar/token-eye.sh                  →  SwiftBar 每 30 秒执行（薄启动器）
+       ↓ 自动探测项目路径
+$HOME/dev/token-eye/swiftbar/token_eye.py  →  Python 核心逻辑（缓存/告警/解析/渲染）
+$HOME/dev/token-eye/providers.json         →  配置（与核心逻辑一样从项目目录读取）
+```
+
+脚本按优先级自动查找 `providers.json`：
+1. 脚本同目录（`~/SwiftBar/`）
+2. 上一级目录（项目根目录）
+3. `~/dev/token-eye/`（默认路径）
+
+#### 更新
+
+```bash
+make install
+# 或手动：
+cp swiftbar/token-eye.sh ~/SwiftBar/
+```
+
+菜单栏版本自检发现新版本时，可直接点「⬆ 一键升级」：
+- 项目目录是 git 仓库：自动 `git fetch + merge --ff-only origin/main` 并同步插件
+- 非 git 仓库：自动下载 release 包替换插件文件
+
+## 🐧 Linux 版（系统托盘）
+
+UKUI / 银河麒麟系统托盘移植版，**零改动复用上游核心**（直接 import `swiftbar/token_eye.py`），仅替换 4 处平台耦合点：Keychain→gnome-keyring、osascript→notify-send、open→xdg-open、放宽 curl 超时。完整说明见 [linux/README.md](linux/README.md)。
+
+### 快速开始
+
+```bash
+# 1. 一键安装（systemd user service + autostart + 图标）
+bash ~/dev/token-eye/linux/install.sh
+
+# 2. 写入 API Key（交互式，存入 gnome-keyring）
+python3 ~/dev/token-eye/linux/setup-keys.py
+
+# 3. 托盘自动运行（或注销重登）
+```
+
+### 管理命令
+
+```bash
+systemctl --user status token-eye                    # 查看状态
+journalctl --user -u token-eye -f                    # 实时日志
+systemctl --user restart token-eye                   # 重启
+python3 ~/dev/token-eye/linux/token-eye-tray.py --check  # 自检（key/配置/网络）
+python3 ~/dev/token-eye/linux/token-eye-tray.py --once   # 单次拉取（排障）
+```
+
+### 平台差异
+
+- 托盘区只显示图标，不支持菜单栏文字汇总（UKUI 未实现 SNI label）
+- 麒麟系统无 emoji 字体，无字形 emoji 自动降级为纯文本
+- MiMo 需在 **Edge** 登录后自动提取 Cookie（360 浏览器加密非标准、不可用）
+
+## 🤖 Android 版（桌面小部件）
+
+Kotlin + Jetpack Compose + Glance 桌面小部件 + WorkManager 周期刷新，密钥存 Android Keystore。完整架构、小部件排版规则、已知差异见 [android/README.md](android/README.md)。
 
 ### 构建与安装
 
@@ -66,63 +157,6 @@ SDK 路径写在 `android/local.properties`（本机 `/opt/homebrew/share/androi
    - **小米 HyperOS 坑**：「添加小部件」面板默认只列 HyperOS 风格件，传统 AppWidget 全在列表**最底部「安卓小部件」入口**，进去按 App 名找 Token Eye
 4. 小部件每 15 分钟自动刷新（WorkManager 系统下限），点按立即刷新；仅显示已配置密钥的平台，错误行压缩为关键词（如「鉴权失败 401」）
 5. 默认 3×1（最小只占 1 格高），横竖可拖；已放置的小部件改默认尺寸需删掉重拖
-
-## 使用方法
-
-### 1. 安装 SwiftBar
-
-```bash
-brew install --cask swiftbar
-```
-
-启动 SwiftBar，首次运行选择一个插件目录，选 `~/SwiftBar/`。
-
-### 2. 添加 API Key 到 Keychain
-
-```bash
-security add-generic-password -s "DEEPSEEK_API_KEY" -a "" -w "sk-你的key"
-security add-generic-password -s "MINIMAX_CN_API_KEY" -a "" -w "你的key"
-security add-generic-password -s "MIMO_API_KEY" -a "" -w "你的key"
-```
-
-Keychain 服务名约定：`<平台名大写>_API_KEY`。
-
-### 3. 将脚本放入 SwiftBar 插件目录
-
-只需复制 `token-eye.sh` 到 `~/SwiftBar/` 即可，**不需要复制 `providers.json`** — 脚本会自动从项目目录读取：
-
-```bash
-cp swiftbar/token-eye.sh ~/SwiftBar/
-chmod +x ~/SwiftBar/token-eye.sh
-```
-
-SwiftBar 自动检测新脚本，菜单栏出现 👁 图标即完成。
-
-### 工作原理
-
-```
-~/SwiftBar/token-eye.sh                  →  SwiftBar 每 30 秒执行（薄启动器）
-       ↓ 自动探测项目路径
-$HOME/dev/token-eye/swiftbar/token_eye.py  →  Python 核心逻辑（缓存/告警/解析/渲染）
-$HOME/dev/token-eye/providers.json         →  配置（与核心逻辑一样从项目目录读取）
-```
-
-脚本按优先级自动查找 `providers.json`：
-1. 脚本同目录（`~/SwiftBar/`）
-2. 上一级目录（项目根目录）
-3. `~/dev/token-eye/`（默认路径）
-
-### 更新
-
-```bash
-make install
-# 或手动：
-cp swiftbar/token-eye.sh ~/SwiftBar/
-```
-
-菜单栏版本自检发现新版本时，可直接点「⬆ 一键升级」：
-- 项目目录是 git 仓库：自动 `git fetch + merge --ff-only origin/main` 并同步插件
-- 非 git 仓库：自动下载 release 包替换插件文件
 
 ## 添加新平台
 
