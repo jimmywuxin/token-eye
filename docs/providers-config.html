@@ -49,38 +49,37 @@ sup{font-size:.75em;color:#e74c3c}
 <body>
 
 <h1>providers.json</h1>
-<p>Token Eye 核心配置文件。定义所有监控平台的 API 端点、解析规则、显示样式和自适应配色。</p>
+<p>Token Eye 核心配置文件。定义所有监控平台的 API 端点、解析规则、告警阈值、显示样式和自适应配色。</p>
+<p>适用于 macOS（SwiftBar）/ Linux（UKUI 托盘）/ Android（Glance 小部件）三端——三端读取同一份 schema。完整使用说明见 <a href="https://github.com/jimmywuxin/token-eye#readme" style="color:#5AC8FA">README</a>。本页面更新至 v0.18.1（2026-09）。</p>
 
 <!-- ================================================================== -->
 <h2>1. 配置 → 界面映射</h2>
 <p>每段 JSON 配置对应 SwiftBar 下拉菜单的什么位置：</p>
 
 <div class="ui-diagram">
-<div class="line"><span class="menu-icon">👁</span><span class="tag tag-config">menu bar 图标，固定</span></div>
+<div class="line"><span class="menu-icon">👁</span><span class="tag tag-config">menu bar 图标，固定；开启 menuBar.showSummary 后可显示汇总</span></div>
 <div class="line"><span class="sep">───</span></div>
 <div class="line"><span class="highlight">Token Eye<span class="tag tag-config">colors.{theme}.header</span></span></div>
 <div class="line"><span class="sep">───</span></div>
-<div class="line"><span style="color:#0A84FF">DeepSeek: ¥9.67</span><span class="tag tag-config">display.nameColor <span class="tag-text">兜底</span> colors.{theme}.default</span></div>
-<div class="line"><span style="color:#0072B2">  可用</span><span class="tag tag-status">balance parser: C_OK / C_ERR</span></div>
+<div class="line"><span style="color:#0072B2">✅ DeepSeek: ¥9.67<span class="tag tag-config">display.nameColor 兜底 colors.{theme}.default；✅/⚠️/🔴 = 阈值状态图标</span></span></div>
+<div class="line"><span style="color:#2c2c2e">  ¥9.67 · 今日 ¥0.42 · 预计 ~22d</span><span class="tag tag-text">balance 详情行（无消耗时退化到 1 行）</span></div>
+<div class="line"><span style="color:#48484a">  ▁▂▃▂▄▃▅▄ 近 7 天每日消耗</span><span class="tag tag-text">柱状，右 = 今天</span></div>
 <div class="line"><span class="sep">───</span></div>
-<div class="line"><span style="color:#BF5AF2">MiniMax:</span><span class="tag tag-config">display.nameColor</span></div>
-<div class="line"><span style="color:#2c2c2e">  M2.7/M3 通用: ✅ 71%</span><span class="tag tag-text">menu_bar 行</span></div>
-<div class="line"><span style="color:#0072B2">    5小时窗口 71%（可用）</span><span class="tag tag-status">secondary / C_OK / C_WARN / C_ERR</span></div>
-<div class="line"><span style="color:#2c2c2e">    周窗口 100%（可用）</span></div>
-<div class="line"><span style="color:#2c2c2e">    重置: 0h0m</span></div>
-<div class="line"><span style="color:#0072B2">    ████████████████░ 71%</span></div>
+<div class="line"><span style="color:#BF5AF2">✅ MiniMax:</span><span class="tag tag-config">display.nameColor</span></div>
+<div class="line"><span style="color:#2c2c2e">  M2.7/M3 通用: 🔥x2.0 5h 71% ████████████████░ 71%<span class="tag tag-text">menu_bar 行（v0.17 简约化）</span></span></div>
+<div class="line"><span style="color:#0072B2">    5h 71% ████████████████░<span class="tag tag-status">窗口名由 parser.windowLabels 控制，默认 5h / 7d</span></span></div>
+<div class="line"><span style="color:#0072B2">    7d 100% ████████████████████</span></div>
 <div class="line"><span class="sep">───</span></div>
-<div class="line"><span style="color:#2c2c2e">MiMo: 免费</span><span class="tag tag-config">display.nameColor + display.label</span></div>
-<div class="line"><span style="color:#0072B2">  API Key 有效</span><span class="tag tag-status">C_OK / C_ERR</span></div>
+<div class="line"><span style="color:#2c2c2e">✅ MiMo: ¥5.0</span><span class="tag tag-config">display.nameColor（Cookie 鉴权，见 §4.2）</span></div>
 <div class="line"><span class="sep">───</span></div>
-<div class="line"><span style="color:#2c2c2e">刷新</span></div>
-<div class="line"><span style="color:#48484a">上次更新: 14:30:00</span><span class="tag tag-config">colors.{theme}.muted</span></div>
+<div class="line"><span style="color:#2c2c2e">🔧 自检</span><span class="tag tag-text">Keychain / 网络 / 版本一致性</span></div>
+<div class="line"><span style="color:#48484a">v0.18.1 · 上次更新: 14:30:00</span><span class="tag tag-config">colors.{theme}.muted</span></div>
 </div>
 
 <table>
 <tr><th>配置字段</th><th>精确 UI 位置</th></tr>
 <tr><td><code>colors.{theme}.default</code></td><td>所有未设 <code>nameColor</code> 的 provider 名称行、菜单项默认文字</td></tr>
-<tr><td><code>colors.{theme}.secondary</code></td><td>plan_usage 的子行描述（"5小时窗口 71%"、"周窗口 100%"、"重置: 0h0m"）</td></tr>
+<tr><td><code>colors.{theme}.secondary</code></td><td>plan_usage 的子行描述（"5h 71%"、"7d 100%" 等窗口行）</td></tr>
 <tr><td><code>colors.{theme}.muted</code></td><td>"上次更新" 时间戳、配置错误时的路径提示</td></tr>
 <tr><td><code>colors.{theme}.header</code></td><td>下拉菜单第一行 <span style="color:#0066CC">Token Eye</span> 标题</td></tr>
 <tr><td><code>display.nameColor</code></td><td>每个 provider 的<span style="color:#0A84FF">名称行</span>（如 "DeepSeek: ¥9.67"）</td></tr>
@@ -183,8 +182,13 @@ sup{font-size:.75em;color:#e74c3c}
 <tr><th>字段</th><th>类型</th><th>说明</th></tr>
 <tr><td><code>id</code> <sup>必填</sup></td><td>string</td><td>平台唯一标识，如 <code>deepseek</code></td></tr>
 <tr><td><code>name</code> <sup>必填</sup></td><td>string</td><td>显示名称，如 <code>DeepSeek</code></td></tr>
-<tr><td><code>keychainService</code> <sup>必填</sup></td><td>string</td><td>macOS Keychain 中存储 API Key 的服务名，如 <code>DEEPSEEK_API_KEY</code></td></tr>
+<tr><td><code>keychainService</code> <sup>必填</sup></td><td>string</td><td>macOS Keychain 中存储 API Key 的服务名，如 <code>DEEPSEEK_API_KEY</code>（Linux 对应 gnome-keyring）</td></tr>
 <tr><td><code>enabled</code></td><td>boolean</td><td>设为 <code>false</code> 可临时禁用该平台，不删除配置</td></tr>
+<tr><td><code>consoleUrl</code></td><td>string</td><td>控制台跳转链接；详情菜单末尾显示「→ 打开 X 控制台」可点击项</td></tr>
+<tr><td><code>cacheTtl</code></td><td>number</td><td>单 provider 缓存 TTL（秒），覆盖全局 <code>cache</code> 段</td></tr>
+<tr><td><code>refreshParam</code></td><td>string</td><td>鉴权错误时自动执行的刷新脚本名（如 <code>refresh-mimo-cookie</code>）；详情菜单出现「🔄 刷新 X Cookie」可点击项。<strong>注意：Android 版加载时剔除所有带此字段的服务商（Cookie 刷新无法移植）</strong></td></tr>
+<tr><td><code>refreshInterval</code></td><td>number</td><td>主动续期周期（秒，≥60）：即使 Cookie 仍有效也按周期从浏览器复制最新 Cookie 到 Keychain，减少 401 触发面（仅对配置了 <code>refreshParam</code> 的服务商生效）</td></tr>
+<tr><td><code>alert</code></td><td>object</td><td>告警阈值配置，见 <a href="#alert" style="color:#5AC8FA">§6.3 alert 告警</a></td></tr>
 </table>
 
 <h3>4.2 api — API 请求配置</h3>
@@ -194,14 +198,18 @@ sup{font-size:.75em;color:#e74c3c}
 <tr><td><code>method</code></td><td>string</td><td><code>GET</code></td><td>HTTP 方法</td></tr>
 <tr><td><code>authHeader</code></td><td>string</td><td><code>Authorization</code></td><td>认证头名称</td></tr>
 <tr><td><code>authPrefix</code></td><td>string</td><td><code>Bearer </code></td><td>认证前缀（注意末尾空格）</td></tr>
+<tr><td><code>headers</code></td><td>object</td><td>—</td><td>额外 HTTP 请求头，如 <code>{"OpenAI-Organization": "org-xxx"}</code></td></tr>
 </table>
+
+<p><strong>Cookie 鉴权模式</strong>：部分平台（如 MiMo platform API）不用 Bearer Token，而要求请求头携带完整 Cookie 组合。配置 <code>"authHeader": "Cookie"</code> + <code>"authPrefix": ""</code>，Keychain 条目存完整 Cookie 串（<code>name1=v1; name2=v2; ...</code>）作为整个 Cookie 头发送。Cookie 为会话级，配合 <code>refreshParam</code> + <code>refreshInterval</code> 实现半自动刷新（401 自愈 + 主动续期 + 失效自动打开登录页）。</p>
 
 <h3>4.3 display — 显示配置</h3>
 <table>
 <tr><th>字段</th><th>类型</th><th>默认</th><th>说明</th></tr>
 <tr><td><code>unit</code></td><td>string</td><td>—</td><td>数值单位（菜单栏行），如 <code>¥</code>、<code>%</code></td></tr>
 <tr><td><code>label</code></td><td>string</td><td>—</td><td>状态标签（status parser），如 <code>免费</code></td></tr>
-<tr><td><code>nameColor</code></td><td>hex</td><td><code>colors.{theme}.default</code></td><td>平台名称行强调色</td></tr>
+<tr><td><code>nameColor</code></td><td>hex 或 object</td><td><code>colors.{theme}.default</code></td><td>平台名称行强调色；支持深浅双套 <code>{"dark":"#xxx","light":"#xxx"}</code> 随系统外观切换</td></tr>
+<tr><td><code>currencySymbols</code></td><td>object</td><td>USD→<code>$</code>，其余→<code>¥</code></td><td>货币代码 → 符号映射，如 <code>{"USD":"$","EUR":"€","CNY":"¥"}</code></td></tr>
 </table>
 
 <!-- ================================================================== -->
@@ -209,22 +217,25 @@ sup{font-size:.75em;color:#e74c3c}
 <p>三种 parser 对应不同 API 响应结构。</p>
 
 <h3>5.1 balance — 余额型</h3>
-<p>适用于返回余额信息的 API（如 DeepSeek）。</p>
+<p>适用于返回余额信息的 API（如 DeepSeek、MiMo）。余额 + 今日消耗估算 + 预计可用天数 + 近 7 天消耗柱状。</p>
 <pre>{
   "<span class="key">type</span>": "<span class="str">balance</span>",
   "<span class="key">fields</span>": {
     "<span class="key">balance</span>": "<span class="str">balance_infos.0.total_balance</span>",
     "<span class="key">currency</span>": "<span class="str">balance_infos.0.currency</span>"
-  }
+  },
+  "<span class="key">defaultMinBalance</span>": <span class="num">5.0</span>
 }</pre>
 <table>
 <tr><th>字段</th><th>说明</th></tr>
 <tr><td><code>balance</code></td><td><code>.</code> 分隔的 JSON 路径。数字 = 数组索引</td></tr>
-<tr><td><code>currency</code></td><td>货币字段路径。默认 CNY（→¥），USD→$</td></tr>
+<tr><td><code>currency</code></td><td>货币字段路径。默认 CNY（→¥），USD→$，可用 <code>display.currencySymbols</code> 覆盖</td></tr>
+<tr><td><code>alertThreshold</code></td><td><code>fields.alertThreshold</code>：指向 API 返回的告警阈值字段路径，平台有则自动读（优先级链最高级）</td></tr>
+<tr><td><code>defaultMinBalance</code></td><td>按 parser 类型兜底的余额告警阈值（优先级链最低级，无则不告警）</td></tr>
 </table>
 
 <h3>5.2 plan_usage — 用量型</h3>
-<p>适用于返回按模型分组的用量数据的 API（如 MiniMax）。</p>
+<p>适用于返回按模型分组的用量数据的 API（如 MiniMax）。双窗口（5h/周）进度条 + 重置倒计时。</p>
 <pre>{
   "<span class="key">type</span>": "<span class="str">plan_usage</span>",
   "<span class="key">arrayPath</span>": "<span class="str">model_remains</span>",
@@ -238,17 +249,25 @@ sup{font-size:.75em;color:#e74c3c}
     "<span class="key">weeklyBoost</span>": "<span class="str">weekly_boost_permille</span>",
     "<span class="key">resetMs</span>": "<span class="str">remains_time</span>"
   },
-  "<span class="key">modelLabels</span>": { "<span class="key">general</span>": "<span class="str">通用</span>", ... },
-  "<span class="key">showModels</span>": [<span class="str">"general"</span>, <span class="str">"video"</span>]
+  "<span class="key">modelLabels</span>": { "<span class="key">general</span>": "<span class="str">M2.7/M3 通用</span>", ... },
+  "<span class="key">showModels</span>": [<span class="str">"general"</span>, <span class="str">"video"</span>],
+  "<span class="key">windowLabels</span>": { "<span class="key">interval</span>": "<span class="str">5h</span>", "<span class="key">weekly</span>": "<span class="str">7d</span>" },
+  "<span class="key">pctDirection</span>": "<span class="str">remaining</span>",
+  "<span class="key">barLength</span>": <span class="num">20</span>
 }</pre>
 <table>
 <tr><th>字段</th><th>说明</th></tr>
 <tr><td><code>model</code></td><td>模型标识字段</td></tr>
 <tr><td><code>intervalPct</code>/<code>weeklyPct</code></td><td>百分比，0-100 整数</td></tr>
-<tr><td><code>intervalStatus</code>/<code>weeklyStatus</code></td><td>状态码：1=可用 2=耗尽临近 3=耗尽</td></tr>
-<tr><td><code>intervalBoost</code>/<code>weeklyBoost</code></td><td>限时加成（千分比，1000=无加成）</td></tr>
+<tr><td><code>intervalStatus</code>/<code>weeklyStatus</code></td><td>状态码：1=可用 2=耗尽临近 3=耗尽（仅旧接口兜底用，见下方说明）</td></tr>
+<tr><td><code>intervalBoost</code>/<code>weeklyBoost</code></td><td>限时加成（千分比，&gt;1000 显示 🔥xN）</td></tr>
 <tr><td><code>resetMs</code></td><td>重置倒计时（毫秒）</td></tr>
+<tr><td><code>windowLabels</code></td><td>窗口显示名，默认 <code>{"interval":"5h","weekly":"7d"}</code></td></tr>
+<tr><td><code>pctDirection</code></td><td><code>remaining</code>（默认）| <code>used</code>。进度条与告警阈值统一按「已用%」口径；源字段为剩余%的服务商（如 MiniMax）自动翻转，直接返回已用%的配 <code>"used"</code> 跳过翻转</td></tr>
+<tr><td><code>barLength</code></td><td>进度条长度，默认 20 格</td></tr>
+<tr><td><code>statusMap</code></td><td>状态码 → 文案映射，默认 <code>{1:可用, 2:耗尽临近, 3:耗尽}</code></td></tr>
 </table>
+<p><strong>状态推导规则</strong>：接口返回百分比字段时<strong>优先按百分比推断状态</strong>（≥20% 可用 / 10–20% 耗尽临近 / &lt;10% 耗尽，与图标阈值一致）；<code>statusMap</code> 仅在无百分比字段的旧接口生效，此时 <code>total=0</code> 显示「无套餐」。MiniMax 新接口的 <code>total_count</code> 字段已废弃（恒为 0），不能用于判断有无套餐。</p>
 
 <h3>5.3 status — 状态型</h3>
 <p>适用于只需验证 Key 有效性的 API（如 MiMo）。</p>
@@ -264,7 +283,47 @@ sup{font-size:.75em;color:#e74c3c}
 </table>
 
 <!-- ================================================================== -->
-<h2>6. 完整示例 — 添加新平台</h2>
+<h2>6. 高级配置</h2>
+
+<h3>6.1 cache — 缓存 TTL</h3>
+<p>按 parser 类型设置缓存 TTL（秒），命中缓存跳过 API 调用；失败请求 10s 内不重试。单个 provider 可用 <code>cacheTtl</code> 覆盖。</p>
+<pre>{
+  "<span class="key">cache</span>": {
+    "<span class="key">balance</span>": <span class="num">300</span>,
+    "<span class="key">plan_usage</span>": <span class="num">30</span>,
+    "<span class="key">status</span>": <span class="num">60</span>
+  }
+}</pre>
+
+<h3>6.2 menuBar — 菜单栏汇总</h3>
+<p>默认菜单栏只显示 👁 图标。开启后显示关键数字汇总；也可传 id 数组只显示指定平台。</p>
+<pre>{
+  "<span class="key">menuBar</span>": {
+    "<span class="key">showSummary</span>: <span class="num">true</span>          <span class="cmt">// 或 ["deepseek","mimo"]</span>
+  }
+}</pre>
+<p>效果：<code>👁 ¥13.5 | ✅ M2.7 92% | 免费</code>。（Linux UKUI 托盘不支持文字汇总，只显示三态图标）</p>
+
+<h3 id="alert">6.3 alert — 告警阈值</h3>
+<p>低阈值时推送系统通知（去重，恢复后自动清除标记并补发「已恢复」通知）。可在 provider 上配 <code>alert</code>，或在根 <code>alerts</code> 段按 id 配置。</p>
+<pre>{
+  "<span class="key">id</span>": "<span class="str">deepseek</span>",
+  "<span class="key">alert</span>": {
+    "<span class="key">minBalance</span>": <span class="num">5.0</span>,      <span class="cmt">// balance：余额低于 5.0 告警</span>
+    "<span class="key">dailySpendMax</span>": <span class="num">20.0</span>,   <span class="cmt">// balance：今日消耗超 20.0 告警（余额快照差值估算）</span>
+    "<span class="key">daysLeft</span>": <span class="num">7</span>             <span class="cmt">// balance：预计可用天数低于 7 告警（按 24h 速率外推）</span>
+  }
+}</pre>
+<pre>{
+  "<span class="key">alerts</span>": {
+    "<span class="key">minimax</span>": { "<span class="key">minPct</span>": <span class="num">80</span> }   <span class="cmt">// plan_usage：已用% 超过 80 告警</span>
+  }
+}</pre>
+<p><strong>balance 阈值优先级链</strong>：API 字段（<code>parser.fields.alertThreshold</code>）&gt; <code>provider.alert.minBalance</code> &gt; <code>parser.defaultMinBalance</code> &gt; 不告警。菜单栏状态图标与告警检查共用同一阈值。<code>minPct</code> 语义与进度条一致，按<strong>已用%</strong>方向判断（受 <code>pctDirection</code> 影响）。</p>
+<p>通知默认带系统提示音（Glass）；环境变量 <code>TOKEN_EYE_SOUND</code> 换声音、<code>TOKEN_EYE_NOTIFY=0</code> 整体禁用。</p>
+
+<!-- ================================================================== -->
+<h2>7. 完整示例 — 添加新平台</h2>
 <pre>{
   "<span class="key">id</span>": "<span class="str">my-platform</span>",
   "<span class="key">name</span>": "<span class="str">My Platform</span>",

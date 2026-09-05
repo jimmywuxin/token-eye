@@ -40,7 +40,7 @@
 │   ├── scripts/
 │   │   └── refresh-mimo-cookie.py  ← MiMo Cookie 自动提取（Linux 版）
 │   └── icons/              ← 三态 PNG（ok/warn/err）
-└── tests/                  ← 上游单元测试（90+ 用例，Python 3.8 验证通过）
+└── tests/                  ← 上游单元测试（129 个用例，Python 3.8 验证通过）
 ```
 
 ## 快速开始

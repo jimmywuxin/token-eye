@@ -1,10 +1,10 @@
 # Token Eye — 设计文档
 
-> 本文档描述**当前**架构（SwiftBar 菜单栏插件方案）。早期 Electron/Tauri 方案与演进过程见文末「演进史」。
+> 本文档描述**当前**架构（SwiftBar 菜单栏插件方案，并移植到 Linux 托盘与 Android 小部件）。早期 Electron/Tauri 方案与演进过程见文末「演进史」。
 
 ## 1. 项目定位
 
-macOS 菜单栏 LLM 余额/用量实时监控插件。解决的核心问题：日常使用多个大模型（DeepSeek、MiniMax、MiMo 等），各平台用量查看方式碎片化，需要分别登录开发者平台。
+LLM 余额/用量实时监控工具，覆盖三端：**macOS**（SwiftBar 菜单栏，主版本）、**Linux**（UKUI/银河麒麟系统托盘，零改动复用上游核心）、**Android**（Glance 桌面小部件）。解决的核心问题：日常使用多个大模型（DeepSeek、MiniMax、MiMo 等），各平台用量查看方式碎片化，需要分别登录开发者平台。
 
 设计目标：
 
@@ -145,7 +145,7 @@ macOS 菜单栏 LLM 余额/用量实时监控插件。解决的核心问题：�
 
 ## 5. 质量保障
 
-- **纯函数化核心**：`token_eye.py` 顶层只有常量与函数，`main()` 才读环境变量——解析/告警/分类/缓存全部可独立单测（79 个用例）
+- **纯函数化核心**：`token_eye.py` 顶层只有常量与函数，`main()` 才读环境变量——解析/告警/分类/缓存全部可独立单测（129 个用例）
 - **CI**（GitHub Actions）：bash 语法 + ShellCheck、Python 编译、单元测试、Schema 校验、配色对比度、版本一致性（`bitbar.version` vs `VERSION`）
 - **部署模型不变**：无论核心逻辑如何拆分，用户始终只复制 `token-eye.sh` 一个文件
 
@@ -167,8 +167,12 @@ macOS 菜单栏 LLM 余额/用量实时监控插件。解决的核心问题：�
 | v0.7 | 自适应配色、色弱安全审计、并发拉取、错误分类 |
 | v0.8 | 缓存 TTL、告警去重、控制台跳转、MiMo Cookie 鉴权与刷新 |
 | v0.9 | 401 自愈、用量告警、余额趋势、schema 校验、版本自检 |
-| v0.10 | 质量基建：单元测试（79）/ JSON Schema / CI / Makefile；架构拆分（Python 拆为独立模块）；修复刷新菜单空白与 WAL 误报 |
-| 当前 | 当日消耗估算 + 用量趋势线 |
+| v0.10 | 质量基建：单元测试 / JSON Schema / CI / Makefile；架构拆分（Python 拆为独立模块）；修复刷新菜单空白与 WAL 误报 |
+| v0.11–0.12 | 消耗监控闭环：当日/周/月消耗、7 天柱状、耗尽预测、dailySpendMax/daysLeft 告警、状态着色、一键升级、调试日志 |
+| v0.13–0.14 | MiniMax 状态 percent 优先推断、平台模板库、历史自动清理、通知提示音、自检菜单与交互 |
+| v0.15–0.17 | 详情菜单简约化（已用% 口径、阈值优先级链、windowLabels/pctDirection）、MiMo Cookie 半自动刷新（主动续期 + 失效自动拾取） |
+| v0.18 | **三端成型**：Android 版（Kotlin + Compose + Glance 小部件）+ Linux 系统托盘版（UKUI，零改动复用上游核心）+ README 分平台重构 |
+| 当前 | v0.18.1 |
 
 ## 8. Roadmap
 

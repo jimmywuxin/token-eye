@@ -491,7 +491,7 @@ make test       # 单元测试（unittest，零依赖）
 make check      # 全部检查：语法 + 测试 + Schema + 配色对比度
 ```
 
-- **单元测试**：`swiftbar/token_eye.py` 的解析/告警/错误分类/缓存等核心函数全部可测，`tests/` 覆盖 90+ 用例，`python3 -m unittest discover -s tests` 即可运行
+- **单元测试**：`swiftbar/token_eye.py` 的解析/告警/错误分类/缓存等核心函数全部可测，`tests/` 覆盖 129 个用例，`python3 -m unittest discover -s tests` 即可运行
 - **JSON Schema**：`schema/providers.schema.json` 描述配置结构；VS Code 等编辑器打开 `providers.json` 时自动补全与校验；`python3 scripts/validate-schema.py` 提供零依赖的运行时校验（脚本内置的轻量校验用于菜单栏提示）
 - **CI**：GitHub Actions（`.github/workflows/ci.yml`）自动执行 bash 语法 + ShellCheck、Python 编译、单元测试、Schema 校验、配色对比度、版本一致性检查
 - **配色回归**：`scripts/check-colors.py` 保证全部颜色 WCAG AA ≥4.5:1
