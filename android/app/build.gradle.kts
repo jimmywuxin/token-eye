@@ -12,8 +12,8 @@ android {
         applicationId = "com.coffeelab.tokeneye"
         minSdk = 30
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.19.0"
+        versionCode = 2
+        versionName = "0.19.1"
     }
 
     buildTypes {

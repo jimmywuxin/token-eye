@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.19.1] - 2026-09-09
+
+### Fixed
+- **峰谷倒计时感知星期**：`next_switch` / `secondsToNextSwitch` 原先只看小时边界不看 weekdays，周五 20:00 误显示「距高峰 13h」（指向周六 09:00，实际应 ~61h 到下周一）、周六 09:30 误显示 2h30m；且 Mac 与 Android 口径不一致（Python 取下一边界、Kotlin 取下一区间起点）。统一为：高峰中（当天是高峰日）→ 当前区间结束（end=24 视为次日 00:00）；空闲/周末 → 下一个高峰日的第一个区间起点（最多向后找 7 天）
+- **配置校验补齐**：`schema/providers.schema.json` 与运行时 `schema_validate` 补上 `parser.peakWindow` 定义与轻量校验（补齐项目约定）
+- 清理未实现的 `unknownLabel` / `warnWithinMinutes` 死配置与文档承诺
+- 测试补强：新增周末/跨零点倒计时用例（Python +5 / Kotlin +4）
+
 ## [0.19.0] - 2026-09-08
 
 ### Added
