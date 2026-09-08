@@ -41,3 +41,8 @@ fun JsonElement?.asBoolOrNull(): Boolean? {
     if (this == null || !isJsonPrimitive) return null
     return try { asJsonPrimitive.asBoolean } catch (e: Exception) { null }
 }
+
+fun JsonElement?.asIntOrNull(): Int? {
+    if (this == null || !isJsonPrimitive) return null
+    return try { asJsonPrimitive.asInt } catch (e: Exception) { null }
+}

@@ -26,12 +26,13 @@ android/
 │   │   ├── SecretStore.kt   # 密钥加密存储
 │   │   ├── Repositories.kt  # 配置/快照持久化
 │   │   ├── RefreshEngine.kt # 刷新编排 + 告警判定
-│   │   └── AlertNotifier.kt # 通知
+│   │   ├── AlertNotifier.kt # 通知
+│   │   └── PeakWindow.kt    # 峰/谷时段判定（v0.19.0，镜像 swiftbar/parsers/peak_window.py）
 │   ├── widget/          # Glance 小部件
 │   ├── work/            # WorkManager 调度
 │   ├── App.kt           # Application：频道创建 + 定时任务
 │   └── MainActivity.kt  # Compose 设置页
-└── app/src/test/        # 单元测试（ParserTest）
+└── app/src/test/        # 单元测试（ParserTest + PeakWindowTest）
 ```
 
 ## 小部件显示规则

@@ -24,6 +24,24 @@ data class ParserSpec(
     val defaultMinBalance: Double? = null,
     val okField: String = "",
     val okValue: String = "",
+    /** 峰/谷时段标记（DeepSeek 等峰谷定价平台使用，Android 渲染于 balance 解析的 summary/details） */
+    val peakWindow: PeakWindowSpec? = null,
+)
+
+/** 峰/谷时段规则（镜像 swiftbar/parsers/peak_window.py 的 schema）
+ *
+ * @param tz IANA 时区名（如 "Asia/Shanghai"），默认 "Asia/Shanghai"
+ * @param weekdays isoweekday 列表（1=周一..7=周日），默认 [1..5]（工作日）
+ * @param hours 左闭右开区间 [[start,end),...]，本地 24 小时制
+ * @param peakLabel 高峰时段菜单文本（默认 "⚡高峰"）
+ * @param offPeakLabel 空闲时段菜单文本（默认 "🌙空闲"）
+ */
+data class PeakWindowSpec(
+    val tz: String = "Asia/Shanghai",
+    val weekdays: List<Int> = listOf(1, 2, 3, 4, 5),
+    val hours: List<IntRange> = emptyList(),
+    val peakLabel: String = "⚡高峰",
+    val offPeakLabel: String = "🌙空闲",
 )
 
 data class DisplaySpec(

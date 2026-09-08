@@ -32,6 +32,30 @@ object ConfigLoader {
                 defaultMinBalance = parserObj.get("defaultMinBalance")?.takeIf { it.isJsonPrimitive }?.asDouble,
                 okField = parserObj.get("okField")?.asString ?: "",
                 okValue = parserObj.get("okValue")?.asString ?: "",
+                peakWindow = parserObj.getAsJsonObject("peakWindow")?.let { pw ->
+                    val hoursArr = pw.getAsJsonArray("hours")
+                    val hours = hoursArr?.mapNotNull { el ->
+                        if (!el.isJsonArray) return@mapNotNull null
+                        val pair = el.asJsonArray
+                        if (pair.size() < 2) return@mapNotNull null
+                        val s = pair[0].takeIf { it.isJsonPrimitive }?.asInt ?: return@mapNotNull null
+                        val e = pair[1].takeIf { it.isJsonPrimitive }?.asInt ?: return@mapNotNull null
+                        if (s !in 0..23 || e !in 1..24 || s >= e) return@mapNotNull null
+                        s until e
+                    } ?: emptyList()
+                    val weekdaysArr = pw.getAsJsonArray("weekdays")
+                    val weekdays = weekdaysArr?.mapNotNull { it.asIntOrNull() }
+                        ?.filter { it in 1..7 }
+                        ?.ifEmpty { null }
+                        ?: listOf(1, 2, 3, 4, 5)
+                    PeakWindowSpec(
+                        tz = pw.get("tz")?.asString ?: "Asia/Shanghai",
+                        weekdays = weekdays,
+                        hours = hours,
+                        peakLabel = pw.get("peakLabel")?.asString ?: "⚡高峰",
+                        offPeakLabel = pw.get("offPeakLabel")?.asString ?: "🌙空闲",
+                    )
+                },
             )
             val displayObj = p.getAsJsonObject("display")
             val nameColor = displayObj?.get("nameColor")

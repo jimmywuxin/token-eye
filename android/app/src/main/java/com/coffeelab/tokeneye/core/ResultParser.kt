@@ -1,6 +1,8 @@
 package com.coffeelab.tokeneye.core
 
 import com.google.gson.JsonObject
+import java.time.LocalDateTime
+import java.time.ZoneId
 
 /**
  * 解析层，移植 token_eye.py parse_provider 的 balance / plan_usage 两类。
@@ -40,14 +42,29 @@ object ResultParser {
             balanceNum == null -> Status.ERR
             else -> Status.OK
         }
-        val details = buildList {
+        val details = mutableListOf<String>().apply {
             add("${p.name}：$symbol$balanceStr")
             if (minBalance != null) add("阈值：$symbol${String.format("%.2f", minBalance)}（低于告警）")
             add("货币：$currency")
         }
+
+        // 峰/谷时段标记（peakWindow）：summary 追加标签 + details 追加「状态 距下次切换 X」
+        // 镜像 swiftbar/token_eye.py 的渲染；tz 名称非法时退回 Asia/Shanghai；时段计算失败静默跳过
+        var summary = "$symbol$balanceStr"
+        p.parser.peakWindow?.let { spec ->
+            try {
+                val zone = try { ZoneId.of(spec.tz) } catch (e: Exception) { ZoneId.of("Asia/Shanghai") }
+                val info = PeakWindow.classify(LocalDateTime.now(zone), spec)
+                summary = "$summary ${info.label}"
+                val arrow = if (info.isPeak) "距空闲" else "距高峰"
+                val cd = PeakWindow.formatCountdown(info.secondsToSwitch)
+                details.add(if (cd.isEmpty()) info.windowStr else "${info.windowStr} $arrow $cd")
+            } catch (_: Exception) { /* 渲染期异常兜底，不影响余额显示 */ }
+        }
+
         return ProviderResult(
             id = p.id, name = p.name, status = status,
-            summary = "$symbol$balanceStr",
+            summary = summary,
             details = details,
             balanceNum = balanceNum,
             consoleUrl = p.consoleUrl,
