@@ -44,6 +44,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.coffeelab.tokeneye.BuildConfig
 import com.coffeelab.tokeneye.core.ConfigLoader
 import com.coffeelab.tokeneye.core.ConfigRepository
 import com.coffeelab.tokeneye.core.Provider
@@ -121,6 +122,15 @@ fun TokenEyeApp() {
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                // 版本号（顶部右上角显示当前构建版本，与 Mac/Linux 端 tag 同步）
+                Row(modifier = Modifier.fillMaxWidth()) {
+                    Spacer(Modifier.weight(1f))
+                    Text(
+                        "v${BuildConfig.VERSION_NAME}",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
                 Spacer(Modifier.height(8.dp))
 
                 LazyColumn(modifier = Modifier.weight(1f)) {
@@ -244,7 +254,10 @@ private fun ProviderCard(
             }
             result?.let {
                 Text(it.summary, style = MaterialTheme.typography.bodyLarge)
-                it.details.take(3).forEach { d ->
+                // details 只渲染「最后一行」—— peakWindow 行 / 重置行都是末尾追加的；
+                // 其他解释性行（"DeepSeek：¥X" / "阈值" / "货币" / "general" / "5h 剩余"）
+                // 是从 Mac 版 `lines` 照搬的，对小屏 App 冗余，按小屏排版过滤
+                it.details.lastOrNull()?.let { d ->
                     Text(d, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }

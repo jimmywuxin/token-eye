@@ -13,7 +13,7 @@ android {
         minSdk = 30
         targetSdk = 35
         versionCode = 1
-        versionName = "0.1.0"
+        versionName = "0.19.0"
     }
 
     buildTypes {
@@ -40,6 +40,8 @@ android {
 
     buildFeatures {
         compose = true
+        // 顶部显示当前版本号需要 BuildConfig.VERSION_NAME（AGP 8 默认关闭，需显式开启）
+        buildConfig = true
     }
 
     packaging {
