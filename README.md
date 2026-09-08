@@ -423,6 +423,51 @@ provider 配置 `consoleUrl`，详情菜单末尾出现「→ 打开 X 控制台
 }
 ```
 
+### 峰/谷时段标记（parser.peakWindow）
+
+DeepSeek 等平台采用「峰谷定价」（API 不返回当前时段字段），由 `parsers/peak_window.py` 客户端按公示的时段规则自行判定。**仅 `balance` 类 parser 支持**——在余额菜单栏追加 `⚡高峰`/`🌙空闲` 标记，并在详情菜单追加一行「状态 + 距下次切换 X」。
+
+```json
+{
+  "parser": {
+    "peakWindow": {
+      "tz": "Asia/Shanghai",
+      "weekdays": [1, 2, 3, 4, 5],
+      "hours": [[9, 12], [14, 18]],
+      "peakLabel": "⚡高峰",
+      "offPeakLabel": "🌙空闲"
+    }
+  }
+}
+```
+
+字段说明：
+
+- `tz`：IANA 时区名，默认 `Asia/Shanghai`
+- `weekdays`：`isoweekday` 列表，1=周一 … 7=周日，默认 `[1..5]`（工作日）
+- `hours`：左闭右开区间列表 `[[start,end),...]`，本地 24 小时制
+- `peakLabel` / `offPeakLabel`：菜单栏显示文本，可改 emoji 或文案
+
+效果（菜单栏）：
+
+- 高峰：`✅ ¥13.5 ⚡高峰`
+- 空闲：`✅ ¥13.5 🌙空闲`
+
+效果（详情菜单）：
+
+```
+DeepSeek: ¥13.5
+高峰 距空闲 1h30m
+```
+
+其他形态：
+
+- 工作日空闲 13:00 → `空闲 距高峰 1h`
+- 工作日晚间 20:00 → `空闲 距高峰 13h`
+- 周末 10:30 → `周末 距高峰 10h30m`
+
+> 零网络开销，纯本地时区判定。判定失败（如时区名非法）会静默跳过，不影响余额显示。
+
 ### 货币符号（display.currencySymbols）
 
 balance 类默认 USD → `$`、其余 → `¥`，可自定义映射：

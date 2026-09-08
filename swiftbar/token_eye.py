@@ -20,8 +20,9 @@ import subprocess
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime as _dt
 
-VERSION = "0.18.1"
+VERSION = "0.19.0"
 
 # 按 parser 类型的默认缓存 TTL（秒）
 DEFAULT_CACHE_TTL = {"balance": 300, "plan_usage": 30, "status": 60}
@@ -49,6 +50,24 @@ CONFIG_COLOR_KEYS = {
     "ERR": "err",
 }
 VALID_PARSER_TYPES = ("balance", "plan_usage", "status")
+
+# 把项目根加入 sys.path，以便 import parsers.* 子模块
+# （PROJECT_DIR 由 token-eye.sh 通过环境变量传入；缺省取本文件父目录的父目录）
+_PROJECT_ROOT = os.environ.get("PROJECT_DIR")
+if not _PROJECT_ROOT:
+    _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
+
+try:
+    from parsers.peak_window import classify as _classify_peak, format_countdown as _format_peak_countdown
+    _HAS_PEAK_WINDOW = True
+except ImportError:  # pragma: no cover — parsers 不存在时静默降级（菜单不显示时段）
+    _HAS_PEAK_WINDOW = False
+    _classify_peak = None  # type: ignore
+    _format_peak_countdown = None  # type: ignore
+# peakWindow 默认时区（与 parsers.peak_window.DEFAULT_TZ 保持一致；tz 名称非法时兜底）
+_PEAK_DEFAULT_TZ = "Asia/Shanghai"
 
 
 # ---------------------------------------------------------------------------
@@ -504,6 +523,33 @@ def parse_provider(p, fetch_result, colors, appearance):
         }
         if min_balance is not None:
             result["min_balance"] = min_balance
+
+        # 峰/谷时段标记（peakWindow）：菜单栏追加「⚡高峰/🌙空闲」+ 详情菜单追加一行「时段 + 距下次切换 X」
+        # 当前时段本地判定，零网络；parsers 模块不可用时静默跳过
+        if parser.get("peakWindow") and _HAS_PEAK_WINDOW:
+            try:
+                from zoneinfo import ZoneInfo as _ZI  # 局部导入，避免顶层硬依赖
+                _tz_name = parser["peakWindow"].get("tz") or _PEAK_DEFAULT_TZ
+                try:
+                    _local_now = _dt.now(_ZI(_tz_name))
+                except Exception:  # noqa: BLE001 — tz 名称非法时退回默认
+                    _local_now = _dt.now(_ZI(_PEAK_DEFAULT_TZ))
+                pw_info = _classify_peak(_local_now, parser["peakWindow"])
+                result["menu_bar"] = f"{result['menu_bar']} {pw_info['label']}"
+                _peak_color = colors["WARN"] if pw_info["is_peak"] else colors["OK"]
+                _countdown = _format_peak_countdown(pw_info["seconds_to_switch"])
+                # 详情菜单单行紧凑文案：
+                #   高峰 → "高峰 距空闲 1h30m"
+                #   空闲 → "空闲 距高峰 10h30m"
+                #   周末 → "周末 距高峰 10h30m"
+                _arrow = "距空闲" if pw_info["is_peak"] else "距高峰"
+                _line = f"{pw_info['window_str']} {_arrow} {_countdown}" if _countdown else pw_info["window_str"]
+                result["lines"].append(_line)
+                result["colors"].append(_peak_color)
+                result["line_params"].append(None)  # 占位：保持 lines / colors / line_params 对齐
+            except Exception:  # noqa: BLE001 — 渲染期异常必须兜底，不能空白菜单
+                pass
+
         return result
 
     elif ptype == "status":
