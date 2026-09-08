@@ -102,6 +102,22 @@ def schema_validate(config):
         ptype = (p.get("parser") or {}).get("type")
         if ptype not in VALID_PARSER_TYPES:
             errors.append(f"providers[{idx}]（{pid}）parser.type 无效: {ptype!r}")
+        # peakWindow 轻量校验（与 parsers/peak_window.py 的规则一致）
+        pw_cfg = (p.get("parser") or {}).get("peakWindow")
+        if pw_cfg is not None:
+            if not isinstance(pw_cfg, dict):
+                errors.append(f"providers[{idx}]（{pid}）parser.peakWindow 不是对象")
+            else:
+                for h in pw_cfg.get("hours") or []:
+                    if (not isinstance(h, (list, tuple)) or len(h) != 2
+                            or not (0 <= int(h[0]) < 24 and 0 < int(h[1]) <= 24
+                                    and int(h[0]) < int(h[1]))):
+                        errors.append(f"providers[{idx}]（{pid}）peakWindow.hours 区间非法: {h!r}")
+                        break
+                for d in pw_cfg.get("weekdays") or []:
+                    if not 1 <= int(d) <= 7:
+                        errors.append(f"providers[{idx}]（{pid}）peakWindow.weekdays 取值应在 1-7: {d!r}")
+                        break
     return errors
 
 

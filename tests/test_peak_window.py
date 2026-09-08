@@ -113,6 +113,34 @@ class TestNextSwitch(unittest.TestCase):
         # 20:00 → 次日 09:00，剩 13h
         self.assertEqual(info["seconds_to_switch"], 13 * 3600)
 
+    def test_friday_evening_skips_weekend(self):
+        # 周五 20:00 → 下一个高峰是周一 09:00（61h），不是周六 09:00
+        info = pw.classify(at(20, 0, weekday=5), DEEPSEEK_CFG)
+        self.assertEqual(info["seconds_to_switch"], 61 * 3600)
+
+    def test_friday_gap_end_skips_weekend(self):
+        # 周五 18:30（下班后）→ 周一 09:00
+        info = pw.classify(at(18, 30, weekday=5), DEEPSEEK_CFG)
+        self.assertEqual(info["seconds_to_switch"], (62 * 3600 + 30 * 60))
+
+    def test_saturday_morning_skips_to_monday(self):
+        # 周六 09:30（落在时段内但周末）→ 周一 09:00 = 47h30m
+        info = pw.classify(at(9, 30, weekday=6), DEEPSEEK_CFG)
+        self.assertEqual(info["window_str"], "周末")
+        self.assertEqual(info["seconds_to_switch"], (47 * 3600 + 30 * 60))
+
+    def test_sunday_evening_to_monday(self):
+        # 周日 23:00 → 周一 09:00 = 10h
+        info = pw.classify(at(23, 0, weekday=7), DEEPSEEK_CFG)
+        self.assertEqual(info["seconds_to_switch"], 10 * 3600)
+
+    def test_allday_peak_crosses_midnight(self):
+        # 全天高峰（[[0,24]]）周五 23:00 高峰中 → 次日 00:00 翻转
+        cfg = {"hours": [[0, 24]], "weekdays": [1, 2, 3, 4, 5]}
+        info = pw.classify(at(23, 0, weekday=5), cfg)
+        self.assertTrue(info["is_peak"])
+        self.assertEqual(info["seconds_to_switch"], 3600)
+
     def test_format_countdown(self):
         self.assertEqual(pw.format_countdown(0), "")
         self.assertEqual(pw.format_countdown(59), "0m")

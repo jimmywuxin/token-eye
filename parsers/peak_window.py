@@ -25,17 +25,15 @@ DeepSeek 等平台的「峰谷定价」API **不返回当前时段字段**，只
       "weekdays": [1,2,3,4,5],                // 周一=1 ... 周日=7；缺省 [1..5]（工作日）
       "hours": [[9,12],[14,18]],             // 半开区间 [[start,end),...]，本地小时；24h 制
       "peakLabel": "⚡高峰",
-      "offPeakLabel": "🌙空闲",
-      "unknownLabel": "⏱待定"
+      "offPeakLabel": "🌙空闲"
     }
 
 判定规则：
 - 时段以 *本地时间* 小时整数判断（边界左闭右开，如 [9,12) 表示 09:00-12:00）
 - 周末（weekdays 之外）一律返回 off-peak
 - 当前小时落在任意 [start,end) 区间内 → peak；否则 → off-peak
-- 若当前本地小时不在 hours 任何区间内但「下一次区间开始时间 < 1 小时」，
-  返回 unknownLabel（给提示用户「快进高峰」之类的过渡感），可选行为
-  默认关闭，调用方可通过 `warnWithinMinutes` 开启
+- 倒计时感知 weekdays：空闲/周末时向后找下一个「高峰日」的第一个区间起点
+  （最多找 7 天），高峰中取当前区间结束（end=24 视为次日 00:00）
 
 零依赖：仅用标准库 datetime + zoneinfo（Py3.9+；macOS 系统 Python 3 已带）。
 """
@@ -71,35 +69,40 @@ def is_peak_hour(local_dt: datetime, ranges: Sequence[tuple[int, int]]) -> bool:
     return any(start <= h < end for start, end in ranges)
 
 
-def next_switch(local_dt: datetime, ranges: Sequence[tuple[int, int]]) -> datetime:
+def next_switch(local_dt: datetime, ranges: Sequence[tuple[int, int]],
+                weekdays: Iterable[int] = DEFAULT_WEEKDAYS) -> datetime:
     """返回本地时区下「下一次状态翻转」的时刻（峰值↔谷值切换）。
 
-    用于菜单显示「距下次切换还有 X 分钟」。找不到下一个切换点时返回 local_dt。
+    倒计时语义与展示口径一致：
+    - 高峰中（且今天是高峰日）→ 当前所在区间的结束时刻（end=24 视为次日 00:00）
+    - 空闲/周末 → 下一个「高峰日」的第一个区间起点（最多向后找 7 天）
+
+    找不到任何切换点时返回 local_dt。
     """
     if not ranges:
         return local_dt
-    now_h = local_dt.hour
-    in_peak = is_peak_hour(local_dt, ranges)
-    # 收集所有区间边界（按小时排序，去重）
-    edges = sorted({s for s, _ in ranges} | {e for _, e in ranges})
-    # 候选切换点：从 now_h+1 到 24，再加次日所有边界
-    candidates: list[int] = [e for e in edges if e > now_h]
-    candidates += [24 + e for e in edges]
-    if not candidates:
-        return local_dt
-    next_h_abs = candidates[0]
-    # 构造本地时间（保留分钟/秒）并对齐到整点
-    base_date = local_dt.date()
-    if next_h_abs >= 24:
-        next_dt = datetime.combine(base_date + timedelta(days=1),
-                                   datetime.min.time()).replace(
-            hour=next_h_abs - 24, minute=0, second=0, microsecond=0,
-            tzinfo=local_dt.tzinfo)
-    else:
-        next_dt = datetime.combine(base_date, datetime.min.time()).replace(
-            hour=next_h_abs, minute=0, second=0, microsecond=0,
-            tzinfo=local_dt.tzinfo)
-    return next_dt
+    weekdays = tuple(weekdays)
+    in_peak_today = is_peak_hour(local_dt, ranges) and local_dt.isoweekday() in weekdays
+    if in_peak_today:
+        # 当前所在区间取最晚的 end（容忍重叠区间配置）；end=24 → 次日 00:00
+        cur_end = max(e for s, e in ranges if s <= local_dt.hour < e)
+        if cur_end >= 24:
+            return datetime.combine(local_dt.date() + timedelta(days=1),
+                                    datetime.min.time()).replace(
+                tzinfo=local_dt.tzinfo)
+        return local_dt.replace(hour=cur_end, minute=0, second=0, microsecond=0)
+    # 空闲/周末：找下一个高峰日的第一个区间起点
+    starts = sorted({s for s, _ in ranges})
+    for offset in range(8):
+        day = local_dt.date() + timedelta(days=offset)
+        if day.isoweekday() not in weekdays:
+            continue
+        day_starts = starts if offset > 0 else [s for s in starts if s > local_dt.hour]
+        if day_starts:
+            return datetime.combine(day, datetime.min.time()).replace(
+                hour=day_starts[0], minute=0, second=0, microsecond=0,
+                tzinfo=local_dt.tzinfo)
+    return local_dt
 
 
 def classify(local_dt: datetime, cfg: dict) -> dict:
@@ -138,7 +141,6 @@ def classify(local_dt: datetime, cfg: dict) -> dict:
     ranges = _hours_to_ranges(cfg.get("hours") or [])
     peak_label = cfg.get("peakLabel", "⚡高峰")
     off_label = cfg.get("offPeakLabel", "🌙空闲")
-    unknown_label = cfg.get("unknownLabel", "⏱待定")
 
     is_weekday = local_dt.isoweekday() in weekdays
     in_window = is_peak_hour(local_dt, ranges)
@@ -158,7 +160,7 @@ def classify(local_dt: datetime, cfg: dict) -> dict:
         label = off_label
         window_str = "空闲"
 
-    nxt = next_switch(local_dt, ranges)
+    nxt = next_switch(local_dt, ranges, weekdays)
     seconds = max(0, int((nxt - local_dt).total_seconds()))
 
     return {
@@ -168,7 +170,6 @@ def classify(local_dt: datetime, cfg: dict) -> dict:
         "tz": tz.key if hasattr(tz, "key") else str(tz),
         "next_switch_local": nxt,
         "seconds_to_switch": seconds,
-        "_unknown_label": unknown_label,  # 供调用方按需触发
     }
 
 

@@ -36,12 +36,10 @@ object PeakWindow {
      * @param spec PeakWindowSpec 配置
      */
     fun classify(localDt: LocalDateTime, spec: PeakWindowSpec): Info {
-        val tz = try { ZoneId.of(spec.tz) } catch (e: Exception) { ZoneId.of("Asia/Shanghai") }
-        // 入参已假定为本地时区的 LocalDateTime（调用方用 LocalDateTime.now(tz) 构造），无需再转。
-        val localNow = localDt
+        val tzId = try { ZoneId.of(spec.tz).id } catch (e: Exception) { "Asia/Shanghai" }
 
-        val isWeekday = localNow.dayOfWeek.value in spec.weekdays  // DayOfWeek.MONDAY.value=1..SUNDAY.value=7
-        val inWindow = isPeakHour(localNow, spec.hours)
+        val isWeekday = localDt.dayOfWeek.value in spec.weekdays  // DayOfWeek.MONDAY.value=1..SUNDAY.value=7
+        val inWindow = isPeakHour(localDt, spec.hours)
         val isPeak = isWeekday && inWindow
 
         val label = if (isPeak) spec.peakLabel else spec.offPeakLabel
@@ -51,32 +49,43 @@ object PeakWindow {
             else -> "空闲"
         }
 
-        val secondsToSwitch = secondsToNextSwitch(localNow, spec.hours, isPeak)
-        return Info(isPeak, label, windowStr, secondsToSwitch, tz.id)
+        val secondsToSwitch = secondsToNextSwitch(localDt, spec, isPeak)
+        return Info(isPeak, label, windowStr, secondsToSwitch, tzId)
     }
 
     /**
-     * 计算距下次切换秒数。
-     * - 高峰：到当前高峰结束 = 距空闲（找到当前所在区间 end）
-     * - 空闲/周末：到下一个峰段开始 = 距高峰
+     * 计算距下次切换秒数（与 parsers/peak_window.py next_switch 口径一致）。
+     * - 高峰中（且今天是高峰日）：到当前所在区间结束（end=24 视为次日 00:00）
+     * - 空闲/周末：到下一个「高峰日」的第一个区间起点（最多向后找 7 天，跳过非高峰日）
      */
-    fun secondsToNextSwitch(localNow: LocalDateTime, hours: List<IntRange>, isPeak: Boolean): Int {
-        if (hours.isEmpty()) return 0
-        val sortedRanges = hours.sortedBy { it.first }
+    fun secondsToNextSwitch(localNow: LocalDateTime, spec: PeakWindowSpec, isPeak: Boolean): Int {
+        val sortedRanges = spec.hours.sortedBy { it.first }
+        if (sortedRanges.isEmpty()) return 0
 
         return if (isPeak) {
             // 当前所在区间 → 到 endExclusive（IntRange 的 last 是 inclusive = end-1，所以 end = last+1）
             val cur = sortedRanges.firstOrNull { it.contains(localNow.hour) } ?: sortedRanges.last()
             val endHour = cur.last + 1  // [9,12) → endHour=12
-            val minutesLeft = (endHour - localNow.hour) * 60 - localNow.minute
-            (minutesLeft * 60 - localNow.second).coerceAtLeast(0)
+            if (endHour >= 24) {
+                // 跨零点：到次日 00:00
+                val nextMidnight = localNow.toLocalDate().plusDays(1).atStartOfDay()
+                java.time.Duration.between(localNow, nextMidnight).seconds.toInt().coerceAtLeast(0)
+            } else {
+                val minutesLeft = (endHour - localNow.hour) * 60 - localNow.minute
+                (minutesLeft * 60 - localNow.second).coerceAtLeast(0)
+            }
         } else {
-            // 下一个区间开始 → 分钟差（含跨日）
-            val nextStart = sortedRanges.firstOrNull { it.first > localNow.hour }?.first
-                ?: sortedRanges.first().first + 24  // 跨日到次日第一个区间
-            val hoursAhead = nextStart - localNow.hour
-            val minutesLeft = hoursAhead * 60 - localNow.minute
-            (minutesLeft * 60 - localNow.second).coerceAtLeast(0)
+            // 下一个高峰日的第一个区间起点（跳过非高峰日）
+            val starts = sortedRanges.map { it.first }
+            for (offset in 0..7L) {
+                val day = localNow.toLocalDate().plusDays(offset)
+                if (day.dayOfWeek.value !in spec.weekdays) continue
+                val dayStarts = if (offset == 0L) starts.filter { it > localNow.hour } else starts
+                val first = dayStarts.firstOrNull() ?: continue
+                val target = day.atTime(first, 0)
+                return java.time.Duration.between(localNow, target).seconds.toInt().coerceAtLeast(0)
+            }
+            0
         }
     }
 

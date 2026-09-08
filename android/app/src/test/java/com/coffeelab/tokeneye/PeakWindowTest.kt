@@ -102,6 +102,37 @@ class PeakWindowTest {
     }
 
     @Test
+    fun seconds_to_switch_friday_evening_skips_weekend() {
+        // 周五 20:00 → 下一个高峰是周一 09:00（61h），不是周六 09:00
+        val info = PeakWindow.classify(at(20, 0, weekday = 5), spec)
+        assertEquals(61 * 3600, info.secondsToSwitch)
+    }
+
+    @Test
+    fun seconds_to_switch_saturday_morning_skips_to_monday() {
+        // 周六 09:30（落在时段内但周末）→ 周一 09:00 = 47h30m
+        val info = PeakWindow.classify(at(9, 30, weekday = 6), spec)
+        assertEquals("周末", info.windowStr)
+        assertEquals(47 * 3600 + 30 * 60, info.secondsToSwitch)
+    }
+
+    @Test
+    fun seconds_to_switch_sunday_evening_to_monday() {
+        // 周日 23:00 → 周一 09:00 = 10h
+        val info = PeakWindow.classify(at(23, 0, weekday = 7), spec)
+        assertEquals(10 * 3600, info.secondsToSwitch)
+    }
+
+    @Test
+    fun seconds_to_switch_allday_peak_crosses_midnight() {
+        // 全天高峰（[0,24)）周五 23:00 高峰中 → 次日 00:00 翻转
+        val allDay = spec.copy(hours = listOf(0 until 24))
+        val info = PeakWindow.classify(at(23, 0, weekday = 5), allDay)
+        assertTrue(info.isPeak)
+        assertEquals(3600, info.secondsToSwitch)
+    }
+
+    @Test
     fun format_countdown() {
         assertEquals("", PeakWindow.formatCountdown(0))
         assertEquals("0m", PeakWindow.formatCountdown(59))
