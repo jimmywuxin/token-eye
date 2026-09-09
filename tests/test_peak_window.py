@@ -3,14 +3,19 @@
 import os
 import sys
 import unittest
-from datetime import datetime, timedelta
-from zoneinfo import ZoneInfo
+from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 from parsers import peak_window as pw  # noqa: E402
 
-CST = ZoneInfo("Asia/Shanghai")
-UTC = ZoneInfo("UTC")
+# 麒麟 py3.8 无 zoneinfo；用固定偏移等价时区（UTC+8 / UTC）跑测试
+try:  # Python ≥ 3.9
+    from zoneinfo import ZoneInfo
+    CST = ZoneInfo("Asia/Shanghai")
+    UTC = ZoneInfo("UTC")
+except ImportError:  # Python 3.8-：固定偏移（中国无 DST，等价）
+    CST = timezone(timedelta(hours=8), "Asia/Shanghai")
+    UTC = timezone.utc
 
 
 def at(hour, minute=0, weekday=1, tz=CST):

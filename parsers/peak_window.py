@@ -41,7 +41,17 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 from typing import Iterable, Sequence
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+try:  # Python ≥ 3.9：标准库 zoneinfo
+    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+    _NO_ZONEINFO = False
+except ImportError:  # Python 3.8-（如麒麟 /usr/bin/python3）：无 zoneinfo
+    ZoneInfo = None
+    ZoneInfoNotFoundError = Exception
+    # 麒麟 py3.8 的 datetime.tzinfo 不可子类化（C 限制），改用内置固定偏移
+    from datetime import timezone as _timezone
+    _UTC_P8 = _timezone(timedelta(hours=8))
+    _NO_ZONEINFO = True
 
 # 默认时区：北京时间（UTC+8，中国不实行夏令时，固定无 DST 偏移）
 DEFAULT_TZ = "Asia/Shanghai"
@@ -123,11 +133,14 @@ def classify(local_dt: datetime, cfg: dict) -> dict:
         }
     """
     tz_name = cfg.get("tz") or DEFAULT_TZ
-    try:
-        tz = ZoneInfo(tz_name)
-    except ZoneInfoNotFoundError:
-        # fallback：按固定 UTC+8 处理（兼容性兜底，Py3.8- 无 zoneinfo）
-        tz = ZoneInfo(DEFAULT_TZ)
+    if _NO_ZONEINFO:  # Py3.8-：固定 UTC+8（中国无 DST，等价）
+        tz = _UTC_P8
+    else:
+        try:
+            tz = ZoneInfo(tz_name)
+        except ZoneInfoNotFoundError:
+            # fallback：按固定 UTC+8 处理（tz 名非法兜底）
+            tz = ZoneInfo(DEFAULT_TZ)
     # 把入参转换到目标时区
     if local_dt.tzinfo is None:
         local_dt = local_dt.replace(tzinfo=tz)
@@ -167,7 +180,8 @@ def classify(local_dt: datetime, cfg: dict) -> dict:
         "is_peak": is_peak,
         "label": label,
         "window_str": window_str,
-        "tz": tz.key if hasattr(tz, "key") else str(tz),
+        # 无 zoneinfo（Py3.8-）时 tz 是固定偏移对象，无 .key；展示请求的 tz 名保持一致
+        "tz": (tz.key if hasattr(tz, "key") else str(tz)) if not _NO_ZONEINFO else tz_name,
         "next_switch_local": nxt,
         "seconds_to_switch": seconds,
     }

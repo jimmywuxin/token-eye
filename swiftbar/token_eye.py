@@ -22,7 +22,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime as _dt
 
-VERSION = "0.19.1"
+VERSION = "0.19.2"
 
 # 按 parser 类型的默认缓存 TTL（秒）
 DEFAULT_CACHE_TTL = {"balance": 300, "plan_usage": 30, "status": 60}
@@ -544,12 +544,8 @@ def parse_provider(p, fetch_result, colors, appearance):
         # 当前时段本地判定，零网络；parsers 模块不可用时静默跳过
         if parser.get("peakWindow") and _HAS_PEAK_WINDOW:
             try:
-                from zoneinfo import ZoneInfo as _ZI  # 局部导入，避免顶层硬依赖
-                _tz_name = parser["peakWindow"].get("tz") or _PEAK_DEFAULT_TZ
-                try:
-                    _local_now = _dt.now(_ZI(_tz_name))
-                except Exception:  # noqa: BLE001 — tz 名称非法时退回默认
-                    _local_now = _dt.now(_ZI(_PEAK_DEFAULT_TZ))
+                # 传 naive now：时区由 _classify_peak 内部统一处理（含 Py3.8 无 zoneinfo 的固定 +8 兜底）
+                _local_now = _dt.now()
                 pw_info = _classify_peak(_local_now, parser["peakWindow"])
                 result["menu_bar"] = f"{result['menu_bar']} {pw_info['label']}"
                 _peak_color = colors["WARN"] if pw_info["is_peak"] else colors["OK"]

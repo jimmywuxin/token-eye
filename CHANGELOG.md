@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.19.2] - 2026-09-09
+
+### Fixed
+- **麒麟 Linux（Py3.8）峰谷时段不显示**：`parsers/peak_window.py` 顶层 `from zoneinfo import ZoneInfo` 在 Python 3.8（麒麟 `/usr/bin/python3`）抛 ImportError，导致 `_HAS_PEAK_WINDOW=False` 静默禁用峰谷渲染；`token_eye.py` 的 `parse_provider` 内另有一处局部 zoneinfo 硬依赖同样在 Py3.8 被吞。改为：`peak_window.py` 用 `try/except ImportError` 兜底，Py3.8 下以 `datetime.timezone(timedelta(hours=8))` 固定 +8 等价（中国无 DST）；`parse_provider` 不再直接依赖 zoneinfo，改传 naive 时间交给 `classify` 统一处理时区（含 tz 名非法回退）。测试 `tests/test_peak_window.py` 同步做 Py3.8 固定偏移兼容
+- **Linux 托盘重启后误报「未配置 API key」**：默认钥匙环重启后常处于锁定态，`linux_get_key` 见锁即返回空导致全显未配置。改为先尝试 `coll.unlock()` 再读（自动解锁则无感成功，需密码则弹桌面密钥框，失败如实返回空）
+- 新增 `linux/diag-keyring.py` 桌面诊断脚本：解锁 + 列出 3 个 key 是否就位 + 修复指引
+
 ## [0.19.1] - 2026-09-09
 
 ### Fixed

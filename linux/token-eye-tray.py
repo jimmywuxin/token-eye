@@ -45,13 +45,25 @@ import token_eye  # 上游核心（只读 import）
 # ---------------------------------------------------------------------------
 
 def linux_get_key(service):
-    """gnome-keyring 读密钥：secretstorage 按 attribute service=<name> 查找。"""
+    """gnome-keyring 读密钥：secretstorage 按 attribute service=<name> 查找。
+
+    钥匙环锁定是「重启后托盘误报未配置 key」的头号原因：默认钥匙环重启后常处于
+    锁定态，若直接返回空会让菜单全显「未配置」。这里先尝试解锁再读；解锁可能弹出
+    桌面密钥框（钥匙环密码≠登录密码时），失败则如实返回空，由菜单提示用户解锁。
+    """
     try:
         import secretstorage
         bus = secretstorage.dbus_init()
         coll = secretstorage.get_default_collection(bus)
-        if coll is None or coll.is_locked():
+        if coll is None:
             return ""
+        if coll.is_locked():
+            # 尝试解锁（登录自动解锁则无感成功；需密码则弹框，取消则返回 False）
+            try:
+                if not coll.unlock():
+                    return ""
+            except Exception:
+                return ""
         for item in coll.search_items({"service": service}):
             secret = item.get_secret()
             if secret:
