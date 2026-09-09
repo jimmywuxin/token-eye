@@ -22,7 +22,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime as _dt
 
-VERSION = "0.19.2"
+VERSION = "0.19.3"
 
 # 按 parser 类型的默认缓存 TTL（秒）
 DEFAULT_CACHE_TTL = {"balance": 300, "plan_usage": 30, "status": 60}
@@ -423,6 +423,18 @@ def check_latest_version(hdir):
                 return d.get("tag_name", "")
     except Exception:
         pass
+    tag = _fetch_latest_tag()
+    if tag:
+        try:
+            with open(cache_file, "w") as f:
+                json.dump({"ts": now, "tag_name": tag}, f)
+        except Exception:
+            pass
+    return tag
+
+
+def _fetch_latest_tag():
+    """GitHub API 查最新 release；直连失败时经国内镜像读 main 分支插件头部的版本号兜底。"""
     try:
         r = subprocess.run(
             ["curl", "-s", "--max-time", "4",
@@ -431,14 +443,29 @@ def check_latest_version(hdir):
         d = json.loads(r.stdout)
         tag = d.get("tag_name", "")
         if tag:
-            try:
-                with open(cache_file, "w") as f:
-                    json.dump({"ts": now, "tag_name": tag}, f)
-            except Exception:
-                pass
-        return tag
+            return tag
     except Exception:
-        return ""
+        pass
+    # 镜像兜底：raw 读 main 分支 token-eye.sh 的 bitbar.version
+    mirrors = (
+        "https://gh-proxy.com/https://raw.githubusercontent.com/jimmywuxin/"
+        "token-eye/main/swiftbar/token-eye.sh",
+        "https://ghfast.top/https://raw.githubusercontent.com/jimmywuxin/"
+        "token-eye/main/swiftbar/token-eye.sh",
+        "https://ghproxy.net/https://raw.githubusercontent.com/jimmywuxin/"
+        "token-eye/main/swiftbar/token-eye.sh",
+    )
+    for u in mirrors:
+        try:
+            r = subprocess.run(
+                ["curl", "-s", "--max-time", "6", u],
+                capture_output=True, text=True, timeout=8)
+            m = re.search(r"bitbar\.version>v([\d.]+)<", r.stdout)
+            if m:
+                return "v" + m.group(1)
+        except Exception:
+            continue
+    return ""
 
 
 # ---------------------------------------------------------------------------

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # <bitbar.title>Token Eye</bitbar.title>
-# <bitbar.version>v0.19.2</bitbar.version>
+# <bitbar.version>v0.19.3</bitbar.version>
 # <bitbar.author>wuxin</bitbar.author>
 # <bitbar.desc>LLM Token usage monitor — config-driven, with caching & alerts</bitbar.desc>
 # <bitbar.refreshTime>30</bitbar.refreshTime>
@@ -105,19 +105,34 @@ if [ "${1:-}" = "upgrade" ]; then
     fi
     if [ -d "$PROJECT_DIR/.git" ]; then
         # 项目目录是 git 仓库：拉取最新 main 并同步插件（保持当前分支，ff-only 拒绝分叉）
+        # SwiftBar 环境通常无代理，GitHub 直连常不通：
+        # 1) 直连 fetch 加低速超时快速失败（约 8s），避免点击后无限挂起
+        # 2) 直连失败后依次尝试国内镜像 fetch（main + tags）
+        GIT_TIMEOUT=(-c http.lowSpeedLimit=1000 -c http.lowSpeedTime=8)
+        MIRRORS=("https://gh-proxy.com/https://github.com/jimmywuxin/token-eye" "https://ghfast.top/https://github.com/jimmywuxin/token-eye" "https://ghproxy.net/https://github.com/jimmywuxin/token-eye")
         set +e
-        FETCH_ERR="$(git -C "$PROJECT_DIR" fetch --tags origin 2>&1)"
+        FETCH_ERR="$(git "${GIT_TIMEOUT[@]}" -C "$PROJECT_DIR" fetch --tags origin 2>&1)"
         FETCH_RC=$?
         MERGE_ERR=""
         MERGE_RC=1
+        if [ "$FETCH_RC" -ne 0 ]; then
+            FETCH_ERR="直连失败，尝试镜像..."
+            for M in "${MIRRORS[@]}"; do
+                FETCH_ERR="$(git "${GIT_TIMEOUT[@]}" -C "$PROJECT_DIR" fetch "$M" "refs/heads/main:refs/remotes/origin/main" "refs/tags/*:refs/tags/*" 2>&1)"
+                FETCH_RC=$?
+                [ "$FETCH_RC" -eq 0 ] && break
+            done
+        fi
         if [ "$FETCH_RC" -eq 0 ]; then
             MERGE_ERR="$(git -C "$PROJECT_DIR" merge --ff-only origin/main 2>&1)"
             MERGE_RC=$?
         fi
         set -e
         if [ "$FETCH_RC" -eq 0 ] && [ "$MERGE_RC" -eq 0 ]; then
-            cp "$PROJECT_DIR/swiftbar/token-eye.sh" "$SCRIPT_DIR/token-eye.sh"
-            chmod +x "$SCRIPT_DIR/token-eye.sh"
+            if [ "$PROJECT_DIR/swiftbar/token-eye.sh" != "$SCRIPT_DIR/token-eye.sh" ]; then
+                cp "$PROJECT_DIR/swiftbar/token-eye.sh" "$SCRIPT_DIR/token-eye.sh"
+                chmod +x "$SCRIPT_DIR/token-eye.sh"
+            fi
             echo "👁 | color=$C_OK"
             echo "---"
             echo "✅ 升级完成（项目已更新到最新 main，插件已同步）| color=$C_OK"
@@ -138,10 +153,21 @@ if [ "${1:-}" = "upgrade" ]; then
         fi
     else
         # 非 git 仓库：下载 release tarball 替换插件文件（含核心逻辑副本）
+        # 直连失败时依次尝试国内镜像
         TARBALL="/tmp/token-eye-${UP_TAG}.tar.gz"
         EXTRACT="/tmp/token-eye-upgrade-${UP_TAG}"
-        if ! curl -fsSL --max-time 20 -o "$TARBALL" \
-            "https://github.com/jimmywuxin/token-eye/archive/refs/tags/${UP_TAG}.tar.gz" 2>/dev/null; then
+        URLS=("https://github.com/jimmywuxin/token-eye/archive/refs/tags/${UP_TAG}.tar.gz"
+              "https://gh-proxy.com/https://github.com/jimmywuxin/token-eye/archive/refs/tags/${UP_TAG}.tar.gz"
+              "https://ghfast.top/https://github.com/jimmywuxin/token-eye/archive/refs/tags/${UP_TAG}.tar.gz"
+              "https://ghproxy.net/https://github.com/jimmywuxin/token-eye/archive/refs/tags/${UP_TAG}.tar.gz")
+        DL_OK=0
+        for U in "${URLS[@]}"; do
+            if curl -fsSL --max-time 20 -o "$TARBALL" "$U" 2>/dev/null; then
+                DL_OK=1
+                break
+            fi
+        done
+        if [ "$DL_OK" -eq 0 ]; then
             echo "👁 | color=$C_ERR"
             echo "---"
             echo "❌ 升级失败：下载失败（网络或版本号错误）| color=$C_ERR"

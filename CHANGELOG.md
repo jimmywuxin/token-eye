@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.19.3] - 2026-09-09
+
+### Fixed
+- **macOS 一键升级在无代理环境不可用**：SwiftBar 点击菜单项时是干净环境（无 `HTTP(S)_PROXY`），GitHub 直连国内常不通 → `git fetch` 挂死/失败，升级从未成功。改为：① 直连 fetch 加低速超时（约 8s 快速失败，不再无限挂起）；② 直连失败后依次尝试国内镜像 fetch（gh-proxy.com / ghfast.top / ghproxy.net，main + tags）；③ 非 git 仓库的 tarball 下载同样加镜像兜底；④ 版本自检 `check_latest_version` 在 API 直连失败时经镜像读 main 分支插件头部版本号兜底（此前无代理时连升级提示都不会出现）；⑤ 修复从项目目录直接运行时 cp 自拷贝报错退出的边界
+
 ## [0.19.2] - 2026-09-09
 
 ### Fixed
