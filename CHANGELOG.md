@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.20.0] - 2026-09-11
+
+### Fixed
+- **菜单里所有可点击项点了都没反应**（自 v0.15 系列起一直存在）：SwiftBar 的 `param1=`/`param2=` **不会传给插件本身**，只作为 `bash=` 所指定脚本的入参（上游 `MenuLineParameters.bashParams` 仅在 `params.bash` 存在时被消费）；本项目全部交互项只写了 `param1=… refresh=true`，SwiftBar 会用**零参数**重跑插件（`plugin.refresh(reason: .MenuAction)`），于是「刷新 Cookie」「一键升级」「自检」「点余额行复制」四个动作全部静默失效，观感就是点击无反应。现统一改为 `bash=<插件脚本> param1=… terminal=false refresh=true`：`terminal` 默认为 true（不写会弹出 Terminal.app），必须显式关闭；带 `refresh=true` 时 SwiftBar 会在脚本跑完自动重渲主菜单，刷新成功后余额立即恢复；路径由新增的 `action_script_path()` 解析（`SWIFTBAR_PLUGIN_PATH` → `SCRIPT_DIR` → 模块同级，取不到时退回旧写法保证菜单不空）
+- **点击动作在后台执行看不到反馈**（`terminal=false` 会丢弃 stdout）：刷新 Cookie / 升级 / 复制余额 改用 `osascript` 系统通知回显结果（刷新失败附脚本关键错误行，成功不打扰）；新增 `param1=self-check` 分支，自检结果发通知摘要并把完整输出落到 `~/Library/Caches/token-eye/self-check.log`
+- **同一次渲染里刷新脚本被跑两遍**：自愈成功只写 `autorefresh` 标记，紧接着的主动续期（`refreshInterval`）又跑一遍脚本；现自愈成功同时写 `lastrefresh` 标记
+
+### Added
+- 菜单项参数单测：`action_script_path()` 三级回退、`bash_action()` 格式与 `terminal=false` 强制、含空格值加引号、报错态刷新项携带 `bash=`、自愈成功写 `lastrefresh`（测试数 158 → 166）
+
 ## [0.19.3] - 2026-09-09
 
 ### Fixed

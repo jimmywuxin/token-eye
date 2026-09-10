@@ -853,6 +853,59 @@ class TestSelfCheck(unittest.TestCase):
         self.assertIn("版本一致", out)
 
 
+class TestActionParams(unittest.TestCase):
+    """菜单点击动作参数（SwiftBar：param1/param2 只传给 bash= 指定的脚本）。"""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.project_script = os.path.join(os.path.realpath(REPO_ROOT), "swiftbar", "token-eye.sh")
+
+    def test_prefers_swiftbar_plugin_path(self):
+        fake = os.path.join(self.dir, "token-eye.sh")
+        with open(fake, "w") as f:
+            f.write("#!bin/bash\n")
+        with mock.patch.dict(os.environ, {"SWIFTBAR_PLUGIN_PATH": fake}, clear=False):
+            self.assertEqual(te.action_script_path(), fake)
+
+    def test_falls_back_to_script_dir(self):
+        fake = os.path.join(self.dir, "token-eye.sh")
+        with open(fake, "w") as f:
+            f.write("#!bin/bash\n")
+        with mock.patch.dict(os.environ, {"SWIFTBAR_PLUGIN_PATH": "", "SCRIPT_DIR": self.dir},
+                             clear=False):
+            self.assertEqual(te.action_script_path(), fake)
+
+    def test_falls_back_to_module_dir(self):
+        with mock.patch.dict(os.environ, {"SWIFTBAR_PLUGIN_PATH": "", "SCRIPT_DIR": ""},
+                             clear=False):
+            self.assertEqual(te.action_script_path(), self.project_script)
+
+    def test_format_and_terminal_flag(self):
+        env = {"SWIFTBAR_PLUGIN_PATH": self.project_script}
+        with mock.patch.dict(os.environ, env, clear=False):
+            self.assertEqual(
+                te.bash_action("upgrade", "v0.20.0", refresh=True),
+                f"bash={self.project_script} param1=upgrade param2=v0.20.0"
+                " terminal=false refresh=true")
+            # terminal 默认 true（会弹 Terminal.app），必须显式关闭
+            self.assertIn("terminal=false", te.bash_action("copy-balance", "¥1"))
+            self.assertNotIn("refresh=true", te.bash_action("copy-balance", "¥1"))
+            self.assertEqual(te.bash_action_dict("copy-balance", "¥1"),
+                             {"bash": self.project_script, "param1": "copy-balance",
+                              "param2": "¥1", "terminal": "false"})
+
+    def test_space_value_quoted(self):
+        with mock.patch.dict(os.environ, {"SWIFTBAR_PLUGIN_PATH": self.project_script},
+                             clear=False):
+            self.assertIn("param2='a b'", te.bash_action("copy-balance", "a b"))
+
+    def test_no_params_returns_empty(self):
+        with mock.patch.dict(os.environ, {"SWIFTBAR_PLUGIN_PATH": self.project_script},
+                             clear=False):
+            self.assertEqual(te.bash_action(), "")
+            self.assertIsNone(te.bash_action_dict())
+
+
 class TestLineParams(unittest.TestCase):
     def setUp(self):
         self.dir = tempfile.mkdtemp()
@@ -862,9 +915,14 @@ class TestLineParams(unittest.TestCase):
             json.dump(payload, f)
 
     def test_balance_copy_params(self):
-        r = te.parse_provider(BALANCE_P, ok_result({
-            "balance_infos": [{"total_balance": 13.5, "currency": "CNY"}]}), COLORS, "dark")
-        self.assertEqual(r["line_params"][0], {"param1": "copy-balance", "param2": "¥13.5"})
+        # 交互项必须带 bash=：SwiftBar 只把 param1/param2 传给 bash= 脚本，不会传给插件本身
+        with mock.patch.dict(os.environ, {"SWIFTBAR_PLUGIN_PATH": "", "SCRIPT_DIR": ""},
+                             clear=False):
+            r = te.parse_provider(BALANCE_P, ok_result({
+                "balance_infos": [{"total_balance": 13.5, "currency": "CNY"}]}), COLORS, "dark")
+        self.assertEqual(r["line_params"][0], {
+            "bash": os.path.join(os.path.realpath(REPO_ROOT), "swiftbar", "token-eye.sh"),
+            "param1": "copy-balance", "param2": "¥13.5", "terminal": "false"})
         # 简约化后余额类详情只有 1 行（去掉了"可用/不可用"行），line_params 仅 1 项
         self.assertEqual(len(r["line_params"]), 1)
 
@@ -872,13 +930,26 @@ class TestLineParams(unittest.TestCase):
         r = {"id": "a", "name": "A", "status": "ok", "menu_bar": "¥1",
              "lines": ["A: ¥1", "可用"],
              "colors": [COLORS["DEFAULT"], COLORS["OK"]],
-             "line_params": [{"param1": "copy-balance", "param2": "¥1"}, None]}
+             "line_params": [{"bash": "/x/token-eye.sh", "param1": "copy-balance",
+                              "param2": "¥1", "terminal": "false"}, None]}
         buf = io.StringIO()
         with mock.patch.object(te, "check_latest_version", return_value=""), \
              contextlib.redirect_stdout(buf):
             te.render([r], {"menuBar": {}}, COLORS, {}, "/tmp")
         self.assertIn("A: ¥1 | color=", buf.getvalue())
-        self.assertIn("param1=copy-balance param2=¥1", buf.getvalue())
+        self.assertIn("param1=copy-balance param2=¥1 terminal=false", buf.getvalue())
+
+    def test_error_menu_refresh_item_carries_bash(self):
+        # 报错态的「🔄 刷新 Cookie」必须能真正触发动作（此前只有 param1 → 点击无反应）
+        script = os.path.join(REPO_ROOT, "swiftbar", "token-eye.sh")
+        r = te.render_error("mimo", "MiMo", "client", "401", "https://c.example", COLORS)
+        buf = io.StringIO()
+        with mock.patch.dict(os.environ, {"SWIFTBAR_PLUGIN_PATH": script}, clear=False), \
+             mock.patch.object(te, "check_latest_version", return_value=""), \
+             contextlib.redirect_stdout(buf):
+            te.render([r], {"menuBar": {}}, COLORS, {"mimo": "refresh-mimo-cookie"}, "/tmp")
+        self.assertIn(f"bash={script} param1=refresh-mimo-cookie terminal=false refresh=true",
+                      buf.getvalue())
 
     def test_daily_spend_line_opens_console(self):
         day0 = te.start_of_day()
@@ -912,6 +983,18 @@ class TestAutoRefreshCooldown(unittest.TestCase):
             ok2, msg = te.auto_refresh_cookie(self.dir, "mimo", "/x")
         self.assertFalse(ok2)
         self.assertIn("冷却中", msg)
+        m.assert_not_called()
+
+    def test_success_also_writes_lastrefresh(self):
+        # 自愈成功即代表 keychain 已是最新 → 顺手写 lastrefresh，避免同轮主动续期重复跑脚本
+        with mock.patch.object(te.subprocess, "run",
+                               return_value=mock.Mock(returncode=0, stdout="HTTP=200")):
+            ok, _ = te.auto_refresh_cookie(self.dir, "mimo", "/x")
+        self.assertTrue(ok)
+        self.assertTrue(os.path.exists(
+            os.path.join(self.dir, "token-eye-lastrefresh-mimo.flag")))
+        with mock.patch.object(te.subprocess, "run") as m:
+            self.assertIsNone(te.proactive_refresh_cookie(self.dir, "mimo", "/x", 21600))
         m.assert_not_called()
 
     def test_failure_sets_fail_and_short_cooldown(self):

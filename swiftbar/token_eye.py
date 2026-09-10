@@ -22,7 +22,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime as _dt
 
-VERSION = "0.19.3"
+VERSION = "0.20.0"
 
 # 按 parser 类型的默认缓存 TTL（秒）
 DEFAULT_CACHE_TTL = {"balance": 300, "plan_usage": 30, "status": 60}
@@ -561,8 +561,9 @@ def parse_provider(p, fetch_result, colors, appearance):
             "balance_num": balance_num,
             "currency": currency,
             "symbol": symbol,
-            # 行级交互：第一行点击复制余额到剪贴板
-            "line_params": [{"param1": "copy-balance", "param2": f"{symbol}{balance_str}"}],
+            # 行级交互：第一行点击复制余额到剪贴板（bash= + param1/param2，见 action_script_path）
+            "line_params": [bash_action_dict("copy-balance", f"{symbol}{balance_str}")
+                            or {"param1": "copy-balance", "param2": f"{symbol}{balance_str}"}],
         }
         if min_balance is not None:
             result["min_balance"] = min_balance
@@ -722,6 +723,59 @@ def render_error(pid, name, error_kind, message, console_url, colors):
         "menu_bar": "",
         "console_url": console_url,
     }
+
+
+# ---------------------------------------------------------------------------
+# 菜单点击动作参数
+#
+# SwiftBar 的 param1/param2 不会传给插件本身，只作为 bash= 所指定脚本的入参
+# （上游 MenuLineParameters.bashParams 仅在 params.bash 存在时被消费）。
+# 只写 refresh=true 时 SwiftBar 会用「零参数」重跑插件，点击等于没反应。
+# 因此所有交互项必须带上 bash=<插件脚本>，并显式 terminal=false（该值默认 true，
+# 不写会弹出 Terminal.app）；再带 refresh=true，SwiftBar 会在脚本跑完后自动重渲菜单。
+# ---------------------------------------------------------------------------
+
+def action_script_path():
+    """返回交互项 bash= 应指向的插件脚本绝对路径（取不到则返回空串）。"""
+    script_dir = os.environ.get("SCRIPT_DIR") or ""
+    candidates = [
+        os.environ.get("SWIFTBAR_PLUGIN_PATH"),                      # SwiftBar 注入
+        os.path.join(script_dir, "token-eye.sh") if script_dir else "",
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "token-eye.sh"),
+    ]
+    for path in candidates:
+        if path and os.path.isfile(path):
+            return path
+    return ""
+
+
+def _action_value(value):
+    """参数值含空白时加单引号（SwiftBar 参数解析器支持带空格的引号值）。"""
+    text = str(value)
+    return f"'{text}'" if any(ch.isspace() for ch in text) else text
+
+
+def _action_pairs(params, refresh):
+    script = action_script_path()
+    if not script or not params:
+        return []
+    pairs = [("bash", script)]
+    pairs += [(f"param{i + 1}", p) for i, p in enumerate(params)]
+    pairs.append(("terminal", "false"))
+    if refresh:
+        pairs.append(("refresh", "true"))
+    return pairs
+
+
+def bash_action(*params, refresh=False):
+    """菜单行内联参数字符串：`bash=… param1=… terminal=false [refresh=true]`。"""
+    return " ".join(f"{k}={_action_value(v)}" for k, v in _action_pairs(params, refresh))
+
+
+def bash_action_dict(*params, refresh=False):
+    """line_params 用的参数字典（None 表示无法构造，调用方自行兜底）。"""
+    pairs = _action_pairs(params, refresh)
+    return {k: _action_value(v) for k, v in pairs} if pairs else None
 
 
 # ---------------------------------------------------------------------------
@@ -885,6 +939,8 @@ def auto_refresh_cookie(flags_dir, pid, refresh_script, fail_cooldown=60, succes
         if r.returncode == 0 and "HTTP=200" in r.stdout:
             _write_flag(flag, f"{now} ok")
             _clear_flag(_flag_path(flags_dir, pid, "loginopened"))
+            # 顺手写 lastrefresh：cookie 已是最新，免得同一轮渲染里主动续期再跑一遍脚本
+            _write_flag(_flag_path(flags_dir, pid, "lastrefresh"), str(now))
             return True, ""
         _write_flag(flag, f"{now} fail")
         if login_url:
@@ -1182,7 +1238,8 @@ def render(results, config, colors, refresh_map, hdir):
                 print(f"🔴 {name}: {msg} | color={c}")
                 rp = refresh_map.get(r.get("id"))
                 if rp:
-                    print(f"  🔄 刷新 {name} Cookie | param1={rp} color={colors['WARN']} size=11")
+                    act = bash_action(rp, refresh=True) or f"param1={rp} refresh=true"
+                    print(f"  🔄 刷新 {name} Cookie | {act} color={colors['WARN']} size=11")
             else:
                 rcolors = r.get("colors", [])
                 line_params = r.get("line_params") or []
@@ -1206,12 +1263,12 @@ def render(results, config, colors, refresh_map, hdir):
             latest = check_latest_version(hdir)
             if latest and _ver_gt(latest, "v" + VERSION):
                 print(f"⬆ 新版本 {latest} 可用 | href=https://github.com/jimmywuxin/token-eye/releases/latest color={colors['HEADER']} size=11")
-                print(f"  一键升级到 {latest} | param1=upgrade param2={latest} refresh=true color={colors['OK']} size=11")
+                print(f"  一键升级到 {latest} | {bash_action('upgrade', latest, refresh=True) or 'param1=upgrade'} color={colors['OK']} size=11")
             else:
                 print(f"v{VERSION} | color={colors['MUTED']} size=11")
         except Exception:
             print(f"v{VERSION} | color={colors['MUTED']} size=11")
-        print(f"🔧 自检 | param1=self-check refresh=true color={colors['MUTED']} size=11")
+        print(f"🔧 自检 | {bash_action('self-check', refresh=True) or 'param1=self-check'} color={colors['MUTED']} size=11")
 
     except Exception as e:
         # 最后兜底，绝不让菜单空白

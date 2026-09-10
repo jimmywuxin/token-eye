@@ -168,12 +168,14 @@ Python 核心逻辑：
 - SwiftBar 刷新间隔：30 秒（脚本内 `# <bitbar.refreshTime>30</bitbar.refreshTime>` 声明）
 - 缓存文件位于 `/tmp/token-eye-cache-{id}.json`，失败请求 10s 短缓存避免连续打 API
 - 告警去重/自愈防抖标记位于 `~/Library/Caches/token-eye/token-eye-{alerted|recovered|autorefresh}-{id}.flag`（持久化，重启不丢）；余额/用量恢复时发「已恢复」通知（去重）
-- 自愈冷却策略：`autorefresh` 标记内容为 `<ts> ok|fail`——**失败后 1 分钟可重试**（会话可能很快恢复），成功后 30 分钟防抖；自愈失败原因会显示在错误菜单（含「点菜单 🔄 刷新 Cookie 立即重试」引导）；`refresh-mimo-cookie.py` 刷新成功时会清掉错误短缓存，下次渲染立即重拉余额
+- 自愈冷却策略：`autorefresh` 标记内容为 `<ts> ok|fail`——**失败后 1 分钟可重试**（会话可能很快恢复），成功后 30 分钟防抖；自愈成功时同时写 `lastrefresh` 标记，避免同一轮渲染里主动续期再跑一遍脚本；自愈失败原因会显示在错误菜单（含「点菜单 🔄 刷新 Cookie 立即重试」引导）；`refresh-mimo-cookie.py` 刷新成功时会清掉错误短缓存，下次渲染立即重拉余额
 - 半自动刷新额外标记（均在 `~/Library/Caches/token-eye/`）：`token-eye-loginopened-{id}.flag` 记录自动打开登录页的时间戳（30 分钟限频）；`token-eye-lastrefresh-{id}.flag` 记录主动续期成功的时间戳（用于 `refreshInterval` 节流）
 - 历史文件（history-*.jsonl）保留 30 天，每天自动清理一次（`cleanup_history` / `last-cleanup.ts` 标记），防无限增长
 - 告警通知默认带提示音（`TOKEN_EYE_SOUND` 换声音名，`0` 静音）；`TOKEN_EYE_DEBUG=1` 时请求明细写入 `~/Library/Caches/token-eye/debug.log`
 - 趋势窗口 `HISTORY_LEN=288`（≈2.4h），`sparkline` 自动均匀降采样到 24 字符宽
-- 行级交互参数（`param1=copy-balance` / `href`）通过 render dict 的 `line_params` 列表与 `lines` 一一对应，新增行时必须同步 append（None 或参数 dict）
+- **点击动作必须写成 `bash=` + `param1=`**（SwiftBar 铁律，2026-09-11 踩坑）：SwiftBar 的 `param1=`/`param2=` **不会传给插件本身**，只作为 `bash=` 所指定脚本的入参（上游 `MenuLineParameters.bashParams` 仅在 `params.bash` 存在时被消费）；只写 `refresh=true` 时 SwiftBar 会用**零参数**重跑插件，点击等于没反应。正确格式 `bash=<插件绝对路径> param1=<动作> terminal=false refresh=true`：`terminal` 默认 **true**（不写会弹 Terminal.app），`refresh=true` 让脚本跑完自动重渲菜单。路径由 `action_script_path()` 解析（`SWIFTBAR_PLUGIN_PATH` → `SCRIPT_DIR` → 模块同级）
+- 点击动作在后台执行（`terminal=false`），**stdout 会被丢弃**：结果反馈走 `notify()`（osascript 系统通知），自检详情另存 `~/Library/Caches/token-eye/self-check.log`
+- 行级交互参数（`bash=`/`param1=copy-balance` / `href`）通过 render dict 的 `line_params` 列表与 `lines` 一一对应，新增行时必须同步 append（None 或参数 dict）
 - 模板库 `scripts/provider-templates.json` 的每个模板必须通过 JSON Schema 与运行时校验（测试覆盖）
 - 渲染层有 try-except 兜底，异常时输出占位菜单，不会空白
 - 环境变量 `TOKEN_EYE_NOTIFY=0` 可临时禁用告警通知
