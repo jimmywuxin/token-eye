@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.20.1] - 2026-09-18
 
 ### Fixed
 - **Linux 版打开链接改用 Edge（不再走系统默认浏览器）**：本机系统默认是 360 安全浏览器，而 MiMo 的 Cookie 只能从 Chromium 系（Edge）解密提取——原先用 `xdg-open` 打开登录页会让用户在 360 里登录，刷新脚本读不到新 Cookie，陷入「登录了却一直 401」。新增 `linux/token-eye-tray.py` 的 `open_in_browser()`：探测 `microsoft-edge-stable` / `microsoft-edge`（等候选）优先调用（`--new-window`），无 Edge 才回退 `xdg-open`；`_open_login_page` 与菜单控制台跳转（`open_url`）统一走该函数，通知文案会说明实际所用浏览器。可用环境变量 `TOKEN_EYE_BROWSER=<可执行名|绝对路径>` 覆盖，`=default` 强制系统默认浏览器
