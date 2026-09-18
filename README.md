@@ -103,7 +103,7 @@ cp swiftbar/token-eye.sh ~/SwiftBar/
 
 ## 🐧 Linux 版（系统托盘）
 
-UKUI / 银河麒麟系统托盘移植版，**零改动复用上游核心**（直接 import `swiftbar/token_eye.py`），仅替换 4 处平台耦合点：Keychain→gnome-keyring、osascript→notify-send、open→xdg-open、放宽 curl 超时。完整说明见 [linux/README.md](linux/README.md)。
+UKUI / 银河麒麟系统托盘移植版，**零改动复用上游核心**（直接 import `swiftbar/token_eye.py`），仅替换 4 处平台耦合点：Keychain→gnome-keyring、osascript→notify-send、open→**优先 Edge**（兜底 xdg-open）、放宽 curl 超时。完整说明见 [linux/README.md](linux/README.md)。
 
 ### 快速开始
 
@@ -132,6 +132,7 @@ python3 ~/dev/token-eye/linux/token-eye-tray.py --once   # 单次拉取（排障
 - 托盘区只显示图标，不支持菜单栏文字汇总（UKUI 未实现 SNI label）
 - 麒麟系统无 emoji 字体，无字形 emoji 自动降级为纯文本
 - MiMo 需在 **Edge** 登录后自动提取 Cookie（360 浏览器加密非标准、不可用）
+- Token Eye 打开的链接（MiMo 登录页 / 菜单控制台跳转）**优先用 Edge**，避免在 360 里登录导致 Cookie 提取不到；无 Edge 时回退系统默认。可用环境变量 `TOKEN_EYE_BROWSER=<可执行名|绝对路径>` 覆盖，`=default` 强制走系统默认浏览器
 
 ## 🤖 Android 版（桌面小部件）
 
@@ -383,7 +384,7 @@ provider 配置 `consoleUrl`，详情菜单末尾出现「→ 打开 X 控制台
 **Cookie 过期维护（半自动刷新）**：MiMo 的 Cookie 是会话级，Edge 关闭或长时间不用后失效（菜单栏显示「配置/鉴权错误」）。Token Eye 提供两层自动维护：
 
 1. **主动续期**：在 provider 上配 `"refreshInterval": <秒>`，即使 Cookie 仍有效，也会按周期自动从浏览器复制最新 Cookie，保持 Keychain 与浏览器会话同步、减少 401 触发面（浏览器会话存活时全程无需干预）。
-2. **失效自动拾取**：当服务端会话真正过期、浏览器同步失效导致刷新失败时，Token Eye 会自动在默认浏览器打开 MiMo 控制台登录页并发系统通知，**你只需在浏览器登录一次**；登录后下个 1 分钟重试周期自动拾取新 Cookie，无需手动跑脚本（不愿等可点菜单「🔄 刷新 Cookie」立即重试——该点击在后台静默执行，成功后菜单栏余额自动刷新，失败则弹系统通知说明原因）。
+2. **失效自动拾取**：当服务端会话真正过期、浏览器同步失效导致刷新失败时，Token Eye 会自动打开 MiMo 控制台登录页（**Linux 版优先用 Edge**，无 Edge 才回退系统默认浏览器；macOS 用系统默认浏览器）并发系统通知，**你只需在浏览器登录一次**；登录后下个 1 分钟重试周期自动拾取新 Cookie，无需手动跑脚本（不愿等可点菜单「🔄 刷新 Cookie」立即重试——该点击在后台静默执行，成功后菜单栏余额自动刷新，失败则弹系统通知说明原因）。
 
 也可以随时手动运行一键刷新脚本（支持 Edge / Chrome / Brave / Arc 任一已登录浏览器）：
 

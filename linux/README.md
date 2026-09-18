@@ -20,7 +20,7 @@
 |---|---|---|
 | `get_key()` | `security` (Keychain) | `secretstorage` (gnome-keyring) |
 | `send_notify()` | `osascript` (通知中心) | `notify-send` |
-| `_open_login_page()` | `open` 命令 | `xdg-open` |
+| `_open_login_page()` | `open` 命令 | 优先 Edge 打开（兜底 `xdg-open`） |
 | `fetch_api()` timeout | 5s/10s | 20s/35s（手机热点友好） |
 
 **上游升级零冲突**：`cd ~/dev/token-eye && git pull` 即可——Linux 层自动适配。
@@ -78,7 +78,10 @@ python3 ~/dev/token-eye/linux/scripts/refresh-mimo-cookie.py
 
 脚本自动从 Edge Cookie 数据库提取（v11/AES-CBC 解密）→ 写入 gnome-keyring → 调 API 验证（2026-09-02 实测 HTTP 200）。
 
-**Cookie 过期自愈**：托盘检测到 MiMo 401 时会自动重跑本脚本（上游内建逻辑，带防抖限频），只要 Edge 里 MiMo 仍是登录态就会无感续期；若 Edge 会话也过期，重新在 Edge 登录一次 MiMo 即可。
+**Cookie 过期自愈**：托盘检测到 MiMo 401 时会自动重跑本脚本（上游内建逻辑，带防抖限频），只要 Edge 里 MiMo 仍是登录态就会无感续期；若 Edge 会话也过期，Token Eye 会**直接用 Edge 打开 MiMo 登录页**（不走系统默认浏览器——本机默认是 360，在 360 里登录等于白登，刷新脚本读不到），重新在 Edge 登录一次即可。
+
+> **浏览器偏好**（`linux/token-eye-tray.py` 的 `open_in_browser()`）：托盘打开任何平台链接（MiMo 登录页、菜单里的控制台跳转）都优先调 Edge（`microsoft-edge-stable` / `microsoft-edge` 依序探测），无 Edge 才回退 `xdg-open`。
+> 覆盖方式：环境变量 `TOKEN_EYE_BROWSER=microsoft-edge-stable`（可执行名或绝对路径）；`TOKEN_EYE_BROWSER=default` 强制走系统默认浏览器。systemd 用户服务里加 `Environment=TOKEN_EYE_BROWSER=...` 并 `systemctl --user daemon-reload && systemctl --user restart token-eye` 生效。
 
 ## 管理命令
 

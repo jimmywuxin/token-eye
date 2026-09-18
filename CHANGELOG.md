@@ -1,5 +1,10 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+- **Linux 版打开链接改用 Edge（不再走系统默认浏览器）**：本机系统默认是 360 安全浏览器，而 MiMo 的 Cookie 只能从 Chromium 系（Edge）解密提取——原先用 `xdg-open` 打开登录页会让用户在 360 里登录，刷新脚本读不到新 Cookie，陷入「登录了却一直 401」。新增 `linux/token-eye-tray.py` 的 `open_in_browser()`：探测 `microsoft-edge-stable` / `microsoft-edge`（等候选）优先调用（`--new-window`），无 Edge 才回退 `xdg-open`；`_open_login_page` 与菜单控制台跳转（`open_url`）统一走该函数，通知文案会说明实际所用浏览器。可用环境变量 `TOKEN_EYE_BROWSER=<可执行名|绝对路径>` 覆盖，`=default` 强制系统默认浏览器
+
 ## [0.20.0] - 2026-09-11
 
 ### Fixed
@@ -14,7 +19,6 @@
 
 ### Fixed
 - **macOS 一键升级在无代理环境不可用**：SwiftBar 点击菜单项时是干净环境（无 `HTTP(S)_PROXY`），GitHub 直连国内常不通 → `git fetch` 挂死/失败，升级从未成功。改为：① 直连 fetch 加低速超时（约 8s 快速失败，不再无限挂起）；② 直连失败后依次尝试国内镜像 fetch（gh-proxy.com / ghfast.top / ghproxy.net，main + tags）；③ 非 git 仓库的 tarball 下载同样加镜像兜底；④ 版本自检 `check_latest_version` 在 API 直连失败时经镜像读 main 分支插件头部版本号兜底（此前无代理时连升级提示都不会出现）；⑤ 修复从项目目录直接运行时 cp 自拷贝报错退出的边界
-
 ## [0.19.2] - 2026-09-09
 
 ### Fixed
