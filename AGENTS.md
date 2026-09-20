@@ -146,8 +146,8 @@ Python 核心逻辑：
 
 - MiMo platform API（`/api/v1/balance`）要求**完整 Cookie 组合**（ph + serviceToken + slh + userId），仅单个 Cookie 返回 401
 - 完整 Cookie 串存 Keychain 单个条目 `MIMO_PLATFORM_TOKEN`，provider 配 `authHeader: "Cookie"` + `authPrefix: ""`
-- Cookie 为会话级，过期后运行 `scripts/refresh-mimo-cookie.py` 一键刷新（支持 Edge / Chrome / Brave / Arc，从任一已登录浏览器解密提取）
-- **半自动刷新机制**：`refreshInterval` 按周期主动续 cookie（浏览器会话存活时 keychain 始终最新）；当服务端会话真正过期、浏览器同步失效导致刷新失败时，自动打开 `consoleUrl` 登录页并发系统通知（**Linux 版由 `linux/token-eye-tray.py` 的 `open_in_browser()` 优先调 Edge，兜底 xdg-open；环境变量 `TOKEN_EYE_BROWSER` 可覆盖、`=default` 强制系统默认**；`token-eye-loginopened-*.flag` 30 分钟限频），登录后下个 1 分钟重试周期自动拾取新 cookie——**无需再手动跑刷新脚本**；不愿等可点菜单「🔄 刷新 Cookie」立即重试（该菜单项不受冷却限制）
+- Cookie 为会话级，过期后运行 `scripts/refresh-mimo-cookie.py` 一键刷新（macOS 版支持 Edge / Chrome / Brave / Arc；Linux 版 `linux/scripts/` 按 **Chromium → Edge → Chrome** 顺序，从任一已登录浏览器解密提取）
+- **半自动刷新机制**：`refreshInterval` 按周期主动续 cookie（浏览器会话存活时 keychain 始终最新）；当服务端会话真正过期、浏览器同步失效导致刷新失败时，自动打开 `consoleUrl` 登录页并发系统通知（**Linux 版由 `linux/token-eye-tray.py` 的 `open_in_browser()` 优先调 Chromium，兜底 xdg-open；环境变量 `TOKEN_EYE_BROWSER` 可覆盖、`=default` 强制系统默认**；`token-eye-loginopened-*.flag` 30 分钟限频），登录后下个 1 分钟重试周期自动拾取新 cookie——**无需再手动跑刷新脚本**；不愿等可点菜单「🔄 刷新 Cookie」立即重试（该菜单项不受冷却限制）
 
 详细配置示例见 `README.md`。
 

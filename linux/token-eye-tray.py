@@ -5,7 +5,7 @@ Token Eye — Linux (UKUI/麒麟) AppIndicator 常驻托盘
 把 macOS SwiftBar 版 token-eye 移植到 UKUI 3.25 (Wayland) 的系统托盘：
 - 复用上游 swiftbar/token_eye.py 的全部核心逻辑（fetch/缓存/解析/告警/历史），零改动
 - 仅 patch 平台耦合点：get_key -> gnome-keyring(secretstorage)、send_notify -> notify-send、
-  _open_login_page -> 优先 Edge 打开（兜底 xdg-open）
+  _open_login_page -> 优先 Chromium 打开（兜底 xdg-open）
 - 每 REFRESH_SECONDS 秒在后台线程刷新一次，GLib.idle_add 回主线程重建菜单
 
 用法：
@@ -90,19 +90,18 @@ def linux_open_login_page(flags_dir, pid, login_url, cooldown=1800):
 
 
 # ---------------------------------------------------------------------------
-# 浏览器偏好：打开平台链接（登录页 / 控制台）时优先 Edge
+# 浏览器偏好：打开平台链接（登录页 / 控制台）时优先 Chromium
 # ---------------------------------------------------------------------------
 # 原因：MiMo 的 Cookie 只能从 Chromium 系浏览器解密提取（linux/scripts/
-# refresh-mimo-cookie.py，Edge 优先），而本机系统默认浏览器是 360 安全浏览器
+# refresh-mimo-cookie.py，Chromium 优先），而本机系统默认浏览器是 360 安全浏览器
 # （browser360-cn.desktop）。若用默认浏览器打开登录页，用户会在 360 里登录，
 # 刷新脚本仍然读不到新 Cookie，形成「登录了却一直 401」的死循环。
-# 故凡 token-eye 打开链接，一律优先 Edge；没装 Edge 才回退系统默认。
+# 故凡 token-eye 打开链接，一律优先 Chromium；没装才回退系统默认。
 # 覆盖：环境变量 TOKEN_EYE_BROWSER=<可执行名或绝对路径>；=default 强制走系统默认。
-EDGE_CANDIDATES = ("microsoft-edge-stable", "microsoft-edge",
-                   "microsoft-edge-beta", "microsoft-edge-dev")
+CHROMIUM_CANDIDATES = ("chromium-browser", "chromium", "chromium-browser-stable")
 DEFAULT_BROWSER_LABEL = "系统默认浏览器"
 
-_browser_cmd_cache = None  # None=未探测；[]=无偏好（走默认）；[path]=Edge 路径
+_browser_cmd_cache = None  # None=未探测；[]=无偏好（走默认）；[path]=Chromium 路径
 
 
 def _detect_browser_cmd():
@@ -122,7 +121,7 @@ def _detect_browser_cmd():
             _browser_cmd_cache = [cmd]
             return cmd
         # 指定的浏览器不存在：落回自动探测，不静默失联
-    for name in EDGE_CANDIDATES:
+    for name in CHROMIUM_CANDIDATES:
         cmd = shutil.which(name)
         if cmd:
             _browser_cmd_cache = [cmd]
@@ -132,7 +131,7 @@ def _detect_browser_cmd():
 
 
 def open_in_browser(url):
-    """打开 URL，优先 Edge，回退系统默认浏览器。
+    """打开 URL，优先 Chromium，回退系统默认浏览器。
 
     返回 (是否发起成功, 浏览器标识)：标识用于通知文案说明实际用了哪个浏览器。
     用 Popen 非阻塞——本函数可能在 GTK 主线程（菜单点击）里调用，不能卡 UI。
@@ -142,7 +141,7 @@ def open_in_browser(url):
     browser = _detect_browser_cmd()
     attempts = []
     if browser:
-        attempts.append(([browser, "--new-window", url], f"Edge（{os.path.basename(browser)}）"))
+        attempts.append(([browser, "--new-window", url], f"Chromium（{os.path.basename(browser)}）"))
     attempts.append((["xdg-open", url], DEFAULT_BROWSER_LABEL))
     for argv, label in attempts:
         try:
@@ -157,7 +156,7 @@ def open_in_browser(url):
 token_eye.get_key = linux_get_key
 token_eye.send_notify = linux_send_notify
 
-# _open_login_page 内部调用 "open" 命令 —— 换成 Edge 优先的等价实现
+# _open_login_page 内部调用 "open" 命令 —— 换成 Chromium 优先的等价实现
 _orig_open_login = token_eye._open_login_page
 
 def _linux_open_login(flags_dir, pid, login_url, cooldown=1800):
@@ -455,7 +454,7 @@ def copy_to_clipboard(text):
 
 
 def open_url(url):
-    """菜单里的控制台跳转：同样优先 Edge（保证 cookie 会话与刷新脚本同源）。"""
+    """菜单里的控制台跳转：同样优先 Chromium（保证 cookie 会话与刷新脚本同源）。"""
     open_in_browser(url)
 
 

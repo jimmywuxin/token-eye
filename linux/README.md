@@ -8,7 +8,7 @@
 
 - ✅ DeepSeek: ¥xx.xx（余额 + 今日消耗 + 预计可用天数 + 近 7 天柱状）
 - ✅ MiniMax: 5h/7d 进度条 + 重置倒计时
-- ✅ MiMo: ¥xx.xx（Edge 登录 Cookie 自动提取，见下文）
+- ✅ MiMo: ¥xx.xx（Chromium 登录 Cookie 自动提取，见下文）
 
 > 💡 麒麟系统无 emoji 字体，菜单中的无字形 emoji（🔄🔴🔑🔥等）会被自动降级为纯文本（状态由行颜色表达）。
 
@@ -20,7 +20,7 @@
 |---|---|---|
 | `get_key()` | `security` (Keychain) | `secretstorage` (gnome-keyring) |
 | `send_notify()` | `osascript` (通知中心) | `notify-send` |
-| `_open_login_page()` | `open` 命令 | 优先 Edge 打开（兜底 `xdg-open`） |
+| `_open_login_page()` | `open` 命令 | 优先 Chromium 打开（兜底 `xdg-open`） |
 | `fetch_api()` timeout | 5s/10s | 20s/35s（手机热点友好） |
 
 **上游升级零冲突**：`cd ~/dev/token-eye && git pull` 即可——Linux 层自动适配。
@@ -63,25 +63,27 @@ python3 ~/dev/token-eye/linux/setup-keys.py
 |---|---|---|---|
 | DeepSeek | `DEEPSEEK_API_KEY` | Bearer | platform.deepseek.com → API Keys |
 | MiniMax | `MINIMAX_CN_API_KEY` | Bearer | platform.minimaxi.com → 开发设置 |
-| MiMo | `MIMO_PLATFORM_TOKEN` | Cookie | 需在 **Edge** 登录后自动提取（见下） |
+| MiMo | `MIMO_PLATFORM_TOKEN` | Cookie | 需在 **Chromium** 登录后自动提取（见下） |
 
 ### MiMo Cookie 提取（已验证 ✅）
 
-MiMo 的余额查询 API 不支持 Bearer key，需要浏览器登录态。**本机方案：用 Edge Linux 登录 MiMo**（日常浏览仍用 360；360 安全浏览器加密实现非标准，外部不可解，不要用 360 登录 MiMo）：
+MiMo 的余额查询 API 不支持 Bearer key，需要浏览器登录态。**本机方案：用 Chromium 登录 MiMo**（日常浏览仍用 360；360 安全浏览器加密实现非标准，外部不可解，不要用 360 登录 MiMo）：
 
-1. 在 **Edge** 打开 `platform.xiaomimimo.com` 并登录
+1. 在 **Chromium** 打开 `platform.xiaomimimo.com` 并登录
 2. 运行：
 
 ```bash
 python3 ~/dev/token-eye/linux/scripts/refresh-mimo-cookie.py
 ```
 
-脚本自动从 Edge Cookie 数据库提取（v11/AES-CBC 解密）→ 写入 gnome-keyring → 调 API 验证（2026-09-02 实测 HTTP 200）。
+脚本按 **Chromium → Edge → Chrome** 顺序扫描浏览器 Cookie 数据库，提取（v11/AES-CBC 解密）→ 写入 gnome-keyring → 调 API 验证（2026-09-02 实测 Edge 源 HTTP 200）。
 
-**Cookie 过期自愈**：托盘检测到 MiMo 401 时会自动重跑本脚本（上游内建逻辑，带防抖限频），只要 Edge 里 MiMo 仍是登录态就会无感续期；若 Edge 会话也过期，Token Eye 会**直接用 Edge 打开 MiMo 登录页**（不走系统默认浏览器——本机默认是 360，在 360 里登录等于白登，刷新脚本读不到），重新在 Edge 登录一次即可。
+**Cookie 过期自愈**：托盘检测到 MiMo 401 时会自动重跑本脚本（上游内建逻辑，带防抖限频），只要 Chromium 里 MiMo 仍是登录态就会无感续期；若会话也过期，Token Eye 会**直接用 Chromium 打开 MiMo 登录页**（不走系统默认浏览器——本机默认是 360，在 360 里登录等于白登，刷新脚本读不到），重新在 Chromium 登录一次即可。
 
-> **浏览器偏好**（`linux/token-eye-tray.py` 的 `open_in_browser()`）：托盘打开任何平台链接（MiMo 登录页、菜单里的控制台跳转）都优先调 Edge（`microsoft-edge-stable` / `microsoft-edge` 依序探测），无 Edge 才回退 `xdg-open`。
-> 覆盖方式：环境变量 `TOKEN_EYE_BROWSER=microsoft-edge-stable`（可执行名或绝对路径）；`TOKEN_EYE_BROWSER=default` 强制走系统默认浏览器。systemd 用户服务里加 `Environment=TOKEN_EYE_BROWSER=...` 并 `systemctl --user daemon-reload && systemctl --user restart token-eye` 生效。
+> **浏览器偏好**（`linux/token-eye-tray.py` 的 `open_in_browser()`）：托盘打开任何平台链接（MiMo 登录页、菜单里的控制台跳转）都优先调 Chromium（`chromium-browser` / `chromium` / `chromium-browser-stable` 依序探测），无 Chromium 才回退 `xdg-open`。
+> 覆盖方式：环境变量 `TOKEN_EYE_BROWSER=chromium-browser`（可执行名或绝对路径）；`TOKEN_EYE_BROWSER=default` 强制走系统默认浏览器。systemd 用户服务里加 `Environment=TOKEN_EYE_BROWSER=...` 并 `systemctl --user daemon-reload && systemctl --user restart token-eye` 生效。
+>
+> 注：登录 MiMo 用的是 Chromium 的**默认 profile**（`~/.config/chromium`），与 OA 取件专用 profile（`--user-data-dir=~/.workbuddy/oa-profile`）互相隔离——刷新脚本只扫默认 profile 及 `Profile *`。
 
 ## 管理命令
 
@@ -110,7 +112,7 @@ python3 ~/dev/token-eye/linux/token-eye-tray.py --once
 ## 已知限制
 
 - UKUI 托盘区只显示图标，不支持菜单栏文字汇总（SNI label 字段 UKUI 未实现）
-- MiMo 余额依赖 **Edge** 登录态（360 浏览器加密非标准不可用），Cookie 过期后重跑刷新脚本
+- MiMo 余额依赖 **Chromium** 登录态（360 浏览器加密非标准不可用），Cookie 过期后重跑刷新脚本
 - 手机热点网络不稳定时，curl 可能超时（已放宽到 20s/35s，可按需调整）
 
 ## License

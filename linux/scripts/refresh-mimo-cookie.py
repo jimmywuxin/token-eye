@@ -2,22 +2,23 @@
 """
 Token Eye — MiMo Cookie 刷新工具（Linux / gnome-keyring 版）
 
-从 Linux 的 Chromium 系浏览器（Edge / Chrome / Chromium）任一已登录的
-Cookie 数据库提取 MiMo platform 的 4 个 Cookie（api-platform_ph /
-api-platform_serviceToken / api-platform_slh / userId），解密后拼成完整
-Cookie 串，写入 gnome-keyring（service=MIMO_PLATFORM_TOKEN，与 tray 的
-linux_get_key 读取一致），并调 balance API 验证。
+从 Linux 的 Chromium 系浏览器提取 MiMo platform 的 4 个 Cookie
+（api-platform_ph / api-platform_serviceToken / api-platform_slh / userId），
+解密后拼成完整 Cookie 串，写入 gnome-keyring（service=MIMO_PLATFORM_TOKEN，
+与 tray 的 linux_get_key 读取一致），并调 balance API 验证。
+
+浏览器优先级：Chromium（本机指定）> Edge > Chrome。
 
 用法:
   python3 refresh-mimo-cookie.py
 
 前置条件:
-  - 任一受支持浏览器中已登录 platform.xiaomimimo.com（保持窗口打开）
+  - Chromium 中已登录 platform.xiaomimimo.com（保持窗口打开）
   - gnome-keyring 已解锁
 
 与 macOS 原版的差异:
-  - 浏览器数据目录: ~/.config/{microsoft-edge,google-chrome,chromium}
-  - 加密密码来源: gnome-keyring（application=chromium/chrome/microsoft-edge）
+  - 浏览器数据目录: ~/.config/{chromium,microsoft-edge,google-chrome}
+  - 加密密码来源: gnome-keyring（application=chromium/chrome）
   - PBKDF2 iterations: Linux Chromium = 1（macOS = 1003）
   - 写入目标: gnome-keyring（service=MIMO_PLATFORM_TOKEN）
   - cookie 值布局自适应: v10+iv+ct（Linux）与 v10+salt+iv+ct（macOS）均兼容
@@ -42,14 +43,16 @@ COOKIE_SUFFIXES = ("", "-wal", "-shm", "-journal")
 CACHE_FILE = os.path.expanduser("~/.cache/token-eye/token-eye-cache-mimo.json")
 
 # Linux Chromium 系浏览器：Cookie 库路径 + gnome-keyring 密码条目属性
-# 注意：Edge Linux 用 application=chromium（不是 microsoft-edge），与 Chromium 共享同一条 keyring
+# 顺序即优先级：本机固定用 Chromium（官方版）登录 MiMo，故排首位。
+# Edge / Chrome 仅作兜底（换机或 Chromium 未登录时仍有机会提取成功）。
+# 注意：Edge Linux 也用 application=chromium（不是 microsoft-edge），与 Chromium 共享同一条 keyring
 BROWSERS = [
+    {"name": "Chromium", "db": "~/.config/chromium",
+     "app": "chromium", "label": "Chromium Safe Storage"},
     {"name": "Edge", "db": "~/.config/microsoft-edge",
      "app": "chromium", "label": "Chromium Safe Storage"},
     {"name": "Chrome", "db": "~/.config/google-chrome",
      "app": "chrome", "label": "Chrome Safe Storage"},
-    {"name": "Chromium", "db": "~/.config/chromium",
-     "app": "chromium", "label": "Chromium Safe Storage"},
 ]
 
 
@@ -166,10 +169,15 @@ def find_cookie_dbs(browser):
 
 
 def try_extract(browser):
+    dbs = find_cookie_dbs(browser)
+    if not dbs:
+        return None
     password = get_safe_storage_password(browser["app"], browser["label"])
     if password is None:
+        print(f"跳过 [{browser['name']}]: gnome-keyring 中未找到安全存储密码"
+              f"（application={browser['app']}）")
         return None
-    for db_path in find_cookie_dbs(browser):
+    for db_path in dbs:
         for attempt in (1, 2):
             rows = extract_cookie_rows(db_path)
             if not rows:
@@ -221,8 +229,8 @@ def main():
             found = result
             break
     if not found:
-        sys.exit(f"错误: 未找到完整 Cookie（已尝试 {', '.join(tried)}）。"
-                 f"请先在任一浏览器登录 platform.xiaomimimo.com（保持窗口打开），"
+        sys.exit(f"错误: 未找到完整 Cookie（已按序尝试 {', '.join(tried)}）。"
+                 f"请先在 Chromium 登录 platform.xiaomimimo.com（保持窗口打开），"
                  f"并确认 gnome-keyring 未锁，再重试")
 
     browser_name, cookies = found

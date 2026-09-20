@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.20.2] - 2026-09-20
+
+### Changed
+- **Linux 版 MiMo Cookie 采集浏览器由 Edge 改为 Chromium**：`linux/token-eye-tray.py` 的浏览器偏好由 `microsoft-edge-*` 换成 `chromium-browser` / `chromium` / `chromium-browser-stable`，托盘打开的登录页与菜单控制台跳转统一走 Chromium（无 Chromium 才回退 `xdg-open`），通知文案同步改为「Chromium（…）」。避免本机系统默认的 360 安全浏览器抢走登录页；`TOKEN_EYE_BROWSER` 覆盖机制不变
+- `linux/scripts/refresh-mimo-cookie.py` 浏览器扫描顺序改为 **Chromium → Edge → Chrome**（后两者保留作兜底）；`try_extract()` 新增诊断输出——Cookie 库缺失或 gnome-keyring 中无安全存储密码时打印「跳过 [X]: …」说明原因，不再静默跳过；报错文案改为引导在 Chromium 登录
+- 文档同步：`README.md`、`linux/README.md`、`AGENTS.md` 的浏览器说明改为 Chromium（macOS 版仍支持 Edge / Chrome / Brave / Arc）
+
 ## [0.20.1] - 2026-09-18
 
 ### Fixed
