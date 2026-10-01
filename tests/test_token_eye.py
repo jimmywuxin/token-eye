@@ -113,6 +113,13 @@ class TestFormatMs(unittest.TestCase):
         self.assertEqual(te.format_ms(3_661_000), "1h1m")
         self.assertEqual(te.format_ms(5_400_000), "1h30m")
 
+    def test_days(self):
+        # ≥ 1 天取 d+h 两级（周窗重置最长 7 天，150h30m 没法读）
+        self.assertEqual(te.format_ms(86_399_000), "23h59m")
+        self.assertEqual(te.format_ms(86_400_000), "1d")
+        self.assertEqual(te.format_ms(90_000_000), "1d1h")
+        self.assertEqual(te.format_ms(541_800_000), "6d6h")  # 6d6h30m
+
 
 class TestSparkline(unittest.TestCase):
     def test_empty(self):

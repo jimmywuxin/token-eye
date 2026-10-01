@@ -24,14 +24,20 @@ token-eye/
 │   ├── refresh-mimo-cookie.py  ← MiMo Cookie 一键刷新（多浏览器，会话过期时运行）
 │   ├── check-colors.py         ← 配色对比度回归检查（WCAG AA ≥4.5:1）
 │   ├── validate-schema.py      ← providers.json JSON Schema 校验（零依赖）
+│   ├── update-holidays.py      ← 中国法定节假日/调休表更新（make holidays；每年公告后跑）
 │   ├── add-provider.py         ← 新平台添加向导（交互式，支持模板）
 │   └── provider-templates.json ← 内置平台模板库（OpenAI/Kimi/GLM/…）
 ├── schema/
 │   └── providers.schema.json   ← 配置结构定义（编辑器补全 + 校验）
+├── parsers/
+│   └── peak_window.py          ← 峰/谷时段判定（含节假日/调休查表）
+├── holidays/
+│   └── <年>.json               ← 中国法定节假日 + 调休数据（holiday-cn，随仓库分发、运行时不联网）
 ├── tests/
-│   └── test_token_eye.py       ← 单元测试（unittest，零依赖）
+│   ├── test_token_eye.py       ← 单元测试（unittest，零依赖）
+│   └── test_peak_window.py     ← 峰/谷时段 + 节假日单测
 ├── providers.json         ← 核心配置（JSON），定义所有平台
-├── Makefile               ← make install / test / check
+├── Makefile               ← make install / test / check / holidays
 ├── .github/workflows/ci.yml    ← CI（语法/测试/Schema/配色/版本一致性）
 ├── linux/                ← Linux 版（独立实现）
 ├── android/              ← Android 版（Kotlin + Compose + Glance，详见 android/README.md）
@@ -39,7 +45,7 @@ token-eye/
 │   │   ├── core/             ← 核心逻辑（移植 token_eye.py：配置/解析/刷新/告警）
 │   │   ├── widget/           ← Glance 桌面小部件
 │   │   └── work/             ← WorkManager 定时刷新（15 分钟，系统下限）
-│   └── app/src/test/         ← 单元测试（ParserTest）
+│   └── app/src/test/         ← 单元测试（ParserTest / PeakWindowTest）
 ├── AGENTS.md              ← 本文件（项目指南）
 ├── README.md
 ├── CHANGELOG.md
@@ -177,5 +183,6 @@ Python 核心逻辑：
 - 点击动作在后台执行（`terminal=false`），**stdout 会被丢弃**：结果反馈走 `notify()`（osascript 系统通知），自检详情另存 `~/Library/Caches/token-eye/self-check.log`
 - 行级交互参数（`bash=`/`param1=copy-balance` / `href`）通过 render dict 的 `line_params` 列表与 `lines` 一一对应，新增行时必须同步 append（None 或参数 dict）
 - 模板库 `scripts/provider-templates.json` 的每个模板必须通过 JSON Schema 与运行时校验（测试覆盖）
-- 渲染层有 try-except 兜底，异常时输出占位菜单，不会空白
+- 渲染层有 try-except 兜底，异常时输出空菜单占位，不会空白
 - 环境变量 `TOKEN_EYE_NOTIFY=0` 可临时禁用告警通知
+- **节假日/调休数据**：`parser.peakWindow.holidays=true` 时按 `holidays/<年>.json` 查表（法定节假日全天空闲、调休上班的周末算工作日）；该表由国务院逐年公告、无算法规律，公告后跑 `make holidays`（`scripts/update-holidays.py`，直连 GitHub + 国内镜像）更新，运行时不联网；新增年份后**同步拷到 `android/app/src/main/assets/holidays/`**（Android 端只读 assets，`HolidayTable.load()` 合并整个目录）；表缺失/损坏自动退化为纯 weekdays 判定

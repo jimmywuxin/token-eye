@@ -18,15 +18,25 @@ object ResultParser {
             ?: (if (c == "USD") "$" else DEFAULT_CURRENCY_SYMBOL)
     }
 
-    fun parse(p: Provider, data: JsonObject, globalAlerts: Map<String, AlertSpec> = emptyMap()): ProviderResult {
+    fun parse(
+        p: Provider,
+        data: JsonObject,
+        globalAlerts: Map<String, AlertSpec> = emptyMap(),
+        holidays: Map<String, Boolean> = emptyMap(),
+    ): ProviderResult {
         return when (p.parser.type) {
-            "balance" -> parseBalance(p, data, globalAlerts)
+            "balance" -> parseBalance(p, data, globalAlerts, holidays)
             "plan_usage" -> parsePlanUsage(p, data, globalAlerts)
             else -> parseStatus(p, data)
         }
     }
 
-    fun parseBalance(p: Provider, data: JsonObject, globalAlerts: Map<String, AlertSpec> = emptyMap()): ProviderResult {
+    fun parseBalance(
+        p: Provider,
+        data: JsonObject,
+        globalAlerts: Map<String, AlertSpec> = emptyMap(),
+        holidays: Map<String, Boolean> = emptyMap(),
+    ): ProviderResult {
         val fields = p.parser.fields
         val rawBalance = resolveField(data, fields["balance"])
         val currency = resolveField(data, fields["currency"] ?: "currency")?.asStringOrNull() ?: "CNY"
@@ -50,11 +60,15 @@ object ResultParser {
 
         // 峰/谷时段标记（peakWindow）：summary 追加标签 + details 追加「状态 距下次切换 X」
         // 镜像 swiftbar/token_eye.py 的渲染；tz 名称非法时退回 Asia/Shanghai；时段计算失败静默跳过
+        // spec.holidays=true 时叠加 assets/holidays/<年>.json 的法定节假日/调休（见 HolidayTable）
         var summary = "$symbol$balanceStr"
         p.parser.peakWindow?.let { spec ->
             try {
                 val zone = try { ZoneId.of(spec.tz) } catch (e: Exception) { ZoneId.of("Asia/Shanghai") }
-                val info = PeakWindow.classify(LocalDateTime.now(zone), spec)
+                val info = PeakWindow.classify(
+                    LocalDateTime.now(zone), spec,
+                    if (spec.holidays) holidays else emptyMap(),
+                )
                 summary = "$summary ${info.label}"
                 val arrow = if (info.isPeak) "距空闲" else "距高峰"
                 val cd = PeakWindow.formatCountdown(info.secondsToSwitch)
@@ -188,8 +202,14 @@ object ResultParser {
     private fun formatPct(v: Double): String =
         if (v == v.toLong().toDouble()) v.toLong().toString() else String.format("%.1f", v)
 
+    /** 毫秒 → 倒计时文案（与 PeakWindow.formatCountdown 同口径：≥1 天用 `6d6h`） */
     private fun formatMs(ms: Long): String {
         val sec = ms / 1000
+        if (sec >= 86400) {
+            val d = sec / 86400
+            val hh = (sec % 86400) / 3600
+            return if (hh > 0) "${d}d${hh}h" else "${d}d"
+        }
         val h = sec / 3600
         val m = (sec % 3600) / 60
         return if (h > 0) "${h}h${m}m" else "${m}m"

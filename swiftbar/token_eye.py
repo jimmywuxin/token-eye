@@ -22,7 +22,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime as _dt
 
-VERSION = "0.20.2"
+VERSION = "0.21.0"
 
 # 按 parser 类型的默认缓存 TTL（秒）
 DEFAULT_CACHE_TTL = {"balance": 300, "plan_usage": 30, "status": 60}
@@ -60,14 +60,37 @@ if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
 try:
-    from parsers.peak_window import classify as _classify_peak, format_countdown as _format_peak_countdown
+    from parsers.peak_window import (
+        classify as _classify_peak,
+        format_countdown as _format_peak_countdown,
+        load_holidays as _load_holidays,
+    )
     _HAS_PEAK_WINDOW = True
 except ImportError:  # pragma: no cover — parsers 不存在时静默降级（菜单不显示时段）
     _HAS_PEAK_WINDOW = False
     _classify_peak = None  # type: ignore
     _format_peak_countdown = None  # type: ignore
+    _load_holidays = None  # type: ignore
 # peakWindow 默认时区（与 parsers.peak_window.DEFAULT_TZ 保持一致；tz 名称非法时兜底）
 _PEAK_DEFAULT_TZ = "Asia/Shanghai"
+
+
+def peak_holidays(cfg):
+    """cfg.holidays 为真时加载内置节假日表（今年 + 明年，覆盖跨年倒计时）。
+
+    节假日/调休无算法规律，只能查 `holidays/<年>.json`（holiday-cn 数据，见
+    scripts/update-holidays.py）；缺表时返回 None → 退化为纯 weekdays 判定。
+    """
+    if not cfg.get("holidays") or _load_holidays is None:
+        return None
+    try:
+        year = _dt.now().year  # 前后各带一年，避免跨年/时区导致的边界缺表
+        table = _load_holidays(
+            [_PROJECT_ROOT, os.path.dirname(os.path.abspath(__file__))],
+            (year - 1, year, year + 1))
+    except Exception:  # noqa: BLE001 — 渲染期异常必须兜底
+        return None
+    return table or None
 
 
 # ---------------------------------------------------------------------------
@@ -118,6 +141,9 @@ def schema_validate(config):
                     if not 1 <= int(d) <= 7:
                         errors.append(f"providers[{idx}]（{pid}）peakWindow.weekdays 取值应在 1-7: {d!r}")
                         break
+                if "holidays" in pw_cfg and not isinstance(pw_cfg["holidays"], bool):
+                    errors.append(f"providers[{idx}]（{pid}）peakWindow.holidays 应为布尔值: "
+                                  f"{pw_cfg['holidays']!r}")
     return errors
 
 
@@ -496,7 +522,14 @@ def resolve_field(obj, path):
 
 
 def format_ms(ms):
+    """毫秒 → 简短倒计时文案（与 parsers/peak_window.format_countdown 同口径）。
+
+    ≥ 1 天用 `6d6h`（周窗重置最长 7 天，`150h30m` 没法读）；否则 `1h30m` / `45m`。
+    """
     sec = ms // 1000
+    if sec >= 86400:
+        d, hh = sec // 86400, (sec % 86400) // 3600
+        return f"{d}d{hh}h" if hh else f"{d}d"
     h, m = sec // 3600, (sec % 3600) // 60
     return f"{h}h{m}m" if h > 0 else f"{m}m"
 
@@ -574,7 +607,8 @@ def parse_provider(p, fetch_result, colors, appearance):
             try:
                 # 传 naive now：时区由 _classify_peak 内部统一处理（含 Py3.8 无 zoneinfo 的固定 +8 兜底）
                 _local_now = _dt.now()
-                pw_info = _classify_peak(_local_now, parser["peakWindow"])
+                pw_info = _classify_peak(_local_now, parser["peakWindow"],
+                                         peak_holidays(parser["peakWindow"]))
                 result["menu_bar"] = f"{result['menu_bar']} {pw_info['label']}"
                 _peak_color = colors["WARN"] if pw_info["is_peak"] else colors["OK"]
                 _countdown = _format_peak_countdown(pw_info["seconds_to_switch"])

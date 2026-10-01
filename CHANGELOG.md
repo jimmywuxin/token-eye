@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.21.0] - 2026-10-01
+
+### Added
+- **峰谷判定支持中国法定节假日与调休**（`parser.peakWindow.holidays: true`）：原先只按「周一至周五 + 09:00-12:00 / 14:00-18:00」判定，国庆当天照旧显示 `⚡高峰`。现叠加 `holidays/<年>.json` 查表：**法定节假日（含调休放假）全天空闲**，详情行显示「节假日 距高峰 X」；**调休上班的周末按工作日算**（时段内 → 高峰，非时段 → 空闲而非「周末」）。DeepSeek 已默认开启
+- 内置节假日数据 `holidays/2025.json`、`holidays/2026.json`（源自 [NateScarlet/holiday-cn](https://github.com/NateScarlet/holiday-cn)，逐条对照 gov.cn 公告，含调休上班日），零网络开销、纯本地查表；缺表/表损坏自动退化为原「周一至周五」规则，不影响余额显示
+- `scripts/update-holidays.py`（`make holidays`）：每年国务院公告后一键更新下一年数据（直连 GitHub + 3 个国内镜像兜底；本地已有数据时断网只提示不改动、不误报失败）
+- 测试新增 16 例（46 例全过）：国庆全天空闲、调休周六/周日算高峰、跨整段假期的倒计时（10-01 10:30 → 10-08 09:00 = 6d22h）、春节 9 连休的 9d13h 长空窗（超出旧版 7 天搜索窗口）、数据文件缺失/损坏降级等
+
+### Changed
+- **倒计时 ≥ 1 天改用 `d+h` 两级**：跨整段假期时 `距高峰 153h18m` 这种读不出来，现显示 `6d9h`（整点省略小时 → `6d`）；< 1 天口径不变（`1h30m` / `2h` / `45m`）。峰谷倒计时与 MiniMax 重置倒计时（`format_ms`，周窗最长 7 天）统一为同一口径
+- `parsers/peak_window.py`：`classify()` / `next_switch()` 新增可选 `holidays` 参数（`{ISO 日期: 是否放假}`），新增 `load_holidays()` / `holiday_path()` / `load_holiday_file()` / `is_workday()` / `is_holiday()`；`classify()` 返回值新增 `is_holiday` 字段。倒计时搜索窗口由 7 天放宽到 21 天（覆盖春节 9 连休 + 前后周末）
+- `schema/providers.schema.json` 与运行时 `schema_validate` 补 `peakWindow.holidays`（布尔）校验
+
+> 说明：法定节假日的放假/调休安排由国务院逐年公告，**没有算法规律**，只能查表——这也是必须内置数据文件、并每年跑一次 `make holidays` 的原因。
+
 ## [0.20.2] - 2026-09-20
 
 ### Changed

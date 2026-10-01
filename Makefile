@@ -5,12 +5,13 @@
 #   make lint      bash 语法 + Python 编译检查
 #   make validate  JSON Schema + 配色对比度检查
 #   make check     全部检查（lint + test + validate）
+#   make holidays  更新中国法定节假日/调休表（holidays/<年>.json，每年公告后跑一次）
 
 PYTHON ?= python3
 SWIFTBAR_DIR ?= $(HOME)/SwiftBar
-PY_FILES := swiftbar/token_eye.py scripts/check-colors.py scripts/refresh-mimo-cookie.py scripts/validate-schema.py
+PY_FILES := swiftbar/token_eye.py scripts/check-colors.py scripts/refresh-mimo-cookie.py scripts/validate-schema.py scripts/update-holidays.py
 
-.PHONY: install test lint validate check all
+.PHONY: install test lint validate check all holidays
 
 all: check
 
@@ -34,3 +35,6 @@ validate:
 
 check: lint test validate
 	@echo "✅ 全部检查通过"
+
+holidays:
+	$(PYTHON) scripts/update-holidays.py

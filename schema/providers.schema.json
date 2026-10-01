@@ -137,7 +137,7 @@
         "okValue": {},
         "peakWindow": {
           "type": "object",
-          "description": "峰/谷时段规则（客户端按本地时区自行判定，如 DeepSeek 峰谷定价）。hours 为左闭右开区间 [start,end) 本地小时；weekdays 为 isoweekday 1=周一..7=周日",
+          "description": "峰/谷时段规则（客户端按本地时区自行判定，如 DeepSeek 峰谷定价）。hours 为左闭右开区间 [start,end) 本地小时；weekdays 为 isoweekday 1=周一..7=周日；holidays=true 时叠加 holidays/<年>.json 的中国法定节假日/调休表（调休上班日按工作日算）",
           "properties": {
             "tz": { "type": "string", "default": "Asia/Shanghai", "description": "IANA 时区名" },
             "weekdays": {
@@ -156,7 +156,12 @@
               "examples": [[[9, 12], [14, 18]]]
             },
             "peakLabel": { "type": "string", "default": "⚡高峰" },
-            "offPeakLabel": { "type": "string", "default": "🌙空闲" }
+            "offPeakLabel": { "type": "string", "default": "🌙空闲" },
+            "holidays": {
+              "type": "boolean",
+              "default": false,
+              "description": "是否叠加中国法定节假日/调休表（holidays/<年>.json）：节假日全天空闲，调休上班的周末按工作日算；无数据文件时自动退化为纯 weekdays 判定"
+            }
           },
           "additionalProperties": true
         }

@@ -27,7 +27,8 @@ android/
 │   │   ├── Repositories.kt  # 配置/快照持久化
 │   │   ├── RefreshEngine.kt # 刷新编排 + 告警判定
 │   │   ├── AlertNotifier.kt # 通知
-│   │   └── PeakWindow.kt    # 峰/谷时段判定（v0.19.0，镜像 swiftbar/parsers/peak_window.py）
+│   │   ├── PeakWindow.kt    # 峰/谷时段判定（镜像 swiftbar/parsers/peak_window.py）
+│   │   └── HolidayTable.kt  # 中国法定节假日/调休表（读 assets/holidays/<年>.json）
 │   ├── widget/          # Glance 小部件
 │   ├── work/            # WorkManager 调度
 │   ├── App.kt           # Application：频道创建 + 定时任务
@@ -62,6 +63,10 @@ android/
 
 > **小米 HyperOS 找不到小部件的坑**：桌面「添加小部件」面板默认只列 HyperOS 风格小部件，
 > 传统 Android AppWidget 全在列表**最底部的「安卓小部件」入口**里，进去后按 App 名找 Token Eye。
+
+### 峰/谷时段标记（peakWindow）
+
+与 Mac 版同源：`5h 剩82%` 之外，`peakWindow.holidays=true` 的平台会在摘要后追加 `⚡高峰`/`🌙空闲`，详情行显示「状态 距下次切换 X」。判定叠加 `assets/holidays/<年>.json` 的中国法定节假日/调休表（节假日全天 → `节假日 距高峰 X`；**调休上班的周末算工作日**；表缺失自动退化为「周一至周五 + 时段」）。该表由仓库 `holidays/` 复制而来（跑完 `make holidays` 后拷到 `app/src/main/assets/holidays/`），Android 端只读 assets、不联网。
 
 ## 已知差异（vs Mac 版）
 

@@ -21,6 +21,7 @@
           "tz": "Asia/Shanghai",
           "weekdays": [1, 2, 3, 4, 5],
           "hours": [[9, 12], [14, 18]],
+          "holidays": true,
           "peakLabel": "⚡高峰",
           "offPeakLabel": "🌙空闲"
         }

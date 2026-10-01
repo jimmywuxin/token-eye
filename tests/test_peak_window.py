@@ -30,9 +30,20 @@ DEEPSEEK_CFG = {
     "tz": "Asia/Shanghai",
     "weekdays": [1, 2, 3, 4, 5],
     "hours": [[9, 12], [14, 18]],
+    "holidays": True,
     "peakLabel": "⚡高峰",
     "offPeakLabel": "🌙空闲",
 }
+
+# 项目内置节假日表（holidays/<年>.json，源自 holiday-cn）
+REPO_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
+HOLIDAYS = pw.load_holidays([REPO_ROOT], (2025, 2026, 2027))
+
+
+def on(date_str, hour, minute=0, tz=CST):
+    """按具体日期构造本地时间（用于节假日用例，如 on("2026-10-01", 10, 30)）。"""
+    return (datetime.strptime(date_str, "%Y-%m-%d")
+            .replace(hour=hour, minute=minute, tzinfo=tz))
 
 
 class TestIsPeakHour(unittest.TestCase):
@@ -154,6 +165,15 @@ class TestNextSwitch(unittest.TestCase):
         self.assertEqual(pw.format_countdown(3660), "1h1m")
         self.assertEqual(pw.format_countdown(7320), "2h2m")
 
+    def test_format_countdown_days(self):
+        # ≥ 1 天取 d+h 两级（跨整段假期时 153h18m 没法读）
+        self.assertEqual(pw.format_countdown(86399), "23h59m")
+        self.assertEqual(pw.format_countdown(86400), "1d")
+        self.assertEqual(pw.format_countdown(86400 + 3600), "1d1h")
+        self.assertEqual(pw.format_countdown(599400), "6d22h")   # 国庆 10-01 10:30 → 10-08 09:00
+        self.assertEqual(pw.format_countdown(551880), "6d9h")    # 153h18m
+        self.assertEqual(pw.format_countdown(824400), "9d13h")   # 春节长空窗
+
 
 class TestTimezoneConversion(unittest.TestCase):
     def test_naive_datetime_treated_as_local(self):
@@ -208,6 +228,116 @@ class TestIntegrationWithDeepSeekConfig(unittest.TestCase):
         self.assertEqual(pw.classify(at(10, 30), DEEPSEEK_CFG)["window_str"], "高峰")
         self.assertEqual(pw.classify(at(13, 0), DEEPSEEK_CFG)["window_str"], "空闲")
         self.assertEqual(pw.classify(at(10, 30, weekday=6), DEEPSEEK_CFG)["window_str"], "周末")
+
+
+class TestHolidayTable(unittest.TestCase):
+    """内置节假日表（holidays/<年>.json）加载与查表。"""
+
+    def test_bundled_files_load(self):
+        table = pw.load_holidays([REPO_ROOT], (2025, 2026))
+        self.assertTrue(table, "holidays/ 内置数据未加载")
+        self.assertGreater(len(table), 50)
+        # 法定节假日 → True（放假）
+        self.assertTrue(table.get("2026-10-01"), "2026 国庆应放假")
+        self.assertTrue(table.get("2025-01-01"), "2025 元旦应放假")
+        # 调休上班的周末 → False（不是放假）
+        self.assertIs(table.get("2026-09-20"), False, "2026-09-20 应为调休上班日")
+        self.assertIs(table.get("2026-02-14"), False)
+
+    def test_missing_dir_yields_empty_table(self):
+        self.assertEqual(pw.load_holidays(["/nonexistent-token-eye-xyz"], (2026,)), {})
+
+    def test_malformed_file_is_ignored(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            os.makedirs(os.path.join(tmp, "holidays"))
+            with open(os.path.join(tmp, "holidays", "2026.json"), "w") as f:
+                f.write("{ not json")
+            self.assertEqual(pw.load_holidays([tmp], (2026,)), {})
+
+    def test_is_workday_and_is_holiday(self):
+        d_holiday = datetime(2026, 10, 1).date()   # 周四，国庆
+        d_makeup = datetime(2026, 9, 20).date()    # 周日，调休上班
+        d_weekend = datetime(2026, 9, 19).date()   # 周六，普通周末
+        weekdays = (1, 2, 3, 4, 5)
+        self.assertFalse(pw.is_workday(d_holiday, weekdays, HOLIDAYS))
+        self.assertTrue(pw.is_holiday(d_holiday, HOLIDAYS))
+        self.assertTrue(pw.is_workday(d_makeup, weekdays, HOLIDAYS))
+        self.assertFalse(pw.is_holiday(d_makeup, HOLIDAYS))
+        self.assertFalse(pw.is_workday(d_weekend, weekdays, HOLIDAYS))
+        # 传 None 时退回纯 weekdays 规则
+        self.assertTrue(pw.is_workday(d_holiday, weekdays, None))
+        self.assertFalse(pw.is_workday(d_makeup, weekdays, None))
+
+
+class TestHolidayClassify(unittest.TestCase):
+    """叠加节假日表后的峰谷判定（DeepSeek 口径）。"""
+
+    def test_national_day_is_offpeak_all_day(self):
+        info = pw.classify(on("2026-10-01", 10, 30), DEEPSEEK_CFG, HOLIDAYS)
+        self.assertFalse(info["is_peak"])
+        self.assertTrue(info["is_holiday"])
+        self.assertEqual(info["window_str"], "节假日")
+        self.assertEqual(info["label"], "🌙空闲")
+
+    def test_holiday_countdown_skips_whole_holiday(self):
+        # 2026 国庆 10-01..10-07 放假 → 下一个工作日 10-08（周四）09:00
+        info = pw.classify(on("2026-10-01", 10, 30), DEEPSEEK_CFG, HOLIDAYS)
+        self.assertEqual(info["seconds_to_switch"], 599400)  # 6d22h30m
+
+    def test_holiday_late_night(self):
+        info = pw.classify(on("2026-10-01", 23, 0), DEEPSEEK_CFG, HOLIDAYS)
+        self.assertEqual(info["window_str"], "节假日")
+        self.assertEqual(info["seconds_to_switch"], 554400)  # 6d10h
+
+    def test_makeup_saturday_counts_as_workday(self):
+        # 2026-10-10（周六）是国庆调休上班日 → 时段内算高峰
+        info = pw.classify(on("2026-10-10", 10, 30), DEEPSEEK_CFG, HOLIDAYS)
+        self.assertTrue(info["is_peak"])
+        self.assertEqual(info["window_str"], "高峰")
+
+    def test_makeup_saturday_off_hours_is_idle(self):
+        info = pw.classify(on("2026-10-10", 20, 0), DEEPSEEK_CFG, HOLIDAYS)
+        self.assertFalse(info["is_peak"])
+        self.assertEqual(info["window_str"], "空闲")  # 调休日算工作日，不是「周末」
+
+    def test_makeup_sunday_morning(self):
+        info = pw.classify(on("2026-09-20", 10, 0), DEEPSEEK_CFG, HOLIDAYS)
+        self.assertTrue(info["is_peak"])
+        self.assertEqual(info["seconds_to_switch"], 2 * 3600)
+
+    def test_plain_weekend_still_weekend(self):
+        info = pw.classify(on("2026-09-19", 10, 30), DEEPSEEK_CFG, HOLIDAYS)
+        self.assertFalse(info["is_peak"])
+        self.assertEqual(info["window_str"], "周末")
+
+    def test_normal_weekday_unaffected(self):
+        info = pw.classify(on("2026-09-21", 10, 30), DEEPSEEK_CFG, HOLIDAYS)
+        self.assertTrue(info["is_peak"])
+        self.assertEqual(info["window_str"], "高峰")
+
+    def test_spring_festival_long_gap_lookahead(self):
+        # 2026 春节 02-15..02-23 放假；02-14（周六）是调休上班日 → 20:00 后
+        # 下一个工作日是 02-24（周二），间隔 9d13h（超出旧版 7 天搜索窗口）
+        info = pw.classify(on("2026-02-14", 20, 0), DEEPSEEK_CFG, HOLIDAYS)
+        self.assertEqual(info["window_str"], "空闲")
+        self.assertEqual(info["seconds_to_switch"], 824400)
+
+    def test_without_table_behaves_as_before(self):
+        # holidays=False（未传表）时保持旧口径：国庆当天照旧算高峰
+        info = pw.classify(on("2026-10-01", 10, 30), DEEPSEEK_CFG, None)
+        self.assertTrue(info["is_peak"])
+        self.assertFalse(info["is_holiday"])
+
+    def test_synthetic_table(self):
+        table = {"2026-01-05": True}  # 周一放假
+        info = pw.classify(at(10, 30, weekday=1), DEEPSEEK_CFG, table)
+        self.assertFalse(info["is_peak"])
+        self.assertEqual(info["window_str"], "节假日")
+
+    def test_result_keys_include_is_holiday(self):
+        info = pw.classify(at(10, 30), DEEPSEEK_CFG, HOLIDAYS)
+        self.assertIn("is_holiday", info)
 
 
 if __name__ == "__main__":

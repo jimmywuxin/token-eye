@@ -428,6 +428,12 @@ provider 配置 `consoleUrl`，详情菜单末尾出现「→ 打开 X 控制台
 
 DeepSeek 等平台采用「峰谷定价」（API 不返回当前时段字段），由 `parsers/peak_window.py` 客户端按公示的时段规则自行判定。**仅 `balance` 类 parser 支持**——在余额菜单栏追加 `⚡高峰`/`🌙空闲` 标记，并在详情菜单追加一行「状态 + 距下次切换 X」。
 
+DeepSeek 官方口径（`providers.json` 里的 deepseek 已按此配置）：
+
+- **高峰**：北京时间周一至周五（**不含中国法定节假日**）09:00-12:00、14:00-18:00
+- **空闲**：其余时段 —— 午休/夜间、周末、**法定节假日全天**，价格是高峰的一半
+- **调休上班的周末**算工作日（落在上面时段内即高峰）
+
 ```json
 {
   "parser": {
@@ -435,6 +441,7 @@ DeepSeek 等平台采用「峰谷定价」（API 不返回当前时段字段）�
       "tz": "Asia/Shanghai",
       "weekdays": [1, 2, 3, 4, 5],
       "hours": [[9, 12], [14, 18]],
+      "holidays": true,
       "peakLabel": "⚡高峰",
       "offPeakLabel": "🌙空闲"
     }
@@ -447,6 +454,7 @@ DeepSeek 等平台采用「峰谷定价」（API 不返回当前时段字段）�
 - `tz`：IANA 时区名，默认 `Asia/Shanghai`
 - `weekdays`：`isoweekday` 列表，1=周一 … 7=周日，默认 `[1..5]`（工作日）
 - `hours`：左闭右开区间列表 `[[start,end),...]`，本地 24 小时制
+- `holidays`：`true` 时叠加 `holidays/<年>.json` 的中国法定节假日/调休表（默认 `false`）
 - `peakLabel` / `offPeakLabel`：菜单栏显示文本，可改 emoji 或文案
 
 效果（菜单栏）：
@@ -466,8 +474,21 @@ DeepSeek: ¥13.5
 - 工作日空闲 13:00 → `空闲 距高峰 1h`
 - 工作日晚间 20:00 → `空闲 距高峰 13h`
 - 周末 10:30 → `周末 距高峰 10h30m`
+- 国庆/春节等法定节假日 → `节假日 距高峰 6d22h`
+- 调休上班的周六 10:30 → `高峰 距空闲 1h30m`
 
+> 倒计时取两级单位：`< 1 天` 用 `h+m`（`1h30m` / `2h` / `45m`，整分钟省略），`≥ 1 天` 用 `d+h`（`6d9h`，整点省略小时 → `6d`）——跨整段假期时 `153h18m` 读不出来。MiniMax 的重置倒计时（`format_ms`）同口径。
+>
 > 零网络开销，纯本地时区判定。判定失败（如时区名非法）会静默跳过，不影响余额显示。
+
+#### 节假日数据（holidays/）
+
+放假与调休安排由国务院**逐年公告**（通常在上一年的 11-12 月），**没有算法规律**，只能查表：
+
+- 数据文件：`holidays/2025.json`、`holidays/2026.json`，源自 [NateScarlet/holiday-cn](https://github.com/NateScarlet/holiday-cn)（逐条对照 gov.cn 公告，含调休上班日），随仓库分发、运行时不联网
+- 更新：每年公告后跑一次 `make holidays`（等价 `python3 scripts/update-holidays.py`，默认拉当年 + 次年，直连 GitHub + 国内镜像兜底）；只更新指定年份直接 `python3 scripts/update-holidays.py 2027`
+- 降级：数据文件缺失/损坏、或年份尚未公告 → 自动退回「周一至周五 + 时段」判定，不会报错、不影响余额显示
+- Android 版同源：把 `holidays/` 下的 `.json` 拷到 `android/app/src/main/assets/holidays/` 即可（Android 端只读 assets，不联网）
 
 ### 货币符号（display.currencySymbols）
 
@@ -511,9 +532,12 @@ token-eye/
 ├── swiftbar/
 │   ├── token-eye.sh       ← SwiftBar 启动器（复制到 ~/SwiftBar/）
 │   └── token_eye.py       ← 核心逻辑：缓存/告警/解析/渲染（从项目目录读取）
-├── scripts/               ← 辅助脚本（Cookie 刷新 / 配色检查 / Schema 校验）
+├── scripts/               ← 辅助脚本（Cookie 刷新 / 配色检查 / Schema 校验 / 节假日更新）
 ├── schema/
 │   └── providers.schema.json  ← providers.json 的 JSON Schema（编辑器补全 + 校验）
+├── parsers/
+│   └── peak_window.py     ← 峰/谷时段判定（含节假日/调休查表）
+├── holidays/              ← 中国法定节假日 + 调休数据（<年>.json，源自 holiday-cn）
 ├── tests/
 │   └── test_token_eye.py  ← 单元测试（unittest，零依赖）
 ├── providers.json         ← 核心配置，脚本从项目目录自动读取
@@ -535,9 +559,10 @@ token-eye/
 make install    # 安装/更新插件到 ~/SwiftBar/
 make test       # 单元测试（unittest，零依赖）
 make check      # 全部检查：语法 + 测试 + Schema + 配色对比度
+make holidays   # 更新中国法定节假日/调休表（holidays/<年>.json，每年公告后跑一次）
 ```
 
-- **单元测试**：`swiftbar/token_eye.py` 的解析/告警/错误分类/缓存等核心函数全部可测，`tests/` 覆盖 129 个用例，`python3 -m unittest discover -s tests` 即可运行
+- **单元测试**：`swiftbar/token_eye.py` 的解析/告警/错误分类/缓存等核心函数全部可测，`tests/` 覆盖 184 个用例，`python3 -m unittest discover -s tests` 即可运行
 - **JSON Schema**：`schema/providers.schema.json` 描述配置结构；VS Code 等编辑器打开 `providers.json` 时自动补全与校验；`python3 scripts/validate-schema.py` 提供零依赖的运行时校验（脚本内置的轻量校验用于菜单栏提示）
 - **CI**：GitHub Actions（`.github/workflows/ci.yml`）自动执行 bash 语法 + ShellCheck、Python 编译、单元测试、Schema 校验、配色对比度、版本一致性检查
 - **配色回归**：`scripts/check-colors.py` 保证全部颜色 WCAG AA ≥4.5:1

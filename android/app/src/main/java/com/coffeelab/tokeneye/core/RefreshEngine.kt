@@ -15,6 +15,8 @@ object RefreshEngine {
         val config = ConfigRepository.load(context)
         val secrets = SecretStore(context)
         val prev = SnapshotStore.load(context)
+        // 中国法定节假日/调休表（assets/holidays/，仅 spec.holidays=true 的平台生效）
+        val holidays = HolidayTable.load(context)
         val now = System.currentTimeMillis()
 
         // 告警解析需要全局 alerts，传入 parse
@@ -60,7 +62,7 @@ object RefreshEngine {
                 continue
             }
 
-            val parsed = ResultParser.parse(p, fetch.data!!, config.alerts)
+            val parsed = ResultParser.parse(p, fetch.data!!, config.alerts, holidays)
             results.add(parsed)
             newSuccessAt[p.id] = now
             evaluateAlert(context, p, parsed, config, alerted)

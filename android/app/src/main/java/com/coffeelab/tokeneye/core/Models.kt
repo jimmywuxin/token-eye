@@ -35,6 +35,8 @@ data class ParserSpec(
  * @param hours 左闭右开区间 [[start,end),...]，本地 24 小时制
  * @param peakLabel 高峰时段菜单文本（默认 "⚡高峰"）
  * @param offPeakLabel 空闲时段菜单文本（默认 "🌙空闲"）
+ * @param holidays 是否叠加中国法定节假日/调休表（assets/holidays/<年>.json）：节假日全天空闲、
+ *                 调休上班的周末按工作日算；无数据文件时自动退化为纯 weekdays 判定（默认 false）
  */
 data class PeakWindowSpec(
     val tz: String = "Asia/Shanghai",
@@ -42,6 +44,7 @@ data class PeakWindowSpec(
     val hours: List<IntRange> = emptyList(),
     val peakLabel: String = "⚡高峰",
     val offPeakLabel: String = "🌙空闲",
+    val holidays: Boolean = false,
 )
 
 data class DisplaySpec(

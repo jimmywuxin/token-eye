@@ -145,7 +145,7 @@ LLM 余额/用量实时监控工具，覆盖三端：**macOS**（SwiftBar 菜单
 
 ## 5. 质量保障
 
-- **纯函数化核心**：`token_eye.py` 顶层只有常量与函数，`main()` 才读环境变量——解析/告警/分类/缓存全部可独立单测（129 个用例）
+- **纯函数化核心**：`token_eye.py` 顶层只有常量与函数，`main()` 才读环境变量——解析/告警/分类/缓存全部可独立单测（184 个用例）
 - **CI**（GitHub Actions）：bash 语法 + ShellCheck、Python 编译、单元测试、Schema 校验、配色对比度、版本一致性（`bitbar.version` vs `VERSION`）
 - **部署模型不变**：无论核心逻辑如何拆分，用户始终只复制 `token-eye.sh` 一个文件
 

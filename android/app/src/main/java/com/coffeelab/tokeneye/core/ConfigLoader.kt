@@ -54,6 +54,7 @@ object ConfigLoader {
                         hours = hours,
                         peakLabel = pw.get("peakLabel")?.asString ?: "⚡高峰",
                         offPeakLabel = pw.get("offPeakLabel")?.asString ?: "🌙空闲",
+                        holidays = pw.get("holidays")?.takeIf { it.isJsonPrimitive }?.asBoolean ?: false,
                     )
                 },
             )
