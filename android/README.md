@@ -18,13 +18,13 @@ Mac 版（SwiftBar 菜单栏）的 Android 对应实现：桌面小部件 + 告�
 android/
 ├── app/src/main/java/com/coffeelab/tokeneye/
 │   ├── core/            # 核心逻辑（移植 token_eye.py）
-│   │   ├── Models.kt        # 配置数据类 + 轻量校验
+│   │   ├── Models.kt        # 配置数据类
 │   │   ├── ConfigLoader.kt  # providers.json 解析（与 Mac 版同 schema）
 │   │   ├── JsonPath.kt      # resolve_field 点路径取值
 │   │   ├── ResultParser.kt  # balance / plan_usage 解析 + 阈值链
 │   │   ├── ApiClient.kt     # HTTP + 错误分类
 │   │   ├── SecretStore.kt   # 密钥加密存储
-│   │   ├── Repositories.kt  # 配置/快照持久化
+│   │   ├── Repositories.kt  # 配置读取（只读 assets）+ 启用状态/快照持久化
 │   │   ├── RefreshEngine.kt # 刷新编排 + 告警判定
 │   │   ├── AlertNotifier.kt # 通知
 │   │   ├── PeakWindow.kt    # 峰/谷时段判定（镜像 swiftbar/parsers/peak_window.py）
@@ -73,7 +73,7 @@ android/
 ## 已知差异（vs Mac 版）
 
 - **不含 MiMo（已移除）**：MiMo 靠浏览器 Cookie 会话鉴权，`refresh-mimo-cookie.py` 依赖本机浏览器解密，Android 上做不到，只剩「手动反复粘贴 Cookie」一条死路，因此 Android 版直接不做。
-  保险机制：凡是配置里带 `refreshParam`（Cookie 自动刷新）的平台，`ConfigLoader` 加载时一律剔除——从 Mac 导入配置或旧配置残留都不会把它们带回来。
+  保险机制：凡是配置里带 `refreshParam`（Cookie 自动刷新）的平台，`ConfigLoader` 加载时一律剔除——配置里手写或旧版本残留都不会把它们带回来。
 - 刷新频率 15 分钟（WorkManager 系统下限），告警实时性略降。
 - 历史趋势（sparkline）、每日消耗统计暂未移植，属二期。
 
@@ -92,5 +92,20 @@ SDK 路径在 `local.properties`（本机 `/opt/homebrew/share/android-commandli
 
 1. 安装后打开 App，在通知权限弹窗点允许
 2. 每个平台点「填写密钥」粘贴 API Key
-3. 配置默认用内置 providers.json（与仓库根目录同步），剪贴板复制新版配置后点「剪贴板导入配置」可覆盖
+3. 配置用内置 providers.json（与仓库根目录同步）。**App 内不提供改配置入口** —— 见下方「配置来源」
 4. 桌面添加「Token Eye」小部件，点按即刷新
+
+## 配置来源
+
+配置本体**只有 `assets/providers.json` 一份**，随 APK 打包、与 git 提交一一对应，升级 APK 必然生效。
+
+App 内**不提供修改配置的入口**，改配置走 git：改根目录 `providers.json` → 拷到 `app/src/main/assets/` → 重打 APK（有 `check-config-sync.py` 在 CI 兜底）。
+
+运行时唯一可改的两样，都不涉及配置本体：
+
+| 项 | 存储 | 说明 |
+|---|---|---|
+| API Key | `SecretStore`（Android Keystore） | App 内录入 |
+| 启用/停用 | `EnabledStore`（`files/enabled.json`） | 只存 `{"deepseek": false}` 这样的极简映射，不存配置本体 |
+
+> **历史包袱（2026-10-05 已移除）**：此前存在「filesDir 覆盖层」——`filesDir/providers.json` 优先级高于 assets，一旦存在就永久遮蔽内置版且永不过期。更麻烦的是**启用/停用开关也往 filesDir 写整份配置**，所以「点一次开关」就足以让手机端配置冻结在旧版本，重装 APK 也更新不了。Android 节假日期间峰谷倒计时误判为工作日，根因就是这份被遮蔽的旧配置缺 `parser.peakWindow.holidays`。现已整层删除，`load` 只读 assets + 叠加 `EnabledStore`。

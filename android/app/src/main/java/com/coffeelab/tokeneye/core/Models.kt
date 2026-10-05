@@ -1,6 +1,5 @@
 package com.coffeelab.tokeneye.core
 
-import com.google.gson.JsonObject
 
 /** provider 的一项 API 定义（对应 providers.json 的 api 字段） */
 data class ApiSpec(
@@ -105,23 +104,3 @@ data class Snapshot(
     val alertedIds: List<String> = emptyList(),
 )
 
-/** 简单校验：缺关键字段则报错，供剪贴板导入时反馈 */
-fun validateConfigJson(root: JsonObject): String? {
-    if (!root.has("providers") || !root.get("providers").isJsonArray) return "缺少 providers 数组"
-    val arr = root.getAsJsonArray("providers")
-    if (arr.size() == 0) return "providers 为空"
-    arr.forEach { el ->
-        if (!el.isJsonObject) return "providers 含非对象元素"
-        val p = el.asJsonObject
-        val id = p.get("id")?.takeIf { it.isJsonPrimitive }?.asString
-        if (id.isNullOrBlank()) return "某个 provider 缺少 id"
-        val api = p.get("api")?.takeIf { it.isJsonObject }?.asJsonObject
-        if (api?.get("url")?.takeIf { it.isJsonPrimitive }?.asString.isNullOrBlank())
-            return "provider[$id] 缺少 api.url"
-        val parser = p.get("parser")?.takeIf { it.isJsonObject }?.asJsonObject
-        val type = parser?.get("type")?.takeIf { it.isJsonPrimitive }?.asString
-        if (type !in setOf("balance", "plan_usage", "status"))
-            return "provider[$id] parser.type 无效：$type"
-    }
-    return null
-}

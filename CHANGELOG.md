@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+## [0.23.0] - 2026-10-05
+
+### Removed
+
+- **删除 Android「剪贴板导入配置」入口与整个 `filesDir` 配置覆盖层**（`MainActivity.kt` 按钮 + `ConfigRepository` 的 userConfig 系列方法 + 仅服务该功能的 `validateConfigJson`，净 -85 行）：旧实现里 `filesDir/providers.json` 优先级高于 `assets/providers.json`，一旦存在就**永久遮蔽**内置版且永不过期 —— 也就是「重装 APK 但手机端配置不更新」。更隐蔽的是**启用/停用开关的 `toggleProvider` 同样往 filesDir 写整份配置**，所以「点一次开关」就足以触发冻结，v0.22.1 修的那个节假日倒计时 bug 正是这么来的。该功能对实际使用零价值（配置改动本来就走 git 改根目录 → 拷 assets → 重打 APK，另有 `check-config-sync.py` 在 CI 兜底），纯负债
+
+### Added
+
+- 新增 `EnabledStore` 承接启用/停用：只持久化 `{"providerId": false}` 这样的极简映射，**不存配置本体**，覆盖统一在 `ConfigRepository.load` 叠加（UI 与 `RefreshEngine` 自动一致，不给「显示是关的、实际还在刷」留机会）
+- `ConfigRepositoryTest`（5 例）：钉住「覆盖只动 `enabled`、不丢平台、不改配置本体字段、空覆盖表原样返回」，覆盖逻辑抽成纯函数 `applyEnabledOverrides` 以便无 Android 环境单测
+
 ## [0.22.1] - 2026-10-05
 
 ### Fixed

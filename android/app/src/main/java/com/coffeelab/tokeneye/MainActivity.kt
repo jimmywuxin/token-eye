@@ -1,7 +1,6 @@
 package com.coffeelab.tokeneye
 
 import android.Manifest
-import android.content.ClipboardManager
 import android.content.Context
 import android.os.Build
 import android.os.Bundle
@@ -45,15 +44,14 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.coffeelab.tokeneye.BuildConfig
-import com.coffeelab.tokeneye.core.ConfigLoader
 import com.coffeelab.tokeneye.core.ConfigRepository
+import com.coffeelab.tokeneye.core.EnabledStore
 import com.coffeelab.tokeneye.core.Provider
 import com.coffeelab.tokeneye.core.RefreshEngine
 import com.coffeelab.tokeneye.core.SecretStore
 import com.coffeelab.tokeneye.core.Snapshot
 import com.coffeelab.tokeneye.core.SnapshotStore
 import com.coffeelab.tokeneye.core.Status
-import com.coffeelab.tokeneye.core.validateConfigJson
 import com.coffeelab.tokeneye.work.RefreshWorker
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
@@ -61,7 +59,10 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * 设置页 MVP：provider 列表 + 密钥录入 + 启用开关 + 剪贴板导入 providers.json + 立即刷新。
+ * 设置页：provider 列表 + 密钥录入 + 启用开关 + 立即刷新。
+ *
+ * 配置本体只读 assets（见 [ConfigRepository]），本页**不提供改配置入口** ——
+ * 改配置走 git：改根目录 providers.json → 拷 assets → 重打 APK。
  */
 class MainActivity : ComponentActivity() {
 
@@ -163,24 +164,6 @@ fun TokenEyeApp() {
                         }
                         Text(if (refreshing) "刷新中" else "立即刷新")
                     }
-                    OutlinedButton(onClick = {
-                        val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                        val clip = cm.primaryClip?.getItemAt(0)?.text?.toString()
-                        if (clip.isNullOrBlank()) {
-                            message = "剪贴板为空，先复制 providers.json 内容"
-                        } else {
-                            val err = validateConfigJsonCompat(clip)
-                            if (err != null) {
-                                message = "导入失败：$err"
-                            } else {
-                                ConfigRepository.saveUserConfig(context, clip)
-                                providers = ConfigRepository.load(context).providers
-                                message = "已导入，配置生效"
-                            }
-                        }
-                    }) {
-                        Text("剪贴板导入配置")
-                    }
                 }
             }
         }
@@ -201,26 +184,21 @@ fun TokenEyeApp() {
 
 private val TIME_FMT = SimpleDateFormat("HH:mm", Locale.getDefault())
 
-private fun validateConfigJsonCompat(text: String): String? = try {
-    val root = com.google.gson.JsonParser.parseString(text)
-    if (!root.isJsonObject) "根节点不是对象" else validateConfigJson(root.asJsonObject)
-} catch (e: Exception) {
-    "JSON 无效：${e.message}"
-}
-
-private fun toggleProvider(context: Context, providers: List<Provider>, id: String, enabled: Boolean): List<Provider> {
-    val raw = ConfigRepository.loadRaw(context)
-    return try {
-        val root = com.google.gson.JsonParser.parseString(raw).asJsonObject
-        root.getAsJsonArray("providers")?.forEach { el ->
-            val o = el.asJsonObject
-            if (o.get("id")?.asString == id) o.addProperty("enabled", enabled)
-        }
-        ConfigRepository.saveUserConfig(context, root.toString())
-        ConfigLoader.parse(root.toString()).providers
-    } catch (e: Exception) {
-        providers
-    }
+/**
+ * 切换某平台的启用状态。
+ *
+ * 只把 `{"id": false}` 写进 [EnabledStore]，**不改写配置本体**（旧实现把整份 providers.json
+ * 写进 filesDir，会把手机端配置永久冻结在那一刻的版本，重装 APK 也更新不了）。
+ * 覆盖由 [ConfigRepository.load] 统一叠加，这里返回的列表仅用于立即刷新 UI。
+ */
+private fun toggleProvider(
+    context: Context,
+    providers: List<Provider>,
+    id: String,
+    enabled: Boolean,
+): List<Provider> {
+    EnabledStore.set(context, id, enabled)
+    return providers.map { if (it.id == id) it.copy(enabled = enabled) else it }
 }
 
 @Composable
