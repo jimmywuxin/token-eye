@@ -103,8 +103,10 @@ class TestResolveField(unittest.TestCase):
 
 
 class TestFormatMs(unittest.TestCase):
+    """format_ms 只做毫秒→秒换算，文案口径由 parsers.peak_window.format_countdown 独占。"""
+
     def test_zero(self):
-        self.assertEqual(te.format_ms(0), "0m")
+        self.assertEqual(te.format_ms(0), "")
 
     def test_minutes_only(self):
         self.assertEqual(te.format_ms(61_000), "1m")
@@ -112,6 +114,8 @@ class TestFormatMs(unittest.TestCase):
     def test_hours(self):
         self.assertEqual(te.format_ms(3_661_000), "1h1m")
         self.assertEqual(te.format_ms(5_400_000), "1h30m")
+        # 整点不带多余的 0m（历史遗留：Mac 曾显示 2h0m、Android 显示 0m）
+        self.assertEqual(te.format_ms(7_200_000), "2h")
 
     def test_days(self):
         # ≥ 1 天取 d+h 两级（周窗重置最长 7 天，150h30m 没法读）
@@ -119,6 +123,12 @@ class TestFormatMs(unittest.TestCase):
         self.assertEqual(te.format_ms(86_400_000), "1d")
         self.assertEqual(te.format_ms(90_000_000), "1d1h")
         self.assertEqual(te.format_ms(541_800_000), "6d6h")  # 6d6h30m
+
+    def test_matches_peak_window_format(self):
+        # 防再次漂移：ms 入口必须与 parsers 侧唯一实现逐值一致
+        from parsers.peak_window import format_countdown
+        for ms in (0, 59_000, 61_000, 7_200_000, 3_661_000, 86_400_000, 541_800_000):
+            self.assertEqual(te.format_ms(ms), format_countdown(ms // 1000))
 
 
 class TestSparkline(unittest.TestCase):
@@ -340,7 +350,7 @@ class TestParsePlanUsage(unittest.TestCase):
         self.assertNotIn("视频", r["menu_bar"])
         self.assertEqual(r["min_pct"], 8)
         # 简约风格：label 为空 → 去掉前缀；窗口名 5h / 7d；进度条按已用%填充（8% 几乎全空）
-        self.assertIn("5h 8%  █░░░░░░░░░░░░░░░░░░░  重置 1h0m", r["lines"])
+        self.assertIn("5h 8%  █░░░░░░░░░░░░░░░░░░░  重置 1h", r["lines"])
         self.assertIn("  7d 0%  ░░░░░░░░░░░░░░░░░░░░", r["lines"])
         # 旧格式（带括号状态文字 / 「M2.7/M3 通用:」前缀 / 「周窗口」/「视频」）已停用
         self.assertFalse(any("5小时窗口" in line for line in r["lines"]))
@@ -695,14 +705,6 @@ class TestConsumptionAndPrediction(unittest.TestCase):
             for ts, v in pairs:
                 f.write(f"{ts},{v}\n")
 
-    def test_start_of_week_is_monday(self):
-        t = time.localtime(te.start_of_week())
-        self.assertEqual((t.tm_wday, t.tm_hour, t.tm_min, t.tm_sec), (0, 0, 0, 0))
-
-    def test_start_of_month_is_first(self):
-        t = time.localtime(te.start_of_month())
-        self.assertEqual((t.tm_mday, t.tm_hour, t.tm_min), (1, 0, 0))
-
     def test_consumption_since_window(self):
         self.write("x", [(self.day0 - 86400, 50.0), (self.day0 - 100, 40.0),
                          (self.day0 + 100, 35.0)])
@@ -891,8 +893,8 @@ class TestActionParams(unittest.TestCase):
         env = {"SWIFTBAR_PLUGIN_PATH": self.project_script}
         with mock.patch.dict(os.environ, env, clear=False):
             self.assertEqual(
-                te.bash_action("upgrade", "v0.20.0", refresh=True),
-                f"bash={self.project_script} param1=upgrade param2=v0.20.0"
+                te.bash_action("refresh-now", "v0.20.0", refresh=True),
+                f"bash={self.project_script} param1=refresh-now param2=v0.20.0"
                 " terminal=false refresh=true")
             # terminal 默认 true（会弹 Terminal.app），必须显式关闭
             self.assertIn("terminal=false", te.bash_action("copy-balance", "¥1"))

@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.22.0] - 2026-10-05
+
+### Added
+
+- **跨端配置同步校验**（`scripts/check-config-sync.py`，已进 `make validate` 与 CI）：比对项目根 `providers.json` / `holidays/` 与 Android 的手工副本 `android/app/src/main/assets/`，防止「改了根配置忘了拷 → 手机 App 一直跑旧规则」（峰谷时段、配色、告警阈值都靠它）。报错精确到字段路径（如 `provider「deepseek」的 parser.peakWindow.hours 与根目录不一致`）；**允许的唯一差异**是带 `refreshParam` 的平台在 Android 侧被剔除（Cookie 刷新无法移植）。新增 `tests/test_config_sync.py` 10 个用例（含「真实仓库必须同步」护栏）
+
+### Removed
+
+- **移除菜单「一键升级」**（`swiftbar/token-eye.sh` 的 `param1=upgrade` 分支，-118 行）：插件自己 `git fetch + merge --ff-only` 自己、串 3 个国内镜像兜底、非 git 仓库再下 tarball 解压替换。同一份镜像地址在仓库里抄了三遍，且无代理环境下 git fetch 常年失败，用户只看到「升级失败」。**版本自检保留**：有新版本时菜单顶部提示「⬆ 新版本 vX.Y.Z 可用」并给 release 链接，升级方式回到 `make install`
+- 删除 `docs/providers-config.html`（353 行）：从未被 README / AGENTS.md / DESIGN.md 链接，内容与 README + schema 三方重复、各自过时。其中独有的「配置字段速查」「配置→界面位置映射」「配色说明」已并入 README，其余与 README 重复的内容直接丢弃
+- 死代码：`start_of_week` / `start_of_month`（生产零调用，仅测试引用）、常量 `HISTORY_LEN`（趋势窗口下线后无生产引用）
+
+### Fixed
+
+- **倒计时整点不再显示多余的 `0m`**：MiniMax 重置剩整 2 小时时，Mac 显示 `2h0m`、Android 显示 `0m`——同一段逻辑在 Mac 写了 2 份、Android 写了 2 份，注释还都声称「与另一处同口径」。现在 4 份收敛为 2 份（各语言一份）：`token_eye.format_ms` 委托 `parsers.peak_window.format_countdown`，Android `ResultParser` 委托 `PeakWindow.formatCountdown`，两端一致显示 `2h`；`format_ms(0)` 由 `0m` 改为空串
+
+### Changed
+
+- plan_usage 不再写历史文件（`history-minimax.jsonl`）：菜单里的趋势展示早已下线，写入的数据无人读取
+- 死配置字段在文档里标注废弃：`display.unit` / `parser.statusMap` / `parser.fields.intervalTotal` / `weeklyTotal` / `intervalStatus` / `weeklyStatus` 代码里零引用（v0.13 统一百分比口径后断掉的旧路径），配置键与 JSON Schema 保留仅为兼容旧配置；AGENTS.md 补「配置字段必须代码真的读了才算数」铁律
+- 文档同步：README 去掉已不存在的「用量趋势线」与「一键升级」描述、新增「配置字段速查」；DESIGN.md 重写历史/趋势章节与升级路径说明；AGENTS.md 明确「历史只服务 balance 类平台」
+- 测试 197 例（-2 死函数用例，+1 防漂移用例，+10 跨端同步用例）
+
 ## [0.21.1] - 2026-10-05
 
 ### 修复

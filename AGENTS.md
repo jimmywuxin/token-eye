@@ -23,6 +23,7 @@ token-eye/
 ├── scripts/
 │   ├── refresh-mimo-cookie.py  ← MiMo Cookie 一键刷新（多浏览器，会话过期时运行）
 │   ├── check-colors.py         ← 配色对比度回归检查（WCAG AA ≥4.5:1）
+│   ├── check-config-sync.py    ← 跨端配置同步校验（根 providers.json/holidays ↔ Android assets 副本）
 │   ├── validate-schema.py      ← providers.json JSON Schema 校验（零依赖）
 │   ├── update-holidays.py      ← 中国法定节假日/调休表更新（make holidays；每年公告后跑）
 │   ├── add-provider.py         ← 新平台添加向导（交互式，支持模板）
@@ -72,8 +73,8 @@ make install              # 或手动：cp swiftbar/token-eye.sh ~/SwiftBar/ && 
 ### 质量保障（提交前跑）
 ```bash
 make test                 # 单元测试（unittest，零依赖）
-make check                # 全部检查：语法 + 测试 + Schema + 配色对比度
-make validate             # 仅 Schema + 配色
+make check                # 全部检查：语法 + 单元测试 + Schema + 跨端配置同步 + 配色对比度
+make validate             # 仅 Schema + 跨端配置同步 + 配色
 ```
 
 ### 添加 API Key 到 Keychain
@@ -140,9 +141,8 @@ Python 核心逻辑：
 - `cacheTtl` — 单 provider 覆盖全局缓存 TTL
 - `alert.minBalance` / `alert.minPct` / `alert.dailySpendMax` / `alert.daysLeft` — 单 provider 告警阈值（balance 余额/用量百分比/当日消耗上限/预计可用天数预警）
 - `api.headers` — 额外请求头（如 OpenAI Organization、User-Agent）
-- `parser.statusMap` — plan_usage 状态码映射，默认 `{1:可用, 2:耗尽临近, 3:耗尽}`；接口返回百分比字段时**优先按百分比推断状态**（≥20 可用 / 10-20 耗尽临近 / <10 耗尽），statusMap 仅在旧接口兜底
 - `parser.barLength` — 进度条长度，默认 20
-- `parser.fields.intervalTotal` / `weeklyTotal` — 旧接口的套餐总量字段路径；仅当接口无百分比字段时生效（total=0 显示「无套餐」）。**注意：MiniMax 新接口该字段已废弃恒为 0，状态由百分比推断**
+- ~~`parser.statusMap`~~ / ~~`parser.fields.intervalStatus` / `weeklyStatus`~~ / ~~`parser.fields.intervalTotal` / `weeklyTotal`~~ — **已废弃，`token_eye.py` 不读取**：老接口的「状态码→文案映射」与「按次数算百分比」两条路径在 v0.13 统一为百分比口径时就断了，配置键与 JSON Schema 保留只为兼容旧配置，**别当功能用、也别接线**。现行口径：状态一律按**已用%** 分档（<80 正常 / 80–99 临近 / ≥100 耗尽，常量 `USED_WARN_PCT` / `USED_OVER_PCT`）；余额单位来自接口 `fields.currency`（USD→`$`，其余 `¥`），用量行的 `%` 写死在渲染代码里 → **`display.unit` 同样不读取**，`display.label` 只有 `status` parser 会用
 - `display.nameColor` — 平台名颜色；支持深浅双套 `{"dark":"#xxx","light":"#xxx"}`，随系统外观切换（注意红绿色弱对比度）
 - `refreshParam` — 鉴权错误时自动刷新 + 菜单「🔄 刷新 Cookie」点击项（如 MiMo 的 `refresh-mimo-cookie`）
 - `refreshInterval` — 主动续期周期（秒，≥60）：即使 cookie 仍有效也定期从浏览器复制最新 cookie，保持 keychain 与浏览器会话同步、减少 401 触发面（仅对配置了 `refreshParam` 的 provider 生效）
@@ -167,8 +167,10 @@ Python 核心逻辑：
 ## 开发注意事项
 
 - 核心逻辑在 `swiftbar/token_eye.py`（可 import、可单测），`token-eye.sh` 只做环境检测与转发；两者都从项目目录读取，部署时**只需复制 token-eye.sh**
-- 提交前跑 `make check`（语法 + 单元测试 + Schema + 配色）；CI（`.github/workflows/ci.yml`）会在 push/PR 时自动执行同样的检查
+- 提交前跑 `make check`（语法 + 单元测试 + Schema + 跨端配置同步 + 配色）；CI（`.github/workflows/ci.yml`）会在 push/PR 时自动执行同样的检查
+- **改配置必须同步 Android 副本**：Mac/Linux 读项目根目录的 `providers.json`，Android 读手工副本 `android/app/src/main/assets/providers.json`（`holidays/` 同理）。改完根配置**必须**把文件拷到 assets 同名路径并重装 APK；`scripts/check-config-sync.py`（已进 `make validate` 与 CI）会比对两份，唯一允许的差异是带 `refreshParam` 的平台在 Android 侧被剔除（Cookie 刷新无法移植）
 - 改配置结构时：同步更新 `schema/providers.schema.json` 与 `token_eye.py` 里的 `schema_validate`（运行时轻量校验，与 JSON Schema 互补）
+- **配置字段必须「代码真的读了」才算数**：新增字段要同时落在「代码读取处 + JSON Schema + 模板/文档」三处；只写文档/只配 Schema 不接线 = 死配置（`display.unit` / `parser.statusMap` / `parser.fields.intervalTotal` / `weeklyTotal` / `intervalStatus` / `weeklyStatus` 就是这么攒出来的，已在 provider 段标注废弃）。自检一句：`grep -c '<字段名>' swiftbar/token_eye.py` 为 0 → 代码不读，要么实现要么标注废弃
 - 版本号双处维护：`token-eye.sh` 头部 `bitbar.version` 与 `token_eye.py` 的 `VERSION`，CI 校验两者一致
 - 脚本使用 `set -euo pipefail`，任何命令失败都会退出（注意：命令替换里放可能失败的脚本时需 `|| true` 兜底，见 refresh-mimo-cookie 分支）
 - API 超时时间：curl 5s，subprocess 10s
@@ -180,11 +182,11 @@ Python 核心逻辑：
 - **点「刷新」= 主动重拉（`--force-refresh`）**：菜单底部「刷新」是 `bash=… param1=refresh-now terminal=false refresh=true` 动作，**不是裸 `refresh=true`**——裸写法 SwiftBar 以零参数重跑插件，`param1` 根本传不进来（见上文「SwiftBar 交互项铁律」）。启动器收到 `refresh-now` 后以 `--force-refresh` 跑一轮核心逻辑，stdout 丢弃、结果由随后的 `refresh=true` 重渲回显。`force=True` 只做两件事：① 忽略 10s 错误短缓存（否则刚失败就点会直接命中缓存、压根不打 API，看着像「点了没反应」）；② `auto_refresh_cookie(force=True)` 跳过 1 分钟冷却立即跑脚本。于是**一次点击**即可跑完「刷 Cookie → 重拉余额 → 直接显示新余额」，不必等冷却过完再点第二次。**成功缓存（默认 300s）照常复用**，force 不额外打 API；`_open_login_page` 的 30 分钟限频也不受 force 影响（防连点反复弹浏览器）
 - 历史文件（history-*.jsonl）保留 30 天，每天自动清理一次（`cleanup_history` / `last-cleanup.ts` 标记），防无限增长
 - 告警通知默认带提示音（`TOKEN_EYE_SOUND` 换声音名，`0` 静音）；`TOKEN_EYE_DEBUG=1` 时请求明细写入 `~/Library/Caches/token-eye/debug.log`
-- 趋势窗口 `HISTORY_LEN=288`（≈2.4h），`sparkline` 自动均匀降采样到 24 字符宽
+- 历史只服务 balance 类平台（消耗统计/预测/7 天柱状）：近 7 天每日消耗按天分桶后用 `sparkline` 渲染成 24 字符宽柱状（`▁▂▃▄▅▆▇█`）；plan_usage **不写历史**（趋势展示已下线，别再加回来）
 - **点击动作必须写成 `bash=` + `param1=`**（SwiftBar 铁律，2026-09-11 踩坑）：SwiftBar 的 `param1=`/`param2=` **不会传给插件本身**，只作为 `bash=` 所指定脚本的入参（上游 `MenuLineParameters.bashParams` 仅在 `params.bash` 存在时被消费）；只写 `refresh=true` 时 SwiftBar 会用**零参数**重跑插件，点击等于没反应。正确格式 `bash=<插件绝对路径> param1=<动作> terminal=false refresh=true`：`terminal` 默认 **true**（不写会弹 Terminal.app），`refresh=true` 让脚本跑完自动重渲菜单。路径由 `action_script_path()` 解析（`SWIFTBAR_PLUGIN_PATH` → `SCRIPT_DIR` → 模块同级）
 - 点击动作在后台执行（`terminal=false`），**stdout 会被丢弃**：结果反馈走 `notify()`（osascript 系统通知），自检详情另存 `~/Library/Caches/token-eye/self-check.log`
 - 行级交互参数（`bash=`/`param1=copy-balance` / `href`）通过 render dict 的 `line_params` 列表与 `lines` 一一对应，新增行时必须同步 append（None 或参数 dict）
 - 模板库 `scripts/provider-templates.json` 的每个模板必须通过 JSON Schema 与运行时校验（测试覆盖）
 - 渲染层有 try-except 兜底，异常时输出空菜单占位，不会空白
 - 环境变量 `TOKEN_EYE_NOTIFY=0` 可临时禁用告警通知
-- **节假日/调休数据**：`parser.peakWindow.holidays=true` 时按 `holidays/<年>.json` 查表（法定节假日全天空闲、调休上班的周末算工作日）；该表由国务院逐年公告、无算法规律，公告后跑 `make holidays`（`scripts/update-holidays.py`，直连 GitHub + 国内镜像）更新，运行时不联网；新增年份后**同步拷到 `android/app/src/main/assets/holidays/`**（Android 端只读 assets，`HolidayTable.load()` 合并整个目录）；表缺失/损坏自动退化为纯 weekdays 判定
+- **节假日/调休数据**：`parser.peakWindow.holidays=true` 时按 `holidays/<年>.json` 查表（法定节假日全天空闲、调休上班的周末算工作日）；该表由国务院逐年公告、无算法规律，公告后跑 `make holidays`（`scripts/update-holidays.py`，直连 GitHub + 国内镜像）更新，运行时不联网；新增年份后**同步拷到 `android/app/src/main/assets/holidays/`**（Android 端只读 assets，`HolidayTable.load()` 合并整个目录；漏拷会被 `check-config-sync.py` 拦下）；表缺失/损坏自动退化为纯 weekdays 判定

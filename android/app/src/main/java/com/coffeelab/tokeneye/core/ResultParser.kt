@@ -156,7 +156,7 @@ object ResultParser {
                 windows.first.remaining?.let { add("  $intervalLabel 剩余 ${formatPct(it)}%（已用 ${formatPct(100 - it)}%）") }
                 windows.second.remaining?.let { add("  $weeklyLabel 剩余 ${formatPct(it)}%（已用 ${formatPct(100 - it)}%）") }
                 windows.first.boost?.let { add("  5h 加速 ${formatPct(it / 10)}‰") }
-                windows.first.resetMs?.let { add("  重置于 ${formatMs(it.toLong())}") }
+                windows.first.resetMs?.let { add("  重置于 ${PeakWindow.formatCountdown((it.toLong() / 1000).toInt())}") }
             }
         }
 
@@ -201,17 +201,4 @@ object ResultParser {
 
     private fun formatPct(v: Double): String =
         if (v == v.toLong().toDouble()) v.toLong().toString() else String.format("%.1f", v)
-
-    /** 毫秒 → 倒计时文案（与 PeakWindow.formatCountdown 同口径：≥1 天用 `6d6h`） */
-    private fun formatMs(ms: Long): String {
-        val sec = ms / 1000
-        if (sec >= 86400) {
-            val d = sec / 86400
-            val hh = (sec % 86400) / 3600
-            return if (hh > 0) "${d}d${hh}h" else "${d}d"
-        }
-        val h = sec / 3600
-        val m = (sec % 3600) / 60
-        return if (h > 0) "${h}h${m}m" else "${m}m"
-    }
 }

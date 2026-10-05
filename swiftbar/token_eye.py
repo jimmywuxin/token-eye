@@ -22,12 +22,11 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime as _dt
 
-VERSION = "0.21.1"
+VERSION = "0.22.0"
 
 # 按 parser 类型的默认缓存 TTL（秒）
 DEFAULT_CACHE_TTL = {"balance": 300, "plan_usage": 30, "status": 60}
 ERROR_CACHE_TTL = 10  # 失败短缓存，避免连续打 API
-HISTORY_LEN = 288     # 趋势窗口：最近 288 条快照（30s 采样 ≈ 2.4 小时）
 
 # 环境变量 -> 颜色名（与 token-eye.sh 导出的 C_* 对应）
 COLOR_NAMES = ["DEFAULT", "SECONDARY", "MUTED", "HEADER", "OK", "WARN", "ERR"]
@@ -279,7 +278,7 @@ def append_history(hdir, pid, value):
         pass
 
 
-def load_history(hdir, pid, n=HISTORY_LEN):
+def load_history(hdir, pid, n=10000):
     out = []
     try:
         with open(os.path.join(hdir, f"history-{pid}.jsonl")) as f:
@@ -347,19 +346,6 @@ def start_of_day(ts=None):
     """本地时区当天 0 点的时间戳。"""
     t = time.localtime(ts if ts is not None else time.time())
     return int(time.mktime((t.tm_year, t.tm_mon, t.tm_mday, 0, 0, 0, 0, 0, -1)))
-
-
-def start_of_week(ts=None):
-    """本地时区本周一 0 点的时间戳。"""
-    t = time.localtime(ts if ts is not None else time.time())
-    monday = t.tm_mday - t.tm_wday
-    return int(time.mktime((t.tm_year, t.tm_mon, monday, 0, 0, 0, 0, 0, -1)))
-
-
-def start_of_month(ts=None):
-    """本地时区本月 1 日 0 点的时间戳。"""
-    t = time.localtime(ts if ts is not None else time.time())
-    return int(time.mktime((t.tm_year, t.tm_mon, 1, 0, 0, 0, 0, 0, -1)))
 
 
 def consumption_since(hdir, pid, cutoff_ts, epsilon=0.001):
@@ -522,16 +508,12 @@ def resolve_field(obj, path):
 
 
 def format_ms(ms):
-    """毫秒 → 简短倒计时文案（与 parsers/peak_window.format_countdown 同口径）。
+    """毫秒 → 简短倒计时文案（统一走 parsers.peak_window.format_countdown，单一口径）。
 
     ≥ 1 天用 `6d6h`（周窗重置最长 7 天，`150h30m` 没法读）；否则 `1h30m` / `45m`。
+    parsers 模块缺失时返回空串（与峰谷时段行同样的降级口径）。
     """
-    sec = ms // 1000
-    if sec >= 86400:
-        d, hh = sec // 86400, (sec % 86400) // 3600
-        return f"{d}d{hh}h" if hh else f"{d}d"
-    h, m = sec // 3600, (sec % 3600) // 60
-    return f"{h}h{m}m" if h > 0 else f"{m}m"
+    return _format_peak_countdown(ms // 1000) if _HAS_PEAK_WINDOW else ""
 
 
 DEFAULT_CURRENCY_SYMBOLS = {"USD": "$"}
@@ -1155,10 +1137,6 @@ def process_provider(p, config, colors, appearance, cache_dir, hdir, project_dir
             render.setdefault("colors", []).append(colors["SECONDARY"])
             render.setdefault("line_params", []).append(None)
 
-    # plan_usage 趋势：用户要求不显示（迷你化菜单），历史继续写入以备将来恢复
-    elif ptype == "plan_usage" and render.get("min_pct") is not None:
-        append_history(hdir, pid, render["min_pct"])
-
     # Alert check (balance 余额 / plan_usage 用量百分比) + 恢复通知
     if os.environ.get("TOKEN_EYE_NOTIFY", "1") != "0":
         if ptype == "balance" and render.get("balance_num") is not None:
@@ -1311,7 +1289,6 @@ def render(results, config, colors, refresh_map, hdir):
             latest = check_latest_version(hdir)
             if latest and _ver_gt(latest, "v" + VERSION):
                 print(f"⬆ 新版本 {latest} 可用 | href=https://github.com/jimmywuxin/token-eye/releases/latest color={colors['HEADER']} size=11")
-                print(f"  一键升级到 {latest} | {bash_action('upgrade', latest, refresh=True) or 'param1=upgrade'} color={colors['OK']} size=11")
             else:
                 print(f"v{VERSION} | color={colors['MUTED']} size=11")
         except Exception:

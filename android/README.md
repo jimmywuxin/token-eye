@@ -68,6 +68,8 @@ android/
 
 与 Mac 版同源：`5h 剩82%` 之外，`peakWindow.holidays=true` 的平台会在摘要后追加 `⚡高峰`/`🌙空闲`，详情行显示「状态 距下次切换 X」。判定叠加 `assets/holidays/<年>.json` 的中国法定节假日/调休表（节假日全天 → `节假日 距高峰 X`；**调休上班的周末算工作日**；表缺失自动退化为「周一至周五 + 时段」）。该表由仓库 `holidays/` 复制而来（跑完 `make holidays` 后拷到 `app/src/main/assets/holidays/`），Android 端只读 assets、不联网。
 
+> ⚠️ **本目录下的 `assets/providers.json` 与 `assets/holidays/` 是项目根目录的手工副本**：Android 读不到根目录配置。改根配置后必须把文件拷到同名路径、重打 APK 重装；漏拷会被 `scripts/check-config-sync.py`（`make validate` / CI 的一环）当场拦下。允许的唯一差异：带 `refreshParam` 的平台（MiMo）在 Android 侧被剔除。
+
 ## 已知差异（vs Mac 版）
 
 - **不含 MiMo（已移除）**：MiMo 靠浏览器 Cookie 会话鉴权，`refresh-mimo-cookie.py` 依赖本机浏览器解密，Android 上做不到，只剩「手动反复粘贴 Cookie」一条死路，因此 Android 版直接不做。

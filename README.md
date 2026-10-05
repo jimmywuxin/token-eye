@@ -30,7 +30,6 @@
 - 💰 DeepSeek 余额监控（¥）+ 余额阈值告警
 - 📉 当日消耗估算 + 消耗监控：今日消耗、预计可用天数（按 24h 速率外推）、本周/本月消耗、近 7 天每日消耗柱状图（余额类平台）
 - 📊 MiniMax 用量监控（M2.7 剩余次数 + 进度条 + 重置倒计时）
-- 📈 用量趋势线：余额与剩余百分比历史迷你走势图（近 2.4 小时，▁▂▃▄▅▆▇█）
 - 💰 MiMo 余额监控（Cookie 鉴权）
 - 🔑 所有 API Key 统一从 macOS Keychain 读取，安全且变更无需重启
 - ⚙️ 配置驱动 — 添加新平台只需编辑项目里的 `providers.json`，零代码
@@ -41,7 +40,7 @@
 - 🚨 菜单栏标题按最差状态变色：任一平台异常 → 橙/红，一眼可见
 - 🔧 自检：菜单底部「🔧 自检」一键检查 Keychain Key / 网络连通 / 插件版本一致性
 - 🖱 交互：点余额行复制到剪贴板、点「今日消耗」行打开控制台（充值/账单）
-- 🔄 每 30 秒自动刷新，支持手动刷新；新版本出现时菜单可「一键升级」
+- 🔄 每 30 秒自动刷新，支持手动刷新；新版本出现时菜单顶部提示并给 release 链接
 - 🪶 零依赖、零后台进程，仅一个 Shell 脚本
 
 ### 安装与使用
@@ -97,9 +96,7 @@ make install
 cp swiftbar/token-eye.sh ~/SwiftBar/
 ```
 
-菜单栏版本自检发现新版本时，可直接点「⬆ 一键升级」：
-- 项目目录是 git 仓库：自动 `git fetch + merge --ff-only origin/main` 并同步插件
-- 非 git 仓库：自动下载 release 包替换插件文件
+菜单栏版本自检（24h 缓存；GitHub API 直连失败时经国内镜像读 main 分支版本号兜底）发现新版本时，菜单顶部会出现「⬆ 新版本 vX.Y.Z 可用」并附 release 链接。**插件不做自动升级**——下载 release 后跑一次上面的 `make install` 即可。
 
 ## 🐧 Linux 版（系统托盘）
 
@@ -258,6 +255,67 @@ SDK 路径写在 `android/local.properties`（本机 `/opt/homebrew/share/androi
   "display": { "label": "免费" }
 }
 ```
+
+## 配置字段速查
+
+三端（macOS / Linux / Android）读同一份 `providers.json`；用 VS Code 等编辑器打开时，`schema/providers.schema.json` 会自动补全与校验。
+
+### 配置 → 界面位置
+
+| 配置字段 | 出现在哪 |
+|---|---|
+| `colors.{theme}.default` | 未设 `display.nameColor` 的 provider 名称行 |
+| `colors.{theme}.secondary` | balance 的「今日消耗 / 预计可用」「近 7 天」两行 |
+| `colors.{theme}.muted` | 「上次更新」时间戳、「→ 打开 X 控制台」、🔧 自检、缺 Key 时的命令提示 |
+| `colors.{theme}.header` | 菜单栏 👁 标题、菜单首行「Token Eye」、新版本提示 |
+| `colors.{theme}.ok` / `warn` / `err` | 用量进度条行（已用 <80% / 80–99% / ≥100%）、峰谷标记、错误行 |
+| `display.nameColor` | 每个 provider 的名称行；支持 `{"dark":"#xxx","light":"#xxx"}` 随系统外观切换 |
+
+菜单栏标题按最差状态整体变色：任一平台报错 → 红，任一告警或缺 Key → 橙，否则标题色。平台名前的 `✅` 正常 / `⚠️` 低于阈值或已用 ≥80% / `🔴` 不可用或已用 ≥100%。
+
+配色取自 Wong (2011) 色弱安全调色板：蓝 / 橙 / 紫红三色在红绿色弱用户眼中也能区分，`scripts/check-colors.py` 保证全部 ≥4.5:1。`display.nameColor` 可自由替换，常用 iOS 系统色如 `#0A84FF` 蓝、`#BF5AF2` 紫、`#FF9F0A` 橙、`#30D158` 绿、`#FF375F` 粉。
+
+### provider 通用字段
+
+| 字段 | 必填 | 说明 |
+|---|---|---|
+| `id` | ✅ | 平台唯一标识，如 `deepseek` |
+| `name` | ✅ | 显示名称 |
+| `keychainService` | ✅ | 密钥条目名（macOS Keychain / Linux gnome-keyring / Android Keystore） |
+| `api` | ✅ | `{ url, method="GET", authHeader="Authorization", authPrefix="Bearer ", headers={} }` |
+| `parser` | ✅ | 见下表 |
+| `enabled` | | `false` 临时禁用该平台，不删配置 |
+| `consoleUrl` | | 详情菜单末尾「→ 打开 X 控制台」跳转链接 |
+| `cacheTtl` | | 覆盖全局 `cache` 段的 TTL（秒） |
+| `refreshParam` | | 401 自愈脚本名（如 `refresh-mimo-cookie`），菜单出现「🔄 刷新 X Cookie」；**Android 版加载时剔除带此字段的平台**（Cookie 刷新无法移植） |
+| `refreshInterval` | | 主动续期周期（秒，≥60），仅对配了 `refreshParam` 的平台生效 |
+| `alert` | | 告警阈值，见下方「余额告警」 |
+| `display.nameColor` | | 平台名称色，见上表 |
+| `display.currencySymbols` | | 货币代码 → 符号映射，如 `{"USD":"$","EUR":"€"}`；未配置时 USD→`$`、其余→`¥` |
+| `display.label` | | 仅 `status` parser 用：菜单栏显示的标签文字（如「免费」） |
+| ~~`display.unit`~~ | | ⚠️ 当前版本**未读取**，保留仅为兼容旧配置 |
+
+### parser 字段
+
+| parser | 字段 | 说明 |
+|---|---|---|
+| `balance` | `fields.balance` | 余额字段路径，`.` 分隔、数字段作数组索引（如 `balance_infos.0.total_balance`） |
+| | `fields.currency` | 货币字段路径，缺省 `CNY`（→¥） |
+| | `fields.alertThreshold` | 指向 API 自带的阈值字段，有则自动读（阈值链最高级） |
+| | `defaultMinBalance` | 按 parser 类型兜底的余额阈值（阈值链最低级） |
+| `plan_usage` | `arrayPath` | 模型数组在响应中的路径 |
+| | `fields.model` | 模型标识字段 |
+| | `fields.intervalPct` / `weeklyPct` | 剩余百分比，0-100 整数 |
+| | `fields.intervalBoost` / `weeklyBoost` | 限时加成（千分比，>1000 显示 🔥xN） |
+| | `fields.resetMs` | 重置倒计时（毫秒），显示 `1h30m` / `6d6h` |
+| | `showModels` / `modelLabels` | 只显示哪些模型 / 给模型名起别名（别名留空则不显示前缀） |
+| | `windowLabels` | 窗口显示名，默认 `{"interval":"5h","weekly":"7d"}` |
+| | `pctDirection` | `remaining`（默认，源字段是剩余%，内部翻成已用%）或 `used`（源字段已是已用%） |
+| | `barLength` | 进度条格数，默认 20 |
+| | ~~`statusMap`~~ / ~~`fields.intervalStatus`~~ / ~~`weeklyStatus`~~ / ~~`intervalTotal`~~ / ~~`weeklyTotal`~~ | ⚠️ 当前版本**未读取**：状态一律按已用% 分档（<80% 正常 / 80–99% 临近耗尽 / ≥100% 耗尽），字段仅为兼容旧配置保留 |
+| `status` | `okField` / `okValue` | 判断 Key 有效性的字段路径与期望值；两者都留空则只看响应是否存在 |
+
+余额告警阈值优先级链：`parser.fields.alertThreshold`（API 字段）> `provider.alert.minBalance`（未配时看根 `alerts.{id}.minBalance`）> `parser.defaultMinBalance` > 不告警。菜单栏状态图标与告警通知共用同一阈值。
 
 ## 高级配置
 
@@ -488,7 +546,7 @@ DeepSeek: ¥13.5
 - 数据文件：`holidays/2025.json`、`holidays/2026.json`，源自 [NateScarlet/holiday-cn](https://github.com/NateScarlet/holiday-cn)（逐条对照 gov.cn 公告，含调休上班日），随仓库分发、运行时不联网
 - 更新：每年公告后跑一次 `make holidays`（等价 `python3 scripts/update-holidays.py`，默认拉当年 + 次年，直连 GitHub + 国内镜像兜底）；只更新指定年份直接 `python3 scripts/update-holidays.py 2027`
 - 降级：数据文件缺失/损坏、或年份尚未公告 → 自动退回「周一至周五 + 时段」判定，不会报错、不影响余额显示
-- Android 版同源：把 `holidays/` 下的 `.json` 拷到 `android/app/src/main/assets/holidays/` 即可（Android 端只读 assets，不联网）
+- Android 版同源：把 `holidays/` 下的 `.json` 拷到 `android/app/src/main/assets/holidays/` 即可（Android 端只读 assets，不联网）。**`make check` 会校验两份是否一致，漏拷会直接报错**（`scripts/check-config-sync.py`）
 
 ### 货币符号（display.currencySymbols）
 
@@ -532,7 +590,7 @@ token-eye/
 ├── swiftbar/
 │   ├── token-eye.sh       ← SwiftBar 启动器（复制到 ~/SwiftBar/）
 │   └── token_eye.py       ← 核心逻辑：缓存/告警/解析/渲染（从项目目录读取）
-├── scripts/               ← 辅助脚本（Cookie 刷新 / 配色检查 / Schema 校验 / 节假日更新）
+├── scripts/               ← 辅助脚本（Cookie 刷新 / 配色检查 / Schema 校验 / 跨端同步 / 节假日更新）
 ├── schema/
 │   └── providers.schema.json  ← providers.json 的 JSON Schema（编辑器补全 + 校验）
 ├── parsers/
@@ -558,15 +616,18 @@ token-eye/
 ```bash
 make install    # 安装/更新插件到 ~/SwiftBar/
 make test       # 单元测试（unittest，零依赖）
-make check      # 全部检查：语法 + 测试 + Schema + 配色对比度
+make check      # 全部检查：语法 + 测试 + Schema + 跨端配置同步 + 配色对比度
 make holidays   # 更新中国法定节假日/调休表（holidays/<年>.json，每年公告后跑一次）
 ```
 
-- **单元测试**：`swiftbar/token_eye.py` 的解析/告警/错误分类/缓存等核心函数全部可测，`tests/` 覆盖 184 个用例，`python3 -m unittest discover -s tests` 即可运行
+- **单元测试**：`swiftbar/token_eye.py` 的解析/告警/错误分类/缓存等核心函数全部可测，`tests/` 覆盖 197 个用例，`python3 -m unittest discover -s tests` 即可运行
 - **JSON Schema**：`schema/providers.schema.json` 描述配置结构；VS Code 等编辑器打开 `providers.json` 时自动补全与校验；`python3 scripts/validate-schema.py` 提供零依赖的运行时校验（脚本内置的轻量校验用于菜单栏提示）
-- **CI**：GitHub Actions（`.github/workflows/ci.yml`）自动执行 bash 语法 + ShellCheck、Python 编译、单元测试、Schema 校验、配色对比度、版本一致性检查
+- **跨端配置同步**：`scripts/check-config-sync.py` 比对根 `providers.json` / `holidays/` 与 Android 的手工副本 `android/app/src/main/assets/`，**改根配置忘了同步会让 `make check` 与 CI 直接失败**（唯一允许的差异：带 `refreshParam` 的平台——Cookie 刷新无法移植——在 Android 侧被剔除）
+- **CI**：GitHub Actions（`.github/workflows/ci.yml`）自动执行 bash 语法 + ShellCheck、Python 编译、单元测试、Schema 校验、跨端配置同步、配色对比度、版本一致性检查
 - **配色回归**：`scripts/check-colors.py` 保证全部颜色 WCAG AA ≥4.5:1
 - **排查**：`TOKEN_EYE_DEBUG=1` 输出调试日志到 `~/Library/Caches/token-eye/debug.log`
+
+> **改完 `providers.json` 或节假日数据后**，除 `make check` 外还要记得把文件拷到 `android/app/src/main/assets/`（同名同路径）并重装 APK，否则手机上的 App 仍是旧配置。
 
 ## License
 

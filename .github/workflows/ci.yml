@@ -33,6 +33,9 @@ jobs:
       - name: JSON Schema 校验
         run: python3 scripts/validate-schema.py
 
+      - name: 跨端配置同步（根配置 ↔ Android assets 副本）
+        run: python3 scripts/check-config-sync.py
+
       - name: 配色对比度检查（WCAG AA ≥4.5:1）
         run: python3 scripts/check-colors.py
 
