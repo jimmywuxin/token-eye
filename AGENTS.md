@@ -153,7 +153,8 @@ Python 核心逻辑：
 - MiMo platform API（`/api/v1/balance`）要求**完整 Cookie 组合**（ph + serviceToken + slh + userId），仅单个 Cookie 返回 401
 - 完整 Cookie 串存 Keychain 单个条目 `MIMO_PLATFORM_TOKEN`，provider 配 `authHeader: "Cookie"` + `authPrefix: ""`
 - Cookie 为会话级，过期后运行 `scripts/refresh-mimo-cookie.py` 一键刷新（macOS 版支持 Edge / Chrome / Brave / Arc；Linux 版 `linux/scripts/` 按 **Chromium → Edge → Chrome** 顺序，从任一已登录浏览器解密提取）
-- **半自动刷新机制**：`refreshInterval` 按周期主动续 cookie（浏览器会话存活时 keychain 始终最新）；当服务端会话真正过期、浏览器同步失效导致刷新失败时，自动打开 `consoleUrl` 登录页并发系统通知（**Linux 版由 `linux/token-eye-tray.py` 的 `open_in_browser()` 优先调 Chromium，兜底 xdg-open；环境变量 `TOKEN_EYE_BROWSER` 可覆盖、`=default` 强制系统默认**；`token-eye-loginopened-*.flag` 30 分钟限频），登录后下个 1 分钟重试周期自动拾取新 cookie——**无需再手动跑刷新脚本**；不愿等可点菜单「🔄 刷新 Cookie」立即重试（该菜单项不受冷却限制）
+- **半自动刷新机制**：`refreshInterval` 按周期主动续 cookie（浏览器会话存活时 keychain 始终最新）；当服务端会话真正过期、浏览器同步失效导致刷新失败时，自动打开 `consoleUrl` 登录页并发系统通知（**Linux 版由 `linux/token-eye-tray.py` 的 `open_in_browser()` 优先调 Chromium，兜底 xdg-open；环境变量 `TOKEN_EYE_BROWSER` 可覆盖、`=default` 强制系统默认**；`token-eye-loginopened-*.flag` 30 分钟限频），登录后下个 1 分钟重试周期自动拾取新 cookie——**无需再手动跑刷新脚本**
+- **点菜单底部「刷新」= 一次点击搞定**（`refresh-now` + `--force-refresh`）：忽略 10s 错误短缓存 + 跳过 1 分钟自愈冷却，在同一轮内完成「刷 Cookie → 重拉余额 → 直接显示新余额」，不必等冷却过完再点第二次。Cookie 本身已死（浏览器会话也过期）时会照常弹登录页 + 通知，你登录完再点一次「刷新」即刻出余额
 
 详细配置示例见 `README.md`。
 
@@ -176,6 +177,7 @@ Python 核心逻辑：
 - 告警去重/自愈防抖标记位于 `~/Library/Caches/token-eye/token-eye-{alerted|recovered|autorefresh}-{id}.flag`（持久化，重启不丢）；余额/用量恢复时发「已恢复」通知（去重）
 - 自愈冷却策略：`autorefresh` 标记内容为 `<ts> ok|fail`——**失败后 1 分钟可重试**（会话可能很快恢复），成功后 30 分钟防抖；自愈成功时同时写 `lastrefresh` 标记，避免同一轮渲染里主动续期再跑一遍脚本；自愈失败原因会显示在错误菜单（含「点菜单 🔄 刷新 Cookie 立即重试」引导）；`refresh-mimo-cookie.py` 刷新成功时会清掉错误短缓存，下次渲染立即重拉余额
 - 半自动刷新额外标记（均在 `~/Library/Caches/token-eye/`）：`token-eye-loginopened-{id}.flag` 记录自动打开登录页的时间戳（30 分钟限频）；`token-eye-lastrefresh-{id}.flag` 记录主动续期成功的时间戳（用于 `refreshInterval` 节流）
+- **点「刷新」= 主动重拉（`--force-refresh`）**：菜单底部「刷新」是 `bash=… param1=refresh-now terminal=false refresh=true` 动作，**不是裸 `refresh=true`**——裸写法 SwiftBar 以零参数重跑插件，`param1` 根本传不进来（见上文「SwiftBar 交互项铁律」）。启动器收到 `refresh-now` 后以 `--force-refresh` 跑一轮核心逻辑，stdout 丢弃、结果由随后的 `refresh=true` 重渲回显。`force=True` 只做两件事：① 忽略 10s 错误短缓存（否则刚失败就点会直接命中缓存、压根不打 API，看着像「点了没反应」）；② `auto_refresh_cookie(force=True)` 跳过 1 分钟冷却立即跑脚本。于是**一次点击**即可跑完「刷 Cookie → 重拉余额 → 直接显示新余额」，不必等冷却过完再点第二次。**成功缓存（默认 300s）照常复用**，force 不额外打 API；`_open_login_page` 的 30 分钟限频也不受 force 影响（防连点反复弹浏览器）
 - 历史文件（history-*.jsonl）保留 30 天，每天自动清理一次（`cleanup_history` / `last-cleanup.ts` 标记），防无限增长
 - 告警通知默认带提示音（`TOKEN_EYE_SOUND` 换声音名，`0` 静音）；`TOKEN_EYE_DEBUG=1` 时请求明细写入 `~/Library/Caches/token-eye/debug.log`
 - 趋势窗口 `HISTORY_LEN=288`（≈2.4h），`sparkline` 自动均匀降采样到 24 字符宽

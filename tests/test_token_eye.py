@@ -1036,6 +1036,30 @@ class TestAutoRefreshCooldown(unittest.TestCase):
             ok, _ = te.auto_refresh_cookie(self.dir, "mimo", "/x")
         self.assertTrue(ok)
 
+    def test_force_bypasses_fail_cooldown(self):
+        """点「刷新」/「🔄 刷新 Cookie」时 force=True：冷却中也要立刻执行脚本。"""
+        te._write_flag(self.flag_path(), f"{int(time.time()) - 5} fail")
+        # 不 force → 冷却挡住，不跑脚本
+        with mock.patch.object(te.subprocess, "run") as m:
+            ok, msg = te.auto_refresh_cookie(self.dir, "mimo", "/x")
+            self.assertFalse(ok)
+            m.assert_not_called()
+        # force → 无视冷却，直接跑脚本并成功
+        with mock.patch.object(te.subprocess, "run",
+                               return_value=mock.Mock(returncode=0, stdout="HTTP=200")) as m:
+            ok, msg = te.auto_refresh_cookie(self.dir, "mimo", "/x", force=True)
+        self.assertTrue(ok, f"force 应跳过冷却执行脚本，实际: {msg}")
+        m.assert_called_once()
+
+    def test_force_bypasses_success_cooldown(self):
+        """force 同样跳过成功后的 30 分钟防抖。"""
+        te._write_flag(self.flag_path(), f"{int(time.time()) - 5} ok")
+        with mock.patch.object(te.subprocess, "run",
+                               return_value=mock.Mock(returncode=0, stdout="HTTP=200")) as m:
+            ok, _ = te.auto_refresh_cookie(self.dir, "mimo", "/x", force=True)
+        self.assertTrue(ok)
+        m.assert_called_once()
+
 
 class TestSemiAutoRefresh(unittest.TestCase):
     """半自动刷新：主动续期 + 会话失效自动打开登录页自动拾取。"""
@@ -1341,6 +1365,46 @@ class TestProcessProvider(unittest.TestCase):
                                 self.dir, self.dir, self.dir)
         # key 不存在 → no_key（不会走到自愈），此处只验证不抛异常
         self.assertEqual(r["status"], "no_key")
+
+    def test_force_ignores_error_cache(self):
+        """点「刷新」时忽略 10s 错误短缓存：不 force 命中缓存直接返回错误，
+        force 则重新走 API，让一次点击就能拿到新余额。"""
+        d = tempfile.mkdtemp()
+        # 刚写入的错误短缓存（TTL 10s 内）
+        te.save_cache(d, "mimo", {"ts": int(time.time()), "data": None,
+                                   "error": "client", "message": "401"})
+        p = dict(BALANCE_P, id="mimo", name="MiMo", refreshParam="refresh-mimo-cookie")
+        cfg = {"cache": {"balance": 300}}
+        ok_fetch = {"ok": True, "status": 200,
+                    "data": {"balance_infos": [{"total_balance": 7.0, "currency": "CNY"}]},
+                    "error_kind": None, "message": ""}
+        with mock.patch.object(te, "get_key", return_value="thekey"), \
+             mock.patch.object(te, "fetch_api", return_value=ok_fetch) as m_fetch:
+            # 不 force：命中错误缓存 → 直接返回错误，不打 API
+            r_noforce = te.process_provider(p, cfg, COLORS, "dark", d, d, REPO_ROOT)
+            self.assertEqual(r_noforce["status"], "error")
+            m_fetch.assert_not_called()
+            # force：忽略错误缓存 → 重新拉取 → 正常显示余额
+            r_force = te.process_provider(p, cfg, COLORS, "dark", d, d, REPO_ROOT, force=True)
+            self.assertEqual(r_force["status"], "ok")
+            self.assertEqual(r_force["menu_bar"], "✅ ¥7.0")
+            m_fetch.assert_called_once()
+
+    def test_force_passes_through_to_auto_refresh(self):
+        """force=True 必须透传给 auto_refresh_cookie（否则冷却仍会挡住点击）。"""
+        d = tempfile.mkdtemp()
+        p = dict(BALANCE_P, refreshParam="refresh-mimo-cookie")
+        cfg = {"cache": {"balance": 300}}
+        with mock.patch.object(te, "get_key", return_value="thekey"), \
+             mock.patch.object(te, "fetch_api", return_value={
+                 "ok": False, "status": 401, "data": None,
+                 "error_kind": "client", "message": "401"}), \
+             mock.patch.object(te, "auto_refresh_cookie",
+                               return_value=(False, "x")) as m_refresh:
+            te.process_provider(p, cfg, COLORS, "dark", d, d, REPO_ROOT, force=True)
+        self.assertTrue(m_refresh.called)
+        self.assertTrue(m_refresh.call_args.kwargs.get("force"),
+                        f"force 未透传: {m_refresh.call_args}")
 
 
 class TestValidateMode(unittest.TestCase):

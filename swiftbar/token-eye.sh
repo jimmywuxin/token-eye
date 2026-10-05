@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # <bitbar.title>Token Eye</bitbar.title>
-# <bitbar.version>v0.21.0</bitbar.version>
+# <bitbar.version>v0.21.1</bitbar.version>
 # <bitbar.author>wuxin</bitbar.author>
 # <bitbar.desc>LLM Token usage monitor — config-driven, with caching & alerts</bitbar.desc>
 # <bitbar.refreshTime>30</bitbar.refreshTime>
@@ -288,6 +288,18 @@ if [ "${1:-}" = "copy-balance" ]; then
     echo "✅ 已复制到剪贴板: ${2:-} | color=$C_OK"
     echo "---"
     echo "关闭 | refresh=true"
+    exit 0
+fi
+
+# ---------------------------------------------------------------------------
+# 动作：一键刷新（bash=… param1=refresh-now terminal=false refresh=true）
+# 以 --force-refresh 跑一轮核心逻辑：忽略 10s 错误短缓存 + 跳过自愈冷却，
+# 在同一轮内完成「刷 Cookie → 重拉余额」并写回缓存。输出被 SwiftBar 丢弃，
+# 菜单反馈由随后的 refresh=true 重渲给出（余额直接出现在主菜单）。
+# ---------------------------------------------------------------------------
+if [ "${1:-}" = "refresh-now" ]; then
+    CONFIG_FILE="$CONFIG_FILE" PROJECT_DIR="$PROJECT_DIR" SCRIPT_DIR="$SCRIPT_DIR" \
+        /usr/bin/python3 "$PY_MODULE" --force-refresh >/dev/null 2>&1 || true
     exit 0
 fi
 

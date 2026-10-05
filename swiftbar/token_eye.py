@@ -22,7 +22,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime as _dt
 
-VERSION = "0.21.0"
+VERSION = "0.21.1"
 
 # 按 parser 类型的默认缓存 TTL（秒）
 DEFAULT_CACHE_TTL = {"balance": 300, "plan_usage": 30, "status": 60}
@@ -943,7 +943,7 @@ def _open_login_page(flags_dir, pid, login_url, cooldown=1800):
 
 
 def auto_refresh_cookie(flags_dir, pid, refresh_script, fail_cooldown=60, success_cooldown=1800,
-                        login_url=None):
+                        login_url=None, force=False):
     """自动刷新 Cookie（401 自愈）。
 
     - 失败后 fail_cooldown（默认 1 分钟）即可重试——会话可能很快恢复（如 Edge 重新打开；
@@ -951,22 +951,25 @@ def auto_refresh_cookie(flags_dir, pid, refresh_script, fail_cooldown=60, succes
     - 成功后 30 分钟防抖，避免反复打脚本
     - 刷新失败通常意味着浏览器会话也同步过期：此时自动打开 login_url（默认控制台，
       未登录会重定向到登录页）并通知用户，登录后下一个重试周期自动拾取新 cookie。
+    - force=True（用户点菜单「🔄 刷新」/「刷新」主动触发）时**跳过冷却**，
+      让一次点击就能跑完「刷 cookie → 重拉余额」，不必等冷却过完再点第二次。
     标记内容：`<ts> ok|fail`（旧版纯数字视为 ok）
     """
     flag = _flag_path(flags_dir, pid, "autorefresh")
     now = int(time.time())
-    try:
-        if os.path.exists(flag):
-            with open(flag) as f:
-                parts = f.read().strip().split()
-            last = int(parts[0])
-            kind = parts[1] if len(parts) > 1 else "ok"
-            cooldown = success_cooldown if kind == "ok" else fail_cooldown
-            if now - last < cooldown:
-                return False, (f"冷却中（{'成功' if kind == 'ok' else '失败'}后 {cooldown // 60} 分钟内已尝试过），"
-                               f"可点菜单「🔄 刷新 Cookie」立即重试")
-    except Exception:
-        pass
+    if not force:
+        try:
+            if os.path.exists(flag):
+                with open(flag) as f:
+                    parts = f.read().strip().split()
+                last = int(parts[0])
+                kind = parts[1] if len(parts) > 1 else "ok"
+                cooldown = success_cooldown if kind == "ok" else fail_cooldown
+                if now - last < cooldown:
+                    return False, (f"冷却中（{'成功' if kind == 'ok' else '失败'}后 {cooldown // 60} 分钟内已尝试过），"
+                                   f"可点菜单「🔄 刷新 Cookie」立即重试")
+        except Exception:
+            pass
     try:
         r = subprocess.run(["/usr/bin/python3", refresh_script],
                            capture_output=True, text=True, timeout=30)
@@ -1018,7 +1021,7 @@ def proactive_refresh_cookie(flags_dir, pid, refresh_script, interval):
 # provider 处理（缓存 -> 拉取 -> 自愈 -> 渲染 -> 趋势 -> 告警）
 # ---------------------------------------------------------------------------
 
-def process_provider(p, config, colors, appearance, cache_dir, hdir, project_dir):
+def process_provider(p, config, colors, appearance, cache_dir, hdir, project_dir, force=False):
     pid, name = p["id"], p["name"]
     keychain, api, parser = p["keychainService"], p["api"], p["parser"]
     ptype = parser["type"]
@@ -1033,6 +1036,12 @@ def process_provider(p, config, colors, appearance, cache_dir, hdir, project_dir
     cached = load_cache(cache_dir, pid)
     now = int(time.time())
     is_err_cache = bool(cached and cached.get("data") is None and cached.get("error"))
+    # 用户主动点「刷新」：忽略 10s 错误短缓存，否则刚失败就点会直接命中缓存、
+    # 压根不发起请求，看起来像「点了没反应」。成功缓存照常复用，避免无谓打 API。
+    if force and is_err_cache:
+        log_debug(hdir, f"[{pid}] 主动刷新：忽略错误短缓存（{cached.get('error')}）")
+        cached = None
+        is_err_cache = False
     effective_ttl = ERROR_CACHE_TTL if is_err_cache else ttl
 
     if cached and (now - cached.get("ts", 0)) < effective_ttl:
@@ -1068,7 +1077,8 @@ def process_provider(p, config, colors, appearance, cache_dir, hdir, project_dir
                 and refresh_param):
             script = os.path.join(project_dir, "scripts", refresh_param + ".py")
             if os.path.exists(script):
-                refreshed, err = auto_refresh_cookie(hdir, pid, script, login_url=console_url)
+                refreshed, err = auto_refresh_cookie(hdir, pid, script, login_url=console_url,
+                                                    force=force)
                 log_debug(hdir, f"[{pid}] 自愈刷新: ok={refreshed} {err}")
                 if refreshed:
                     key2 = get_key(keychain)
@@ -1289,7 +1299,11 @@ def render(results, config, colors, refresh_map, hdir):
                 print(f"  → 打开 {name} 控制台 | href={cu} color={colors['MUTED']} size=11")
             print("---")
 
-        print("刷新 | refresh=true")
+        # 「刷新」走 bash= 动作：SwiftBar 才会把 param1 传给启动器，由它以
+        # --force-refresh 跑一轮「忽略错误短缓存 + 跳过自愈冷却 + 重拉余额」，
+        # 跑完 refresh=true 自动重渲 —— 一次点击直接出新余额，不必等冷却再点第二次。
+        # 取不到 bash 路径时退化为裸 refresh=true（保持旧行为，不会点不动）。
+        print(f"刷新 | {bash_action('refresh-now', refresh=True) or 'refresh=true'}")
         print(f"上次更新: {time.strftime('%H:%M:%S')} | color={colors['MUTED']} size=11")
 
         # 版本自检：GitHub 最新 release（24h 缓存），有新版本时提示 + 一键升级
@@ -1427,6 +1441,8 @@ def validate_mode():
 def run(args):
     config_path = os.environ["CONFIG_FILE"]
     project_dir = os.environ.get("PROJECT_DIR", "")
+    # 用户主动点「刷新」/「🔄 刷新 Cookie」：跳过自愈冷却与错误短缓存
+    force = "--force-refresh" in args
     cache_dir = "/tmp"
     hdir = os.path.join(os.path.expanduser("~/Library/Caches"), "token-eye")
     try:
@@ -1478,7 +1494,7 @@ def run(args):
         with ThreadPoolExecutor(max_workers=max(1, len(providers_list))) as executor:
             futures = {
                 executor.submit(process_provider, p, config, colors, appearance,
-                                cache_dir, hdir, project_dir): i
+                                cache_dir, hdir, project_dir, force): i
                 for i, p in enumerate(providers_list)
             }
             for future in as_completed(futures):
