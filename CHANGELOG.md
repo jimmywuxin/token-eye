@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+
+- **Android app 版本号改为跟随项目版本**（`app/build.gradle.kts`）：`versionName` / `versionCode` 在构建时从 `swiftbar/token_eye.py` 的 `VERSION` 自动读取派生（0.22.0 → versionCode 2200），不再手工维护第三处。app 版本号此前长期停在 `0.19.1`（项目已到 0.22.0），`adb shell dumpsys package` 看到的会是旧版本号；现在唯一真源就是 `VERSION`，发版时无需再动 Android 工程
+
 ## [0.22.0] - 2026-10-05
 
 ### Added

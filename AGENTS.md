@@ -171,7 +171,7 @@ Python 核心逻辑：
 - **改配置必须同步 Android 副本**：Mac/Linux 读项目根目录的 `providers.json`，Android 读手工副本 `android/app/src/main/assets/providers.json`（`holidays/` 同理）。改完根配置**必须**把文件拷到 assets 同名路径并重装 APK；`scripts/check-config-sync.py`（已进 `make validate` 与 CI）会比对两份，唯一允许的差异是带 `refreshParam` 的平台在 Android 侧被剔除（Cookie 刷新无法移植）
 - 改配置结构时：同步更新 `schema/providers.schema.json` 与 `token_eye.py` 里的 `schema_validate`（运行时轻量校验，与 JSON Schema 互补）
 - **配置字段必须「代码真的读了」才算数**：新增字段要同时落在「代码读取处 + JSON Schema + 模板/文档」三处；只写文档/只配 Schema 不接线 = 死配置（`display.unit` / `parser.statusMap` / `parser.fields.intervalTotal` / `weeklyTotal` / `intervalStatus` / `weeklyStatus` 就是这么攒出来的，已在 provider 段标注废弃）。自检一句：`grep -c '<字段名>' swiftbar/token_eye.py` 为 0 → 代码不读，要么实现要么标注废弃
-- 版本号双处维护：`token-eye.sh` 头部 `bitbar.version` 与 `token_eye.py` 的 `VERSION`，CI 校验两者一致
+- **版本号唯一真源 = `token_eye.py` 的 `VERSION`**：发版只改这一处 + `token-eye.sh` 头部 `bitbar.version`（CI 校验两者一致）。Android 的 `versionName` / `versionCode` 由 `app/build.gradle.kts` 构建时**自动读取** `VERSION` 派生（0.22.0 → 2200），**不要手工填**，也别再让 app 版本号单独漂移（曾长期停在 0.19.1）
 - 脚本使用 `set -euo pipefail`，任何命令失败都会退出（注意：命令替换里放可能失败的脚本时需 `|| true` 兜底，见 refresh-mimo-cookie 分支）
 - API 超时时间：curl 5s，subprocess 10s
 - SwiftBar 刷新间隔：30 秒（脚本内 `# <bitbar.refreshTime>30</bitbar.refreshTime>` 声明）
