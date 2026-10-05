@@ -2,6 +2,7 @@ package com.coffeelab.tokeneye.core
 
 import android.content.Context
 import com.google.gson.JsonParser
+import java.util.Calendar
 
 /**
  * 中国法定节假日 / 调休表 — 镜像 swiftbar/parsers/peak_window.py 的 load_holidays()。
@@ -15,6 +16,10 @@ import com.google.gson.JsonParser
  */
 object HolidayTable {
 
+    /** assets 里的年份文件探测范围（含前后各 1 年，覆盖跨年倒计时）。 */
+    private const val YEAR_LOOKBEHIND = 1
+    private const val YEAR_LOOKAHEAD = 1
+
     @Volatile
     private var cache: Map<String, Boolean>? = null
 
@@ -22,17 +27,36 @@ object HolidayTable {
     fun load(context: Context): Map<String, Boolean> {
         cache?.let { return it }
         val merged = mutableMapOf<String, Boolean>()
-        try {
-            for (name in context.assets.list("holidays").orEmpty()) {
-                if (!name.endsWith(".json")) continue
-                val text = context.assets.open("holidays/$name").bufferedReader().use { it.readText() }
-                merged.putAll(parse(text))
+        for (name in candidateFileNames(context)) {
+            val text = try {
+                context.assets.open("holidays/$name").bufferedReader().use { it.readText() }
+            } catch (_: Exception) {
+                continue  // 该年份文件不存在
             }
-        } catch (_: Exception) {
-            // 资源缺失/损坏 → 退化为纯 weekdays 判定
+            merged.putAll(parse(text))
         }
         cache = merged
         return merged
+    }
+
+    /**
+     * 列出要读的年份文件名。
+     *
+     * 优先用 `assets.list("holidays")` 枚举目录；但 **APK 的 zip 里可能没有目录条目**
+     * （AGP 打包 assets 子目录时目录项不一定写入，zip 中 0 个 `/` 结尾条目是常见情形），
+     * 此时 `list()` 返回空数组 → 节假日表全空 → 峰谷判定退化成「周一至周五」，
+     * 国庆/春节期间会误判为工作日（表现为倒计时指向一个并不存在的高峰）。
+     * 因此 list 为空时回退到按年份硬探测 `holidays/<年>.json`。
+     */
+    private fun candidateFileNames(context: Context): List<String> {
+        val listed = try {
+            context.assets.list("holidays").orEmpty().filter { it.endsWith(".json") }
+        } catch (_: Exception) {
+            emptyList()
+        }
+        if (listed.isNotEmpty()) return listed
+        val year = Calendar.getInstance().get(Calendar.YEAR)
+        return ((year - YEAR_LOOKBEHIND)..(year + YEAR_LOOKAHEAD)).map { "$it.json" }
     }
 
     /**

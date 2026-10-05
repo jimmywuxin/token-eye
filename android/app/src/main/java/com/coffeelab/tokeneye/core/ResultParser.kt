@@ -186,12 +186,6 @@ object ResultParser {
         )
     }
 
-    fun parse(p: Provider, data: JsonObject): ProviderResult = when (p.parser.type) {
-        "balance" -> parseBalance(p, data)
-        "plan_usage" -> parsePlanUsage(p, data)
-        else -> parseStatus(p, data)
-    }
-
     /** 阈值链：provider.alert.minBalance > 全局 alerts.{id}.minBalance > parser.defaultMinBalance */
     private fun resolveMinBalance(p: Provider, globalAlerts: Map<String, AlertSpec>): Double? =
         p.alert?.minBalance ?: globalAlerts[p.id]?.minBalance ?: p.parser.defaultMinBalance

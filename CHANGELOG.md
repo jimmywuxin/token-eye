@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+## [0.22.1] - 2026-10-05
+
+### Fixed
+
+- **Android 法定节假日期间峰谷倒计时误判为工作日**（手机显示「空闲 距高峰 1h15m」，Mac 端同期为「节假日 距高峰 2d20h」）：`ConfigRepository.load` 的优先级是 `filesDir/providers.json`（用户点「剪贴板导入配置」写入）> `assets/providers.json` 内置版，而本机那份导入配置是 9 月的旧版、缺 `parser.peakWindow.holidays` → 开关按默认值读到 `false` → `ResultParser` 里 `if (spec.holidays) holidays else emptyMap()` 把已加载的 72 条节假日表整个丢弃，退化为纯「周一至周五」判定，国庆/春节等长假期间倒计时会指向一个并不存在的高峰。**注意重装 APK 不会更新 `filesDir` 里的用户配置**，此类配置类问题第一步应查 `adb shell run-as com.coffeelab.tokeneye cat files/providers.json`
+- **`HolidayTable.load` 增强健壮性**：`assets.list("holidays")` 返回空时，回退按年份硬探测 `holidays/<年>.json`（当前年 ±1），避免打包/压缩配置差异导致节假日表整份读空
+- 删除 `ResultParser.parse(p, data)` 这个带默认值的旧重载：它与 `parse(p, data, alerts, holidays)` 并存，误用时 `holidays` 静默变空表、节日判定整个失效且无任何报错。带上下文参数（alerts / holidays / 密钥）的方法一律不给默认值，让编译期强制调用方显式传入
+
+### Added
+
+- **端到端回归测试**（`ParserTest`，2 例）：此前 `PeakWindowTest` 只覆盖纯函数，测不到「配置开关 → 传入节假日表 → 详情行文案」这条实际出错的链。新增用例钉住该链路，并反向守住「空表时退化为 weekdays 而非误判为节假日」；节假日表按当天动态构造（今天起连续放假、其中一个工作日置为调休上班），不受真实日历影响，任意日期运行结论都成立
+
 ### Changed
 
 - **Android app 版本号改为跟随项目版本**（`app/build.gradle.kts`）：`versionName` / `versionCode` 在构建时从 `swiftbar/token_eye.py` 的 `VERSION` 自动读取派生（0.22.0 → versionCode 2200），不再手工维护第三处。app 版本号此前长期停在 `0.19.1`（项目已到 0.22.0），`adb shell dumpsys package` 看到的会是旧版本号；现在唯一真源就是 `VERSION`，发版时无需再动 Android 工程
