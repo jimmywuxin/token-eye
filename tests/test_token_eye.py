@@ -1027,7 +1027,7 @@ class TestAutoRefreshCooldown(unittest.TestCase):
         self.assertTrue(os.path.exists(
             os.path.join(self.dir, "token-eye-lastrefresh-mimo.flag")))
         with mock.patch.object(te.subprocess, "run") as m:
-            self.assertIsNone(te.proactive_refresh_cookie(self.dir, "mimo", "/x", 21600))
+            self.assertIsNone(te.proactive_refresh_cookie(self.dir, "mimo", "/x", 21600)[0])
         m.assert_not_called()
 
     def test_failure_sets_fail_and_short_cooldown(self):
@@ -1036,7 +1036,10 @@ class TestAutoRefreshCooldown(unittest.TestCase):
             ok, _ = te.auto_refresh_cookie(self.dir, "mimo", "/x")
         self.assertFalse(ok)
         with open(self.flag_path()) as f:
-            self.assertTrue(f.read().strip().endswith(" fail"))
+            content = f.read().strip()
+        # 失败留痕：`<ts> fail <原因末行>`（旧格式只到第二段，这里断言原因在）
+        self.assertIn(" fail ", content)
+        self.assertIn("HTTP=401", content)
         # 失败后 1 分钟内 → 冷却（信息标注失败，并引导点菜单立即重试）
         with mock.patch.object(te.subprocess, "run") as m:
             ok2, msg = te.auto_refresh_cookie(self.dir, "mimo", "/x")
@@ -1044,6 +1047,23 @@ class TestAutoRefreshCooldown(unittest.TestCase):
         self.assertIn("失败后 1 分钟", msg)
         self.assertIn("立即重试", msg)
         m.assert_not_called()
+
+    def test_failure_reason_survives_cooldown_parse(self):
+        """标记里多了原因段，冷却判定仍要正确认出「失败」用短冷却。"""
+        now = int(time.time())
+        flag = self.flag_path()
+        for content, expect in [
+            (f"{now} fail 钥匙串未解锁", "失败后 1 分钟"),
+            (f"{now} ok", "成功后 30 分钟"),
+            (f"{now}", "成功后 30 分钟"),        # 旧版纯数字视为 ok
+        ]:
+            with open(flag, "w") as f:
+                f.write(content)
+            with mock.patch.object(te.subprocess, "run") as m:
+                ok, msg = te.auto_refresh_cookie(self.dir, "mimo", "/x")
+            self.assertFalse(ok, content)
+            self.assertIn(expect, msg)
+            m.assert_not_called()
 
     def test_old_format_flag_treated_as_ok(self):
         # 旧版纯数字标记按成功处理（30 分钟冷却）
@@ -1092,6 +1112,72 @@ class TestSemiAutoRefresh(unittest.TestCase):
 
     def setUp(self):
         self.dir = tempfile.mkdtemp()
+
+    def test_proactive_success_refetches_with_new_cookie(self):
+        """主动续期成功后必须用新 cookie 重拉一次（本条是回归）。
+
+        少了这一步：脚本自己验过 200、keychain 里已是新 cookie，但本轮
+        fetch_result 仍是「续期前」那次拉取的结果（旧的 401）→ 菜单一直红到
+        下一个渲染周期。2026-10-06 用户实报。
+        """
+        p = dict(BALANCE_P, id="mimo", name="MiMo",
+                 keychainService="MIMO_PLATFORM_TOKEN",
+                 refreshParam="refresh-mimo-cookie", refreshInterval=21600,
+                 api={"url": "https://platform.xiaomimimo.com/api/v1/balance",
+                      "method": "GET", "authHeader": "Cookie", "authPrefix": ""})
+        cfg = {"cache": {"balance": 300}}
+        good = {"balance_infos": [{"total_balance": 15.78, "currency": "CNY"}]}
+        unauthorized = {"ok": False, "status": 401, "data": None,
+                        "error_kind": "client", "message": "HTTP 401"}
+        proj = self._project_with_refresh_script()
+
+        with mock.patch.object(te, "get_key", return_value="cookie1"), \
+             mock.patch.object(te, "auto_refresh_cookie", return_value=(False, "会话已过期")), \
+             mock.patch.object(te, "proactive_refresh_cookie", return_value=(True, "")), \
+             mock.patch.object(te, "fetch_api", side_effect=[unauthorized, ok_result(good)]) as m_fetch:
+            r = te.process_provider(p, cfg, COLORS, "dark", self.dir, self.dir, proj)
+
+        # 第一次拉取（续期前，旧 cookie）+ 续期后重拉（新 cookie）= 两次
+        self.assertEqual(m_fetch.call_count, 2)
+        # 第二次必须带续期后的新 key
+        self.assertEqual(m_fetch.call_args_list[1].args[4], "cookie1")
+        # 最终渲染的是成功结果，不是旧的 401
+        self.assertEqual(r["status"], "ok")
+        self.assertAlmostEqual(r["balance_num"], 15.78, places=2)
+
+    def test_proactive_failure_shows_reason_in_error_menu(self):
+        """续期失败原因要出现在错误菜单里（用户能看懂为什么红）。"""
+        p = dict(BALANCE_P, id="mimo", name="MiMo",
+                 keychainService="MIMO_PLATFORM_TOKEN",
+                 refreshParam="refresh-mimo-cookie", refreshInterval=21600,
+                 api={"url": "https://platform.xiaomimimo.com/api/v1/balance",
+                      "method": "GET", "authHeader": "Cookie", "authPrefix": ""})
+        cfg = {"cache": {"balance": 300}}
+        unauthorized = {"ok": False, "status": 401, "data": None,
+                        "error_kind": "client", "message": "HTTP 401"}
+        proj = self._project_with_refresh_script()
+        with mock.patch.object(te, "get_key", return_value="cookie1"), \
+             mock.patch.object(te, "auto_refresh_cookie", return_value=(False, "会话已过期")), \
+             mock.patch.object(te, "proactive_refresh_cookie",
+                               return_value=(False, "警告: 钥匙串未解锁")), \
+             mock.patch.object(te, "fetch_api", return_value=unauthorized):
+            r = te.process_provider(p, cfg, COLORS, "dark", self.dir, self.dir, proj)
+        self.assertEqual(r["status"], "error")
+        joined = " ".join(r["lines"])
+        self.assertIn("钥匙串未解锁", joined)
+
+    def _project_with_refresh_script(self):
+        """造一个含 scripts/refresh-mimo-cookie.py 的项目目录。
+
+        process_provider 里`os.path.exists(script)` 为假时整条自愈/续期分支会被
+        跳过，测不到「续期后重拉」—— 必须造真实路径。
+        """
+        proj = tempfile.mkdtemp()
+        scripts = os.path.join(proj, "scripts")
+        os.makedirs(scripts, exist_ok=True)
+        with open(os.path.join(scripts, "refresh-mimo-cookie.py"), "w") as f:
+            f.write("# stub\n")
+        return proj
 
     def test_auto_refresh_failure_opens_login_page(self):
         # 刷新失败（浏览器会话也过期）→ 应自动打开登录页并通知
@@ -1145,8 +1231,8 @@ class TestSemiAutoRefresh(unittest.TestCase):
         # 主动续期：间隔内不重复执行；间隔过后执行
         with mock.patch.object(te.subprocess, "run",
                                return_value=mock.Mock(returncode=0, stdout="HTTP=200")) as m:
-            r1 = te.proactive_refresh_cookie(self.dir, "mimo", "/x", 21600)
-            r2 = te.proactive_refresh_cookie(self.dir, "mimo", "/x", 21600)
+            r1, _ = te.proactive_refresh_cookie(self.dir, "mimo", "/x", 21600)
+            r2, _ = te.proactive_refresh_cookie(self.dir, "mimo", "/x", 21600)
         self.assertTrue(r1)
         self.assertIsNone(r2)  # 冷却中
         self.assertEqual(m.call_count, 1)
@@ -1155,10 +1241,37 @@ class TestSemiAutoRefresh(unittest.TestCase):
         # 失败不推进标记 → 下一轮继续尝试
         with mock.patch.object(te.subprocess, "run",
                                return_value=mock.Mock(returncode=0, stdout="HTTP=401")):
-            self.assertFalse(te.proactive_refresh_cookie(self.dir, "mimo", "/x", 21600))
+            self.assertFalse(te.proactive_refresh_cookie(self.dir, "mimo", "/x", 21600)[0])
         with mock.patch.object(te.subprocess, "run",
                                return_value=mock.Mock(returncode=0, stdout="HTTP=200")):
-            self.assertTrue(te.proactive_refresh_cookie(self.dir, "mimo", "/x", 21600))
+            self.assertTrue(te.proactive_refresh_cookie(self.dir, "mimo", "/x", 21600)[0])
+    def test_proactive_failure_records_reason(self):
+        """主动续期失败把原因写进独立标记（排障不用靠时间线反推）。
+
+        注意：失败**不写** lastrefresh —— lastrefresh 是「上次成功续期时间」，
+        推进它会触发 interval 冷却、让失败后 6 小时内不再尝试（原语义是
+        「失败不推进标记，下轮继续试」）。留痕与冷却必须分开。
+        """
+        with mock.patch.object(te.subprocess, "run",
+                               return_value=mock.Mock(returncode=1, stdout="警告: 钥匙串未解锁")):
+            ok, reason = te.proactive_refresh_cookie(self.dir, "mimo", "/x", 21600)
+        self.assertFalse(ok)
+        self.assertIn("钥匙串未解锁", reason)
+        # 原因写在独立标记里
+        fail_flag = os.path.join(self.dir, "token-eye-proactive-fail-mimo.flag")
+        self.assertTrue(os.path.exists(fail_flag))
+        with open(fail_flag) as f:
+            self.assertIn("钥匙串未解锁", f.read())
+        # lastrefresh 未被推进 → 下一轮还会再试（不被冷却挡住）
+        self.assertFalse(os.path.exists(
+            os.path.join(self.dir, "token-eye-lastrefresh-mimo.flag")))
+        with mock.patch.object(te.subprocess, "run",
+                               return_value=mock.Mock(returncode=0, stdout="HTTP=200")) as m:
+            again, _ = te.proactive_refresh_cookie(self.dir, "mimo", "/x", 21600)
+        self.assertTrue(again)
+        self.assertEqual(m.call_count, 1)
+        # 成功后清掉失败标记
+        self.assertFalse(os.path.exists(fail_flag))
 
 
 class TestVersion(unittest.TestCase):

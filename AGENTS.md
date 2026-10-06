@@ -155,6 +155,8 @@ Python 核心逻辑：
 - Cookie 为会话级，过期后运行 `scripts/refresh-mimo-cookie.py` 一键刷新（macOS 版支持 Edge / Chrome / Brave / Arc；Linux 版 `linux/scripts/` 按 **Chromium → Edge → Chrome** 顺序，从任一已登录浏览器解密提取）
 - **半自动刷新机制**：`refreshInterval` 按周期主动续 cookie（浏览器会话存活时 keychain 始终最新）；当服务端会话真正过期、浏览器同步失效导致刷新失败时，自动打开 `consoleUrl` 登录页并发系统通知（**Linux 版由 `linux/token-eye-tray.py` 的 `open_in_browser()` 优先调 Chromium，兜底 xdg-open；环境变量 `TOKEN_EYE_BROWSER` 可覆盖、`=default` 强制系统默认**；`token-eye-loginopened-*.flag` 30 分钟限频），登录后下个 1 分钟重试周期自动拾取新 cookie——**无需再手动跑刷新脚本**
 - **点菜单底部「刷新」= 一次点击搞定**（`refresh-now` + `--force-refresh`）：忽略 10s 错误短缓存 + 跳过 1 分钟自愈冷却，在同一轮内完成「刷 Cookie → 重拉余额 → 直接显示新余额」，不必等冷却过完再点第二次。Cookie 本身已死（浏览器会话也过期）时会照常弹登录页 + 通知，你登录完再点一次「刷新」即刻出余额
+- **两条刷新路径必须对称：任何「拿到新 cookie」的动作都要紧跟一次重拉**（2026-10-06 用户实报）。自愈路径（401 → `auto_refresh_cookie` → 重拉）本来就有，主动续期（`refreshInterval` → `proactive_refresh_cookie`）原先只写 debug 日志、**不重拉** —— 脚本自己验过 200、keychain 已是新 cookie，但本轮 `fetch_result` 仍是「换cookie 前」那次的结果（旧的 401），菜单要红到下个渲染周期。改这类逻辑时：自愈、主动续期、菜单手动点三条路径逐一检查有没有都「刷新 + 重拉」
+- **刷新失败要留痕，但「留痕标记」与「冷却标记」必须分开**（2026-10-06 用户建议）：`lastrefresh` 语义是「上次**成功**续期时间」，推进它会触发 `refreshInterval` 冷却、让失败后 6 小时内不再重试（与「失败不推进标记、下轮继续试」的原语义冲突）→ 失败原因另写独立标记 `token-eye-proactive-fail-{id}.flag`（成功时清掉）。自愈的 `autorefresh` 标记本来就兼作冷却判定（fail → 1 分钟短冷却），加原因段只能加在**第三段**（解析只取 `parts[0]`/`parts[1]`，向后兼容）。失败原因最终要能显示到错误菜单，用户才不用靠时间线反推
 
 详细配置示例见 `README.md`。
 

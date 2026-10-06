@@ -22,7 +22,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime as _dt
 
-VERSION = "0.23.3"
+VERSION = "0.23.4"
 
 # 按 parser 类型的默认缓存 TTL（秒）
 DEFAULT_CACHE_TTL = {"balance": 300, "plan_usage": 30, "status": 60}
@@ -975,31 +975,42 @@ def auto_refresh_cookie(flags_dir, pid, refresh_script, fail_cooldown=60, succes
             # 顺手写 lastrefresh：cookie 已是最新，免得同一轮渲染里主动续期再跑一遍脚本
             _write_flag(_flag_path(flags_dir, pid, "lastrefresh"), str(now))
             return True, ""
-        _write_flag(flag, f"{now} fail")
+        reason = (r.stdout or r.stderr or "").strip().splitlines()
+        tail = reason[-1][:80] if reason else "无输出"
+        # 失败留痕：`<ts> fail <原因末行>`。旧解析只取 parts[0]/parts[1]（时间戳与
+        # ok|fail），新增的第三段不影响冷却判定；排障时能直接看到「钥匙串未解锁」
+        # 之类的话，不必靠时间线反推（2026-10-06 用户建议）。
+        _write_flag(flag, f"{now} fail {tail}")
         if login_url:
             _open_login_page(flags_dir, pid, login_url)
         return False, (r.stdout or r.stderr).strip()[-150:]
     except Exception as e:
-        _write_flag(flag, f"{now} fail")
+        _write_flag(flag, f"{now} fail {str(e)[:80]}")
         return False, str(e)
 
 
 def proactive_refresh_cookie(flags_dir, pid, refresh_script, interval):
-    """主动续期：即使当前 cookie 仍有效，也按 interval（秒）从浏览器复制最新 cookie。
+    """主动续期：即使当前 cookie 仍有效，也按interval（秒）从浏览器复制最新 cookie。
 
     只要浏览器会话还活着，keychain 里的 cookie 就一直与浏览器保持同步，
     从而显著减少 401 触发面。成功才推进 lastrefresh 标记（避免反复打脚本）。
 
-    返回：成功 True / 失败 False / 冷却中 None
+    返回：成功 (True, "") / 失败 (False, 原因) / 冷却中 (None, "")
+    失败时把原因写进标记末段（`<ts> proactive-fail <原因>`）留痕，
+    供排障时直接看菜单/标记，不用靠时间线反推。
     """
     flag = _flag_path(flags_dir, pid, "lastrefresh")
+    # 失败原因单独写一个文件，不写lastrefresh —— lastrefresh 的语义是
+    # 「上次成功续期时间」，推进它会触发 interval 冷却、让失败后 6 小时内
+    # 不再尝试（原语义是「失败不推进标记，下轮继续试」）。留痕与冷却必须分开。
+    fail_flag = _flag_path(flags_dir, pid, "proactive-fail")
     now = int(time.time())
     try:
         if os.path.exists(flag):
             with open(flag) as f:
-                last = int(f.read().strip() or 0)
+                last = int(f.read().strip().split()[0] or 0)
             if now - last < interval:
-                return None
+                return None, ""
     except Exception:
         pass
     try:
@@ -1007,10 +1018,17 @@ def proactive_refresh_cookie(flags_dir, pid, refresh_script, interval):
                            capture_output=True, text=True, timeout=30)
         if r.returncode == 0 and "HTTP=200" in r.stdout:
             _write_flag(flag, str(now))
-            return True
-        return False
-    except Exception:
-        return False
+            _clear_flag(fail_flag)
+            return True, ""
+        # 失败留痕：把原因写进独立标记（排障时能在菜单/log 里直接看到
+        # 「钥匙串未解锁」之类的话，不必靠时间线反推）
+        reason = (r.stdout or r.stderr or "").strip().splitlines()
+        tail = reason[-1][:80] if reason else "无输出"
+        _write_flag(fail_flag, f"{now} {tail}")
+        return False, tail
+    except Exception as e:
+        _write_flag(fail_flag, f"{now} {str(e)[:80]}")
+        return False, str(e)
 
 
 # ---------------------------------------------------------------------------
@@ -1026,6 +1044,10 @@ def process_provider(p, config, colors, appearance, cache_dir, hdir, project_dir
     alert_cfg = p.get("alert") or config.get("alerts", {}).get(pid)
     t0 = time.time()
     log_debug(hdir, f"[{pid}] 开始处理（parser={ptype}）")
+    # 自愈/续期的失败原因，累积后展示在错误菜单里。
+    # 初始化放在函数开头：命中缓存的早退分支不会经过 fetch 段，
+    # 若只在 fetch 段里赋值，后面读它会NameError（既存隐患，本次一并修）。
+    self_heal_err = None
 
     # Cache check
     ttl = p.get("cacheTtl", config.get("cache", {}).get(ptype, DEFAULT_CACHE_TTL.get(ptype, 30)))
@@ -1068,7 +1090,6 @@ def process_provider(p, config, colors, appearance, cache_dir, hdir, project_dir
                         f"耗时={time.time() - t0:.2f}s")
 
         # 自动自愈：client 鉴权错误 + 配置了 refreshParam → 刷新 Cookie 后重试一次
-        self_heal_err = None
         if (not fetch_result["ok"] and fetch_result.get("error_kind") == "client"
                 and refresh_param):
             script = os.path.join(project_dir, "scripts", refresh_param + ".py")
@@ -1096,9 +1117,30 @@ def process_provider(p, config, colors, appearance, cache_dir, hdir, project_dir
         if refresh_param and refresh_interval:
             script = os.path.join(project_dir, "scripts", refresh_param + ".py")
             if os.path.exists(script):
-                prev = proactive_refresh_cookie(hdir, pid, script, refresh_interval)
+                prev, prev_err = proactive_refresh_cookie(hdir, pid, script, refresh_interval)
                 if prev is not None:
-                    log_debug(hdir, f"[{pid}] 主动续期: ok={prev}")
+                    log_debug(hdir, f"[{pid}] 主动续期: ok={prev} {prev_err}")
+                if prev is False and prev_err:
+                    # 续期失败原因也进错误菜单（否则用户只看到「配置/鉴权错误」，
+                    # 不知道是浏览器没开、钥匙串没解锁，还是 cookie 库读不到）。
+                    # 与自愈失败原因**并存**（两者是不同信息，可能都成立）
+                    self_heal_err = (f"{self_heal_err}; " if self_heal_err else "") + \
+                                     f"主动续期失败: {prev_err[:60]}"
+                # 续期成功 → 立刻用新 cookie 重拉一次。
+                # 少了这一步：脚本自己验过 200、keychain 里已是新 cookie，但本轮
+                # fetch_result 仍是「续期前」那次拉取的结果（可能是旧的 401），
+                # 菜单会一直红到下个渲染周期（2026-10-06 用户实报）。
+                if prev is True:
+                    key2 = get_key(keychain)
+                    if key2:
+                        fetch_result = fetch_api(
+                            api["url"], api.get("method", "GET"),
+                            api.get("authHeader", "Authorization"),
+                            api.get("authPrefix", "Bearer "), key2,
+                            api.get("headers")
+                        )
+                        log_debug(hdir, f"[{pid}] 续期后重拉: ok={fetch_result['ok']} "
+                                        f"status={fetch_result.get('status')}")
 
         if fetch_result["ok"]:
             save_cache(cache_dir, pid, {"ts": now, "data": fetch_result["data"]})
