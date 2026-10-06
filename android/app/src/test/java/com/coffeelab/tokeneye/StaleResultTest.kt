@@ -85,4 +85,39 @@ class StaleResultTest {
         assertEquals(once.details.size, twice.details.size)
         assertTrue(twice.stale)
     }
+
+    /**
+     * 回归：网络恢复后卡在 stale 不再自动刷新。
+     *
+     * 上一轮失败时 `successAt` 保持「上次成功」不变（失败不是成功），
+     * 而 balance 的 TTL 有 300 秒 —— 恢复后的第一轮若离上次成功不足 TTL，
+     * 就会复用旧结果、压根不发请求 → anyFailed=false → Worker 报 SUCCESS →
+     * 不再重试 → 永远停在 stale。实测 21:11 那轮正是如此。
+     *
+     * 所以缓存判定必须额外要求 `!prevResult.stale`。
+     */
+    @Test
+    fun staleResult_mustNotBeCacheValid() {
+        val stale = RefreshEngine.staleResult(provider, okResult(9.93), ErrorKind.NETWORK, "超时")
+        val now = 1_000_000L
+        val ttl = 300_000L
+        val fourMinAgo = now - 240_000L   // 距上次成功 4 分钟 < TTL 300s
+
+        // 陈旧项必须被视为缓存无效，否则网络恢复后不会重新拉取
+        assertTrue(
+            "陈旧项必须重新拉取（否则 anyFailed=false → Worker 报 SUCCESS → 永不重试）",
+            !RefreshEngine.canReuse(false, stale, fourMinAgo, now, ttl),
+        )
+        // 对照：正常项在 TTL 内应允许复用
+        assertTrue(
+            "正常项在 TTL 内应允许复用缓存",
+            RefreshEngine.canReuse(false, okResult(9.93), fourMinAgo, now, ttl),
+        )
+        // 超 TTL 一律重拉
+        assertTrue(!RefreshEngine.canReuse(false, okResult(9.93), now - 301_000L, now, ttl))
+        // 强制刷新一律重拉
+        assertTrue(!RefreshEngine.canReuse(true, okResult(9.93), now, now, ttl))
+        // 无历史结果 → 重拉
+        assertTrue(!RefreshEngine.canReuse(false, null, now, now, ttl))
+    }
 }

@@ -38,11 +38,16 @@ object RefreshEngine {
                 continue
             }
 
-            // 缓存：未到期且非强制刷新时沿用上次结果
+            // 缓存：未到期且非强制刷新时沿用上次结果。
+            // **上一轮是陈旧态（stale）时必须重新拉取**：网络刚恢复的那一轮，
+            // 距离上次「成功」可能还没到 TTL（balance 300s），若照常复用旧结果就会
+            // 永远停在 stale —— 实测 21:11 那轮就是这样：DeepSeek 4 分钟前成功过，
+            // 复用缓存、没发请求、anyFailed=false、Worker 报 SUCCESS、不再重试。
             val ttl = (config.cacheTtl[p.parser.type] ?: 300L) * 1000
             val lastSuccess = prev.successAt[p.id] ?: 0L
             val prevResult = prev.results.firstOrNull { it.id == p.id }
-            if (!force && prevResult != null && now - lastSuccess < ttl) {
+            val cacheValid = canReuse(force, prevResult, lastSuccess, now, ttl)
+            if (cacheValid && prevResult != null) {
                 results.add(prevResult)
                 newSuccessAt[p.id] = lastSuccess
                 continue
@@ -83,6 +88,25 @@ object RefreshEngine {
         SnapshotStore.save(context, snapshot)
         return Outcome(snapshot, anyFailed)
     }
+
+    /**
+     * 这次是否可以直接复用上次结果（纯函数，供单测）。
+     *
+     * 三个条件缺一不可：
+     * - 非强制刷新
+     * - 上次有结果
+     * - **上次结果不是陈旧的** —— 否则网络刚恢复的那一轮若距上次「成功」不足 TTL
+     *   （balance 300s），就会复用旧结果、压根不发请求 → anyFailed=false →
+     *   Worker 报 SUCCESS → 不再重试 → 永远停在陈旧态（2026-10-06 真机实测踩到）
+     * - 且距上次成功未超 TTL
+     */
+    fun canReuse(
+        force: Boolean,
+        prevResult: ProviderResult?,
+        lastSuccess: Long,
+        now: Long,
+        ttlMillis: Long,
+    ): Boolean = !force && prevResult != null && !prevResult.stale && now - lastSuccess < ttlMillis
 
     /**
      * 拉取失败时该展示什么（纯函数，可单测—— 原来这段逻辑埋在 refresh() 里，

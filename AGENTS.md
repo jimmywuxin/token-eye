@@ -177,7 +177,11 @@ Python 核心逻辑：
 - **「取最差状态」一律 `maxByOrNull { it.ordinal }`，永远别写 `minBy`**：`Status` 枚举序是 `OK(0) < WARN(1) < ERR(2) < NOKEY(3)`，ordinal 越大越差。Android `ResultParser` 曾误用 `minBy` —— 5h 正常 + 7d 无数据时整体判 OK、图标显示绿色（无报错、无日志）。三端任何聚合多个状态取最差的场景都适用（Mac 的 `render()`、Linux 的 `worst_status()`、Android 的 `worst`）
 - **告警/恢复通知的阈值判断必须用「已 resolve 的阈值」，不能回头读原始配置**：`token_eye.py` 的恢复通知曾写死 `alert_cfg["minBalance"] is not None`，而告警本身可由 `parser.defaultMinBalance` 或 API 阈值字段触发 → 告警能发、恢复通知永远发不出（静默失联）。`min_balance` 已在 `parse_provider` 里走完「API 字段 > alert.minBalance > defaultMinBalance」整条链，判定一律用它
 - **`schema_validate` 等入口层不许抛异常**：校验器的调用方（`run()` / `validate_mode()`）没有包 try，校验时一旦抛异常整轮渲染就崩 → SwiftBar 只拿到空 stdout、菜单全白且无任何提示。所有 `int()` / 下标 / 类型转换都要先判脏（见 `_as_int`）。新增校验项时用现有单测 `test_peak_window_garbage_does_not_raise` 的写法：脏值必须转成错误列表而非异常
-- **「部分失败」必须能让调度器感知，否则永不重试**（2026-10-06 v0.23.2 实测踩坑）：`RefreshEngine.refresh` 对单平台失败是 `continue`（不抛异常，合理——一个平台挂不该带崩其他），但 `RefreshWorker.doWork` 因此永远走`Result.success()` → WorkManager 认为任务正常完成，**既不重试也不退避**，断网一次后小部件就永久停在错误态。**凡「循环里单项失败就 continue」的刷新函数，返回值必须带 `anyFailed` 之类的失败标志**（现为 `RefreshEngine.Outcome`），调度侧据此判 `Result.retry()`
+- **「部分失败」必须能触发自愈动作，否则永不刷新**（2026-10-06 v0.23.2/0.23.3 连续两次真机实测踩坑）：
+  1. `RefreshEngine.refresh` 对单平台失败是 `continue`（不抛异常，合理——一个平台挂不该带崩其他），所以调度层必须自己判断失败。返回值已带 `Outcome.anyFailed`
+  2. **拿到 `anyFailed` 后不要直接 `Result.retry()`** —— WorkManager **周期任务不支持 retry**（会被忽略），只能按原周期排下一轮；而周期下限 15 分钟、MIUI 省电还会再往后压（实测周期任务根本没被调起）。正确做法是**主动排一个「失败接力」任务**（`RefreshWorker.enqueueRecovery()`，延时 1 分钟 + `ExistingWorkPolicy.REPLACE`；用 KEEP 会让接力任务自我阻塞、断网期间彻底停摆）
+  3. **凡是绕过调度器直接调 `refresh()` 的入口（如 App 内「立即刷新」按钮）也要接上自愈**，否则该路径失败后永远不自愈
+  4. 失败时 `successAt` 保持「上次成功」的真实时间戳（失败不是成功）—— 但这带来一个必须配套的规则：**缓存判定要额外要求 `!prevResult.stale`**（见 `canReuse()`），否则网络刚恢复时若距上次成功不足 TTL（balance 300s）就会复用旧结果、压根不发请求，永远停在陈旧态
 - **拉取失败时优先「显示上次成功的数据」而非错误文案**：余额/百分比是有用信息，「网络错误」不是。做法是给结果加独立的 `stale` 标记（`ProviderResult.stale`）而不是改 `status` —— 混成 WARN 会与「余额真的低于阈值」的告警混淆，多轮失败还会叠加放大；details 里的陈旧提示要**按前缀去重、只保留最后一条**，否则断网一晚会堆出一长串。兜底逻辑抽成纯函数 `staleResult()` 才能单测（埋在 `refresh()` 里依赖 Context + 真实网络，没法验证）
 - **版本号唯一真源 = `token_eye.py` 的 `VERSION`**：发版只改这一处 + `token-eye.sh` 头部 `bitbar.version`（CI 校验两者一致）。Android 的 `versionName` / `versionCode` 由 `app/build.gradle.kts` 构建时**自动读取** `VERSION` 派生（0.22.0 → 2200），**不要手工填**，也别再让 app 版本号单独漂移（曾长期停在 0.19.1）
 - 脚本使用 `set -euo pipefail`，任何命令失败都会退出（注意：命令替换里放可能失败的脚本时需 `|| true` 兜底，见 refresh-mimo-cookie 分支）

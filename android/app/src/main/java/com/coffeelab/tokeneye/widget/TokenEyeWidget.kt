@@ -306,6 +306,6 @@ class RefreshAction : ActionCallback {
         glanceId: GlanceId,
         parameters: ActionParameters,
     ) {
-        com.coffeelab.tokeneye.work.RefreshWorker.refreshNow(context, force = true)
+        com.coffeelab.tokeneye.work.RefreshWorker.refreshNow(context)
     }
 }

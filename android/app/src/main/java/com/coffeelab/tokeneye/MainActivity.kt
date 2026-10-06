@@ -97,10 +97,14 @@ fun TokenEyeApp() {
             try {
                 val outcome = RefreshEngine.refresh(context, force = force)
                 snapshot = outcome.snapshot
-                // 有平台没拉成功时给一句提示；小部件仍显示上次数据 + 「更新失败」标注
+                // 有平台没拉成功时给一句提示；小部件仍显示上次数据 + 「数据陈旧」标注
                 message = if (outcome.anyFailed) "部分平台更新失败，显示的是上次数据" else null
+                // 与 RefreshWorker 同一套自愈路径：失败就排接力任务，
+                // 否则「在 App 内手动刷新失败」这条路径不经过 Worker、永远不自愈
+                if (outcome.anyFailed) RefreshWorker.enqueueRecovery(context)
             } catch (e: Exception) {
                 message = "刷新失败：${e.message}"
+                RefreshWorker.enqueueRecovery(context)
             }
             refreshing = false
         }
