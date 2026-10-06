@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.23.1] - 2026-10-06
 
 ### 修复
 - **配置写错时菜单不再全白**：`schema_validate` 校验 `peakWindow.hours` / `weekdays` 时直接 `int()` 转换，非数字值（如 `[["oops",12]]`）抛 ValueError 穿透整个渲染流程 → SwiftBar 只拿到空输出、菜单栏空白且没有任何提示。现在统一转为「配置错误」菜单逐条列出问题项。
