@@ -102,7 +102,17 @@ object ResultParser {
             return ProviderResult(p.id, p.name, Status.ERR, "无套餐数据", listOf("接口未返回 model_remains"), consoleUrl = p.consoleUrl)
         }
 
-        data class WindowVal(val remaining: Double?, val statusText: String, val boost: Double?, val resetMs: Double?)
+        // 源数据口径由 parser.pctDirection 控制（默认 "remaining" = 接口返回剩余 %；
+        // 未来有 provider 直接返回已用 % 时配 "used" 即可）。解析层统一翻成「已用 %」
+        // 再分档/告警，与 Mac 侧 _to_used 口径一致。
+        val toUsed = { raw: Double ->
+            if (parser.pctDirection == "used") raw.coerceIn(0.0, 100.0)
+            else (100.0 - raw).coerceIn(0.0, 100.0)
+        }
+
+        // 注：intervalStatus / weeklyStatus 是 AGENTS.md 标注的废弃字段（状态一律按已用 % 分档），
+        // 此处不再读取——读了也从不上用，纯死配置。
+        data class WindowVal(val rawPct: Double?, val boost: Double?, val resetMs: Double?)
 
         val byModel = arr.mapNotNull { el ->
             if (!el.isJsonObject) return@mapNotNull null
@@ -111,14 +121,12 @@ object ResultParser {
             if (showModels != null && model !in showModels) return@mapNotNull null
             val label = labels[model] ?: ""
             val interval = WindowVal(
-                remaining = resolveField(o, fields["intervalPct"])?.asDoubleOrNull(),
-                statusText = resolveField(o, fields["intervalStatus"])?.asStringOrNull() ?: "",
+                rawPct = resolveField(o, fields["intervalPct"])?.asDoubleOrNull(),
                 boost = resolveField(o, fields["intervalBoost"])?.asDoubleOrNull(),
                 resetMs = resolveField(o, fields["resetMs"])?.asDoubleOrNull(),
             )
             val weekly = WindowVal(
-                remaining = resolveField(o, fields["weeklyPct"])?.asDoubleOrNull(),
-                statusText = resolveField(o, fields["weeklyStatus"])?.asStringOrNull() ?: "",
+                rawPct = resolveField(o, fields["weeklyPct"])?.asDoubleOrNull(),
                 boost = resolveField(o, fields["weeklyBoost"])?.asDoubleOrNull(),
                 resetMs = null,
             )
@@ -133,34 +141,41 @@ object ResultParser {
         val mainModel = showModels?.firstOrNull { it in byModel } ?: byModel.keys.first()
         val (mainLabel, mainWindows) = byModel[mainModel]!!
         val (interval, weekly) = mainWindows
+        val intervalUsed = interval.rawPct?.let(toUsed)
+        val weeklyUsed = weekly.rawPct?.let(toUsed)
 
-        fun remainingStatus(r: Double?): Status = when {
-            r == null -> Status.ERR
-            r >= 20.0 -> Status.OK
-            r >= 10.0 -> Status.WARN
-            else -> Status.WARN  // 剩余 <10 视为耗尽临近/耗尽，统一 WARN 呈现
+        // 分档与 Mac 侧（swiftbar/token_eye.py 的 USED_WARN_PCT=80 / USED_OVER_PCT=100）对齐：
+        // 已用 <80 → OK，80-99 → WARN，≥100 耗尽 → ERR
+        fun usedStatus(used: Double?): Status = when {
+            used == null -> Status.ERR
+            used >= 100.0 -> Status.ERR
+            used >= 80.0 -> Status.WARN
+            else -> Status.OK
         }
 
-        val worst = listOf(remainingStatus(interval.remaining), remainingStatus(weekly.remaining))
-            .minByOrNull { it.ordinal } ?: Status.ERR
+        // 取最差：Status 枚举序为 OK<WARN<ERR< NOKEY，ordinal 越大越差 → 必须 maxBy
+        // （曾误用 minBy，等于取最好：interval 正常 + weekly 无数据时整体判 OK 显示绿色）
+        val worst = listOf(usedStatus(intervalUsed), usedStatus(weeklyUsed))
+            .maxByOrNull { it.ordinal } ?: Status.ERR
 
         val summaryParts = mutableListOf<String>()
-        interval.remaining?.let { summaryParts.add("$intervalLabel 剩${formatPct(it)}%") }
-        weekly.remaining?.let { summaryParts.add("$weeklyLabel 剩${formatPct(it)}%") }
+        intervalUsed?.let { summaryParts.add("$intervalLabel 剩${formatPct(100 - it)}%") }
+        weeklyUsed?.let { summaryParts.add("$weeklyLabel 剩${formatPct(100 - it)}%") }
 
         val details = byModel.entries.flatMap { (model, pair) ->
             val (label, windows) = pair
             val shown = (if (label.isBlank()) model else "$model $label")
             buildList {
                 add(shown)
-                windows.first.remaining?.let { add("  $intervalLabel 剩余 ${formatPct(it)}%（已用 ${formatPct(100 - it)}%）") }
-                windows.second.remaining?.let { add("  $weeklyLabel 剩余 ${formatPct(it)}%（已用 ${formatPct(100 - it)}%）") }
+                windows.first.rawPct?.let { add("  $intervalLabel 剩余 ${formatPct(100 - toUsed(it))}%（已用 ${formatPct(toUsed(it))}%）") }
+                windows.second.rawPct?.let { add("  $weeklyLabel 剩余 ${formatPct(100 - toUsed(it))}%（已用 ${formatPct(toUsed(it))}%）") }
                 windows.first.boost?.let { add("  5h 加速 ${formatPct(it / 10)}‰") }
                 windows.first.resetMs?.let { add("  重置于 ${PeakWindow.formatCountdown((it.toLong() / 1000).toInt())}") }
             }
         }
 
-        val usedForAlert = 100 - (interval.remaining ?: 100.0)
+        // 告警基准：与 Mac 侧一致取「已用 %」，主模型 interval 为准（无数据按 0 已用 → 必然触发告警）
+        val usedForAlert = intervalUsed ?: 0.0
         val minPct = p.alert?.minPct ?: resolveMinPct(p, globalAlerts)
         val status = if (minPct != null && usedForAlert >= minPct) Status.WARN else worst
 

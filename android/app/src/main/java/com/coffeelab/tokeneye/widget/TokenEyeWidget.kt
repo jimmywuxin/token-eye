@@ -215,10 +215,12 @@ class TokenEyeWidget : GlanceAppWidget() {
         val hPad = if (w < 160f) 8f.dp else 12f.dp
 
         // 字号固定：只受宽度约束（放不下就缩短摘要，实在不行才缩字）
+        // rows 为空（首装未填密钥 / 快照为空）时 fitRow 无候选可取，直接给默认字号
         val cands = rows.map { summaryCandidates(shortSummary(it)) }
         val nameEm = rows.map { emWidth(it.name) }
         val availW = w - 2f * hPad.value
-        val (rowSize, level) = fitRow(availW, nameEm, cands)
+        val (rowSize, level) = if (rows.isEmpty()) ROW_FS to 0
+        else fitRow(availW, nameEm, cands)
 
         // 行距：把富余高度匀一部分进来，但不撑太开（上限 MAX_GAP），其余留在底部
         val headerH = if (showHeader) titleSize.value * 1.4f else 0f

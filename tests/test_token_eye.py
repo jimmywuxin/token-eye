@@ -227,6 +227,30 @@ class TestNotifyRecovered(unittest.TestCase):
             te.process_provider(p, cfg, COLORS, "dark", d, d, "/tmp")
             self.assertEqual(m.call_count, 3)
 
+    def test_recovery_via_default_min_balance(self):
+        """告警阈值来自 parser.defaultMinBalance（provider 无 alert 段）时也要能恢复。
+
+        回归背景：恢复通知的条件曾写死 alert["minBalance"] is not None，
+        这类provider 告警能发、恢复通知却永远发不出来（静默失联）。
+        """
+        self.dir = tempfile.mkdtemp()
+        d = self.dir
+        p = dict(BALANCE_P)
+        p["parser"] = dict(p["parser"], defaultMinBalance=5.0)
+        self.assertNotIn("alert", p)   # 前提：provider 侧没有 alert 段
+        cfg = {"cache": {"balance": 300}}
+        below = {"balance_infos": [{"total_balance": 3.0, "currency": "CNY"}]}
+        above = {"balance_infos": [{"total_balance": 6.0, "currency": "CNY"}]}
+        with mock.patch.object(te, "send_notify") as m:
+            self.cache("deepseek", {"ts": int(time.time()), "data": below})
+            te.process_provider(p, cfg, COLORS, "dark", d, d, "/tmp")
+            self.assertEqual(m.call_count, 1)
+            self.assertIn("告警", m.call_args.args[0])
+            self.cache("deepseek", {"ts": int(time.time()), "data": above})
+            te.process_provider(p, cfg, COLORS, "dark", d, d, "/tmp")
+            self.assertEqual(m.call_count, 2)
+            self.assertIn("已恢复", m.call_args.args[0])
+
 
 class TestLogDebug(unittest.TestCase):
     def test_writes_when_enabled(self):
@@ -1434,6 +1458,45 @@ class TestValidateMode(unittest.TestCase):
         with mock.patch.dict(os.environ, {"CONFIG_FILE": bad}):
             rc = te.validate_mode()
         self.assertEqual(rc, 1)
+
+    def test_peak_window_garbage_does_not_raise(self):
+        """脏 peakWindow（hours/weekdays 里塞非数字）必须返回错误列表而非抛异常。
+
+        ponytail: schema_validate 的调用方（run/validate_mode）没包 try，
+        这里一抛就整轮崩 → SwiftBar 拿空 stdout、菜单全白。
+        """
+        base = {"id": "x", "name": "x", "keychainService": "k",
+                "api": {"url": "http://e"}}
+        cases = [
+            {"hours": [["oops", 12]]},
+            {"hours": [[9], [12, 18]]},          # 长度不对
+            {"hours": "9-12"},                   # 类型不对
+            {"hours": [[12, 9]]},                # start >= end
+            {"hours": [[9, 25]]},                # end > 24
+            {"weekdays": [0, 9, "x"]},
+            {"weekdays": ["mon"]},
+            {"hours": [[9, 12]], "holidays": "yes"},
+        ]
+        for pw in cases:
+            cfg = {"providers": [dict(base, parser={"type": "balance", "peakWindow": pw})]}
+            errors = te.schema_validate(cfg)   # 不抛即通过
+            self.assertTrue(errors, f"脏配置应报错: {pw}")
+            # validate_mode 同样不得崩
+            d = tempfile.mkdtemp()
+            path = os.path.join(d, "c.json")
+            with open(path, "w") as f:
+                json.dump(cfg, f)
+            with mock.patch.dict(os.environ, {"CONFIG_FILE": path}):
+                self.assertEqual(te.validate_mode(), 1, f"脏配置应校验失败: {pw}")
+
+    def test_peak_window_valid_passes(self):
+        cfg = {"providers": [{
+            "id": "x", "name": "x", "keychainService": "k",
+            "api": {"url": "http://e"},
+            "parser": {"type": "balance", "peakWindow": {
+                "hours": [[9, 12], [14, 18]], "weekdays": [1, 2, 3, 4, 5],
+                "holidays": True}}}]}
+        self.assertEqual(te.schema_validate(cfg), [])
 
 
 if __name__ == "__main__":

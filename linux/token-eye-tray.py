@@ -84,11 +84,6 @@ def linux_send_notify(title, message, sound=None):
         pass
 
 
-def linux_open_login_page(flags_dir, pid, login_url, cooldown=1800):
-    """浏览器会话失效时打开登录页（保持上游限频语义）。"""
-    return token_eye._open_login_page(flags_dir, pid, login_url, cooldown)
-
-
 # ---------------------------------------------------------------------------
 # 浏览器偏好：打开平台链接（登录页 / 控制台）时优先 Chromium
 # ---------------------------------------------------------------------------
@@ -157,8 +152,6 @@ token_eye.get_key = linux_get_key
 token_eye.send_notify = linux_send_notify
 
 # _open_login_page 内部调用 "open" 命令 —— 换成 Chromium 优先的等价实现
-_orig_open_login = token_eye._open_login_page
-
 def _linux_open_login(flags_dir, pid, login_url, cooldown=1800):
     if not login_url:
         return False
@@ -184,7 +177,7 @@ def _linux_open_login(flags_dir, pid, login_url, cooldown=1800):
 
 token_eye._open_login_page = _linux_open_login
 
-# 手机热点 curl 超时：原版 curl_timeout=5/proc_timeout=10，放宽到 12/20
+# 单位机网络偏慢（信创机直连各平台 API 偶发超时），放宽 curl/进程超时
 _orig_fetch = token_eye.fetch_api
 
 def _fetch_api_relaxed(url, method, auth_header, auth_prefix, key, extra_headers=None,
@@ -202,6 +195,8 @@ token_eye.fetch_api = _fetch_api_relaxed
 def collect(config_path, project_dir):
     """与上游 run() 相同的并行收集，返回 (results, config, colors, appearance)。"""
     os.makedirs(CACHE_ROOT, exist_ok=True)
+    # 历史保留期清理（上游 run() 里有，Linux 版曾漏掉 → history-*.jsonl 无限增长）
+    token_eye.maybe_cleanup_history(CACHE_ROOT)
     with open(config_path) as f:
         config = json.load(f)
     appearance, colors = token_eye.load_colors(config)
@@ -252,7 +247,6 @@ def build_ui():
 
 
 Gtk = GLib = Gdk = None
-_ui_lock = threading.Lock()
 
 
 def _init_gtk():

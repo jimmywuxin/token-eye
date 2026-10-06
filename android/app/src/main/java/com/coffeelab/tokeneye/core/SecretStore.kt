@@ -30,7 +30,4 @@ class SecretStore(context: Context) {
     fun remove(providerId: String) {
         prefs.edit().remove("key:$providerId").apply()
     }
-
-    fun configuredIds(): Set<String> =
-        prefs.all.keys.filter { it.startsWith("key:") }.map { it.removePrefix("key:") }.toSet()
 }

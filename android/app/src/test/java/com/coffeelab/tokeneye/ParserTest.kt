@@ -113,6 +113,75 @@ class ParserTest {
         assertEquals(92.0, rNear.usedPct!!, 0.001)
     }
 
+    @Test
+    fun parsePlanUsage_worstOfBothWindows_notBest() {
+        // 无 minPct 时status 完全由 worst 决定 —— 这里隔离验证「取最差」：
+        // interval 正常(90) + weekly 耗尽(0) 必须判 ERR，而不是被 interval 拉回 OK。
+        // 回归背景：曾误用 minByOrNull{ordinal}，而 Status 序为 OK<WARN<ERR，等于取最好。
+        val config = ConfigLoader.parse(
+            """
+            {"providers":[{"id":"minimax","name":"MiniMax",
+              "api":{"url":"https://x"},
+              "parser":{"type":"plan_usage","arrayPath":"model_remains",
+                "fields":{"model":"model_name","intervalPct":"current_interval_remaining_percent","weeklyPct":"current_weekly_remaining_percent"},
+                "showModels":["general"],"modelLabels":{"general":""},
+                "windowLabels":{"interval":"5h","weekly":"7d"}}}]}
+            """.trimIndent()
+        )
+        val p = config.providers[0]
+        fun parse(interval: Double, weekly: Double) = ResultParser.parse(
+            p,
+            JsonParser.parseString(
+                """{"model_remains":[{"model_name":"general","current_interval_remaining_percent":$interval,"current_weekly_remaining_percent":$weekly}]}"""
+            ).asJsonObject,
+        ).status
+
+        // 取最差：weekly 差就整体差，不被正常的 interval 拉回 OK
+        assertEquals(com.coffeelab.tokeneye.core.Status.ERR, parse(90.0, 0.0))    // weekly 耗尽
+        assertEquals(com.coffeelab.tokeneye.core.Status.WARN, parse(90.0, 8.0))   // weekly 临近
+        assertEquals(com.coffeelab.tokeneye.core.Status.WARN, parse(8.0, 90.0))    // interval 差
+        assertEquals(com.coffeelab.tokeneye.core.Status.ERR, parse(0.0, 90.0))    // interval 耗尽
+        assertEquals(com.coffeelab.tokeneye.core.Status.OK, parse(90.0, 90.0))    // 都正常
+    }
+
+    @Test
+    fun parsePlanUsage_honorsPctDirection() {
+        // pctDirection 语义必须与 Mac 侧 _to_used 一致：
+        //   "remaining"（默认）→ 接口返回剩余 %，翻转成已用
+        //   "used"              → 接口返回已用 %，直接用
+        // 回归背景：Android 曾硬编码 100-remaining，配 "used" 的provider 会被算反。
+        fun parseWith(direction: String, rawInterval: Double): com.coffeelab.tokeneye.core.ProviderResult {
+            val cfg = ConfigLoader.parse(
+                """
+                {"providers":[{"id":"m","name":"M",
+                  "api":{"url":"https://x"},
+                  "parser":{"type":"plan_usage","arrayPath":"model_remains",
+                    "pctDirection":"$direction",
+                    "fields":{"model":"model_name","intervalPct":"pct","weeklyPct":"pct"},
+                    "showModels":["general"]}}]}
+                """.trimIndent()
+            )
+            return ResultParser.parse(
+                cfg.providers[0],
+                JsonParser.parseString(
+                    """{"model_remains":[{"model_name":"general","pct":$rawInterval}]}"""
+                ).asJsonObject,
+            )
+        }
+
+        // 剩余 30% → 已用 70% → OK
+        assertEquals(70.0, parseWith("remaining", 30.0).usedPct!!, 0.001)
+        // 已用 30%（used 口径）→ OK；两种口径同值应得同一结果
+        assertEquals(30.0, parseWith("used", 30.0).usedPct!!, 0.001)
+        // 剩余 5% → 已用 95% → WARN
+        assertEquals(com.coffeelab.tokeneye.core.Status.WARN, parseWith("remaining", 5.0).status)
+        // 已用 100%（used 口径）→ 耗尽 ERR
+        assertEquals(com.coffeelab.tokeneye.core.Status.ERR, parseWith("used", 100.0).status)
+        // 越界值被夹到 [0,100]
+        assertEquals(100.0, parseWith("used", 150.0).usedPct!!, 0.001)
+        assertEquals(0.0, parseWith("used", -20.0).usedPct!!, 0.001)
+    }
+
     /**
      * 回归：手机版「国庆期间显示成工作日空闲、倒计时指向一个并不存在的高峰」。
      *

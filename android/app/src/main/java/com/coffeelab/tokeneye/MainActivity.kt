@@ -117,14 +117,17 @@ fun TokenEyeApp() {
             Column(
                 modifier = Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp),
             ) {
-                Text(
-                    "上次更新：" + if (snapshot.fetchedAt == 0L) "从未"
-                    else TIME_FMT.format(Date(snapshot.fetchedAt)),
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                // 版本号（顶部右上角显示当前构建版本，与 Mac/Linux 端 tag 同步）
-                Row(modifier = Modifier.fillMaxWidth()) {
+                // 顶部一行：上次更新在左、版本号在右（版本与 Mac/Linux 端 tag 同步）
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        "上次更新：" + if (snapshot.fetchedAt == 0L) "从未"
+                        else TIME_FMT.format(Date(snapshot.fetchedAt)),
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                     Spacer(Modifier.weight(1f))
                     Text(
                         "v${BuildConfig.VERSION_NAME}",

@@ -74,18 +74,20 @@ if ! command -v python3 >/dev/null 2>&1; then
     exit 0
 fi
 
+# 核心模块取「较新的一个」：项目目录里改了新版而 ~/SwiftBar 存着旧拷贝时用项目那份。
+# 两处都不存在时留空，由下面的存在性检查统一报错。
 if [ -f "$PROJECT_DIR/swiftbar/token_eye.py" ] && { [ ! -f "$SCRIPT_DIR/token_eye.py" ] || [ "$PROJECT_DIR/swiftbar/token_eye.py" -nt "$SCRIPT_DIR/token_eye.py" ]; }; then
     PY_MODULE="$PROJECT_DIR/swiftbar/token_eye.py"
 elif [ -f "$SCRIPT_DIR/token_eye.py" ]; then
     PY_MODULE="$SCRIPT_DIR/token_eye.py"
 else
-    PY_MODULE="$PROJECT_DIR/swiftbar/token_eye.py"
+    PY_MODULE=""
 fi
 
-if [ ! -f "$PY_MODULE" ]; then
+if [ -z "$PY_MODULE" ] || [ ! -f "$PY_MODULE" ]; then
     echo "👁 | color=$C_ERR"
     echo "---"
-    echo "核心模块缺失: $PY_MODULE | color=$C_ERR"
+    echo "核心模块缺失: ${PY_MODULE:-$PROJECT_DIR/swiftbar/token_eye.py} | color=$C_ERR"
     echo "---"
     echo "刷新 | refresh=true"
     exit 0

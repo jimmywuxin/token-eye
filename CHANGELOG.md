@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### 修复
+- **配置写错时菜单不再全白**：`schema_validate` 校验 `peakWindow.hours` / `weekdays` 时直接 `int()` 转换，非数字值（如 `[["oops",12]]`）抛 ValueError 穿透整个渲染流程 → SwiftBar 只拿到空输出、菜单栏空白且没有任何提示。现在统一转为「配置错误」菜单逐条列出问题项。
+- **Android 恢复通知永久失联**：余额告警阈值来自 `parser.defaultMinBalance`（provider 未配 `alert` 段）时，告警能正常发出，但余额回升后的「已恢复」通知条件写死了 `alert.minBalance`，永远发不出来。改用已解析的完整阈值链结果。
+- **Android 用量状态取反了**：「取最差状态」误用 `minBy`，而 `Status` 枚举序是 OK<WARN<ERR，实际取到的是最好值 —— 5h 周窗正常、7d 周窗无数据时整体判为正常并显示绿色。改为 `maxBy`。
+- **Android 小组件首装崩溃**：`rows` 为空（刚装 App、密钥未填）时排版计算访问空列表越界，小组件打不开、连「点按刷新（未配置密钥）」的提示都显示不出来。
+- **Linux 托盘历史文件无限增长**：漏掉了 Mac 版每日一次的历史保留期清理。
+
+### 变更
+- **Android 用量分档与 Mac 侧对齐**：统一按「已用%」判定（<80 正常 / 80-99 临近 / ≥100 耗尽），耗尽（剩余 ≤0）判错误而非仅警告；`parser.pctDirection` 不再被忽略，`"used"` 口径的 provider 不会被算反。
+- 清理死代码：Android 侧 `barLength` / `display.unit` / `nameColor` 三个零使用字段与已废弃的 `intervalStatus` / `weeklyStatus` 读取路径（配置里的键保留，不影响旧配置校验）；Linux 侧三个定义即废的函数与变量；插件启动器里一个永远走不到的模块探测分支。
+
 ## [0.23.0] - 2026-10-05
 
 ### Removed

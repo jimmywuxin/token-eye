@@ -27,7 +27,6 @@ object ConfigLoader {
                 modelLabels = strMap(parserObj.getAsJsonObject("modelLabels")),
                 windowLabels = strMap(parserObj.getAsJsonObject("windowLabels"))
                     .ifEmpty { mapOf("interval" to "5h", "weekly" to "7d") },
-                barLength = parserObj.get("barLength")?.takeIf { it.isJsonPrimitive }?.asInt ?: 20,
                 pctDirection = parserObj.get("pctDirection")?.asString ?: "remaining",
                 defaultMinBalance = parserObj.get("defaultMinBalance")?.takeIf { it.isJsonPrimitive }?.asDouble,
                 okField = parserObj.get("okField")?.asString ?: "",
@@ -59,16 +58,8 @@ object ConfigLoader {
                 },
             )
             val displayObj = p.getAsJsonObject("display")
-            val nameColor = displayObj?.get("nameColor")
             val display = DisplaySpec(
-                unit = displayObj?.get("unit")?.asString ?: "¥",
                 label = displayObj?.get("label")?.asString ?: "余额",
-                nameColorDark = when {
-                    nameColor?.isJsonObject == true -> nameColor.asJsonObject.get("dark")?.asString
-                    nameColor?.isJsonPrimitive == true -> nameColor.asString
-                    else -> null
-                },
-                nameColorLight = nameColor?.takeIf { it.isJsonObject }?.asJsonObject?.get("light")?.asString,
                 currencySymbols = strMap(displayObj?.getAsJsonObject("currencySymbols")),
             )
             val alertSpec = p.getAsJsonObject("alert")?.let { a ->

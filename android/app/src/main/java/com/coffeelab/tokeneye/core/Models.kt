@@ -18,7 +18,6 @@ data class ParserSpec(
     val showModels: List<String>? = null,
     val modelLabels: Map<String, String> = emptyMap(),
     val windowLabels: Map<String, String> = emptyMap(),
-    val barLength: Int = 20,
     val pctDirection: String = "remaining",
     val defaultMinBalance: Double? = null,
     val okField: String = "",
@@ -46,11 +45,10 @@ data class PeakWindowSpec(
     val holidays: Boolean = false,
 )
 
+/** display 段。注：`unit` / `nameColor` 是跨端配置键但 Android 侧零使用（无进度条、
+ *  平台名不染色），故不在此建模 —— 配置里的键保留给 Mac 侧读，Android 忽略即可。 */
 data class DisplaySpec(
-    val unit: String = "¥",
     val label: String = "余额",
-    val nameColorDark: String? = null,
-    val nameColorLight: String? = null,
     val currencySymbols: Map<String, String> = emptyMap(),
 )
 

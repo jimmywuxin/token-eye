@@ -107,6 +107,18 @@ def load_colors(config):
     return appearance, colors
 
 
+def _as_int(v):
+    """配置里的数字：脏值（'oops' / None / []）一律返回 None，绝不抛 ValueError。
+
+    ponytail: schema_validate 的调用方（run() / validate_mode()）没有包 try，
+    校验器一旦抛异常整轮渲染就崩 → SwiftBar 只拿到空 stdout（菜单全白）。
+    """
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return None
+
+
 def schema_validate(config):
     """轻量 schema 校验，返回错误列表（空 = 通过）。"""
     errors = []
@@ -131,13 +143,15 @@ def schema_validate(config):
                 errors.append(f"providers[{idx}]（{pid}）parser.peakWindow 不是对象")
             else:
                 for h in pw_cfg.get("hours") or []:
-                    if (not isinstance(h, (list, tuple)) or len(h) != 2
-                            or not (0 <= int(h[0]) < 24 and 0 < int(h[1]) <= 24
-                                    and int(h[0]) < int(h[1]))):
+                    s = e = None
+                    if isinstance(h, (list, tuple)) and len(h) == 2:
+                        s, e = _as_int(h[0]), _as_int(h[1])
+                    if s is None or e is None or not (0 <= s < 24 and 0 < e <= 24 and s < e):
                         errors.append(f"providers[{idx}]（{pid}）peakWindow.hours 区间非法: {h!r}")
                         break
                 for d in pw_cfg.get("weekdays") or []:
-                    if not 1 <= int(d) <= 7:
+                    n = _as_int(d)
+                    if n is None or not 1 <= n <= 7:
                         errors.append(f"providers[{idx}]（{pid}）peakWindow.weekdays 取值应在 1-7: {d!r}")
                         break
                 if "holidays" in pw_cfg and not isinstance(pw_cfg["holidays"], bool):
@@ -1147,8 +1161,11 @@ def process_provider(p, config, colors, appearance, cache_dir, hdir, project_dir
                 _clear_flag(_flag_path(hdir, pid, "recovered"))
                 send_notify("Token Eye 告警", notify_msg)
                 log_debug(hdir, f"[{pid}] 触发告警: {notify_msg}")
-            elif (was_alerted and alert_cfg and alert_cfg.get("minBalance") is not None
-                    and render["balance_num"] >= float(alert_cfg["minBalance"])):
+            elif (was_alerted and min_balance is not None
+                    and render["balance_num"] >= min_balance):
+                # 阈值用已 resolve 的 min_balance（走完API 字段 > alert.minBalance >
+                # defaultMinBalance 整条链），不能写死 alert_cfg["minBalance"]：
+                # 告警若由 defaultMinBalance 触发，写死就永远收不到恢复通知。
                 symbol = render.get("symbol", "¥")
                 notify_recovered(pid, name, "余额",
                                  f"{symbol}{render['balance_num']:.2f}", hdir,
