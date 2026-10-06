@@ -2,3 +2,9 @@
 .DS_Store
 .workbuddy/
 __pycache__/
+# 装机前从手机拉下来的运行时文件备份（enabled.json / snapshot.json），本机临时用
+.backup-android/
+*.apk
+android/app/build/
+android/build/
+android/.gradle/
