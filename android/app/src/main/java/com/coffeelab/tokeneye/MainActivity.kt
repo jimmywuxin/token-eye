@@ -95,7 +95,10 @@ fun TokenEyeApp() {
         scope.launch {
             refreshing = true
             try {
-                snapshot = RefreshEngine.refresh(context, force = force)
+                val outcome = RefreshEngine.refresh(context, force = force)
+                snapshot = outcome.snapshot
+                // 有平台没拉成功时给一句提示；小部件仍显示上次数据 + 「更新失败」标注
+                message = if (outcome.anyFailed) "部分平台更新失败，显示的是上次数据" else null
             } catch (e: Exception) {
                 message = "刷新失败：${e.message}"
             }
@@ -221,12 +224,14 @@ private fun ProviderCard(
                     when {
                         !hasKey -> "未配置密钥"
                         result == null -> "待刷新"
+                        result.stale -> "${statusText(result.status)}（数据陈旧）"
                         else -> statusText(result.status)
                     },
                     fontSize = 12.sp,
                     color = when {
                         !hasKey -> MaterialTheme.colorScheme.onSurfaceVariant
                         result == null -> MaterialTheme.colorScheme.onSurfaceVariant
+                        result?.stale == true -> statusColor(Status.WARN)
                         else -> statusColor(result.status)
                     },
                 )

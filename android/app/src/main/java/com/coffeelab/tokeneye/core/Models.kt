@@ -92,6 +92,13 @@ data class ProviderResult(
     val balanceNum: Double? = null,
     val usedPct: Double? = null,
     val consoleUrl: String? = null,
+    /**
+     * 数据陈旧标记：本轮拉取失败，展示的是上次成功的结果。
+     * 独立于 [status] —— status 保持真实值（余额确实还是 OK，只是没更新到），
+     * 混成 WARN 会与「余额真的低了」告警混淆，也会在多轮失败时叠加放大。
+     * UI（小部件黄点、App 内提示）读这个字段。
+     */
+    val stale: Boolean = false,
 )
 
 /** 持久化快照：最近一次刷新结果 + 告警去重 + 各 provider 上次成功时间（缓存用） */
@@ -101,4 +108,3 @@ data class Snapshot(
     val successAt: Map<String, Long> = emptyMap(),
     val alertedIds: List<String> = emptyList(),
 )
-

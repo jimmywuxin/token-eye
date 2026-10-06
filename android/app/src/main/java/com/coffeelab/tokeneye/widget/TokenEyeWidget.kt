@@ -137,7 +137,7 @@ class TokenEyeWidget : GlanceAppWidget() {
             modifier = GlanceModifier.fillMaxWidth(),
             verticalAlignment = Alignment.Vertical.CenterVertically,
         ) {
-            StatusDot(r.status, m.dotSize)
+            StatusDot(r.status, m.dotSize, r.stale)
             Spacer(modifier = GlanceModifier.width((m.dotSize.value * 0.8f).dp))
             Text(
                 r.name,
@@ -150,7 +150,7 @@ class TokenEyeWidget : GlanceAppWidget() {
                 style = TextStyle(
                     fontSize = m.rowSize,
                     fontWeight = FontWeight.Bold,
-                    color = ColorProvider(statusColor(r.status)),
+                    color = ColorProvider(statusColor(r.status, r.stale)),
                 ),
                 maxLines = 1,
             )
@@ -173,21 +173,25 @@ class TokenEyeWidget : GlanceAppWidget() {
     }
 
     @Composable
-    private fun StatusDot(status: Status, size: Dp) {
+    private fun StatusDot(status: Status, size: Dp, stale: Boolean = false) {
         Box(
             modifier = GlanceModifier
                 .width(size)
                 .height(size)
-                .background(ColorProvider(statusColor(status))),
+                .background(ColorProvider(statusColor(status, stale))),
         ) {}
     }
 
-    /** 沿用项目 Okabe-Ito 配色，深浅底色下均可读 */
-    private fun statusColor(status: Status): Color = when (status) {
-        Status.OK -> Color(0xFF1D9E75)
-        Status.WARN -> Color(0xFFE69F00)
-        Status.ERR -> Color(0xFFD1495B)
-        Status.NOKEY -> Color(0xFF888888)
+    /** 沿用项目 Okabe-Ito 配色，深浅底色下均可读。
+     *  陈旧数据（stale）用 WARN 黄点：不是错误（红），但要能看出不是刚拉到的。 */
+    private fun statusColor(status: Status, stale: Boolean = false): Color = when {
+        stale -> Color(0xFFE69F00)
+        else -> when (status) {
+            Status.OK -> Color(0xFF1D9E75)
+            Status.WARN -> Color(0xFFE69F00)
+            Status.ERR -> Color(0xFFD1495B)
+            Status.NOKEY -> Color(0xFF888888)
+        }
     }
 
     /** 按小部件实际尺寸推导排版参数：字号固定，自上而下排列；宽度不足时缩短摘要 */
