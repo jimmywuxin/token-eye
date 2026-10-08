@@ -1089,9 +1089,12 @@ def process_provider(p, config, colors, appearance, cache_dir, hdir, project_dir
                         f"kind={fetch_result.get('error_kind')} "
                         f"耗时={time.time() - t0:.2f}s")
 
-        # 自动自愈：client 鉴权错误 + 配置了 refreshParam → 刷新 Cookie 后重试一次
-        if (not fetch_result["ok"] and fetch_result.get("error_kind") == "client"
-                and refresh_param):
+        # 自动自愈：请求失败 + 配置了 refreshParam → 刷新 Cookie 后重试一次。
+        # 2026-10-09 放宽：原先仅在 client 鉴权错误（4xx）时触发，但 MiMo 10-07~
+        # 10-09 断显约 1.5 天的失败类型已无法回溯——失败不区分种类，凡失败都先
+        # 试一次刷 cookie。代价可控：失败有 60s 冷却、成功有 30min 防抖；网络错误
+        # 时多读一次浏览器 cookie 库（毫秒级）多打一次 API，不影响正确性。
+        if (not fetch_result["ok"] and refresh_param):
             script = os.path.join(project_dir, "scripts", refresh_param + ".py")
             if os.path.exists(script):
                 refreshed, err = auto_refresh_cookie(hdir, pid, script, login_url=console_url,
