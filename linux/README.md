@@ -109,6 +109,42 @@ python3 ~/dev/token-eye/linux/token-eye-tray.py --once
 直接编辑上游 `~/dev/token-eye/providers.json`，追加 provider 配置，无需改任何代码。
 详见上游 README。
 
+## 排障（Troubleshooting）
+
+### 托盘全显「未配置 Key」/ 余额用量全不显示
+
+先看数据管线停更时间（cache/history 的 mtime 就是最后一次成功拉取时间）：
+
+```bash
+ls -la ~/.cache/token-eye/token-eye-cache-*.json ~/.cache/token-eye/history-*.jsonl
+```
+
+**头号原因：gnome-keyring 取消 / 锁定 / 被重置**。token-eye 的所有 key、MiMo Cookie、Chromium 的 Safe Storage 全存在默认钥匙环里，钥匙环一没，全部静默失效（`linux_get_key` 读不到只返回空串，不留任何日志）。判定：
+
+```bash
+ls -la ~/.local/share/keyrings/   # 看 .keyring 文件与 default 指针的变更时间
+```
+
+- 若 `default` 指针被改到新建的空钥匙环，把旧 `.keyring` 文件拷回该目录、`default` 写回旧环名称，然后重启钥匙环与托盘：`gnome-keyring-daemon -r -d && systemctl --user restart token-eye`
+- 弹解锁框输入登录密码即可（旧环密码通常 = 登录密码）
+- ⚠️ 副作用：取消钥匙环会让 Chromium 的加密密钥更换，浏览器里所有网站的登录态 Cookie 作废被清，需重新登录
+
+### MiMo 自动刷新一直报「未找到完整 Cookie」
+
+说明 Chromium 的 Cookies 库里没有平台的 4 个 Cookie（`api-platform_ph` / `api-platform_serviceToken` / `api-platform_slh` / `userId`）。
+
+判定（关键坑）：**小米账号 SSO 成功 ≠ 平台登录完成**。账号域的 passToken/userId 已落库、余额页看起来也打开了，但 STS 那步没走完时，平台 Cookie 一个都不会落库——此时托盘自动刷新永远抓不到。直接查库：
+
+```bash
+cp ~/.config/chromium/Default/Cookies /tmp/ck.db
+sqlite3 /tmp/ck.db "SELECT host_key, name FROM cookies WHERE host_key LIKE '%xiaomimimo%' OR name LIKE 'api-platform%';"
+```
+
+- 查得到 4 个 Cookie → 保持 Chromium 开着，点托盘「🔄 立即刷新」
+- 查不到 → 在 Chromium 重新打开余额页 `https://platform.xiaomimimo.com/console/balance?userId=<你的userId>`，让页面完全加载（STS 走完、Cookie 落库），再点「立即刷新」
+
+注意：刷新脚本读的是 Cookies 数据库文件，Cookie 还在浏览器内存里没落库时（刚登录完的几十秒内）也读不到；Chromium 开着约 30 秒后会自动落库。
+
 ## 已知限制
 
 - UKUI 托盘区只显示图标，不支持菜单栏文字汇总（SNI label 字段 UKUI 未实现）
