@@ -26,6 +26,7 @@ Token Eye — MiMo Cookie 刷新工具（Linux / gnome-keyring 版）
 import os
 import sys
 import time
+import hashlib
 import sqlite3
 import shutil
 import glob
@@ -123,7 +124,10 @@ def decrypt_cookie(enc, password):
 
 
 def copy_cookie_db(db_path):
-    tmp = "/tmp/te_cookies_tmp.db"
+    # 临时文件按「进程号 + 库路径」派生：并发跑本脚本时固定路径会互相覆盖、
+    # 拷出混拼库 → "no such table: cookies"（2026-10-12 与 Mac 版同修）。
+    tag = hashlib.md5(db_path.encode()).hexdigest()[:8]
+    tmp = f"/tmp/te_cookies_{os.getpid()}_{tag}.db"
     for suffix in COOKIE_SUFFIXES:
         src, dst = db_path + suffix, tmp + suffix
         try:

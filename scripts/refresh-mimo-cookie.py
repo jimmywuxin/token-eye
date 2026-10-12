@@ -30,7 +30,7 @@ sys.path = [p for p in sys.path if not any(x in p for x in (".hermes", ".opencla
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-import sqlite3, subprocess, shutil
+import sqlite3, subprocess, shutil, hashlib
 
 KEYCHAIN_SERVICE = "MIMO_PLATFORM_TOKEN"
 HOST_FILTER = "%xiaomimimo%"
@@ -74,8 +74,15 @@ def decrypt_cookie(enc, key):
 
 
 def copy_cookie_db(db_path):
-    """把 Cookie 库连同 -wal/-shm/-journal 一起拷贝到临时目录。"""
-    tmp = "/tmp/edge_cookies_tmp.db"
+    """把 Cookie 库连同 -wal/-shm/-journal 一起拷贝到临时目录。
+
+    临时文件按「进程号 + 库路径」派生：自愈与主动续期可能并发跑本脚本
+    （多浏览器、refreshallplugins 与定时渲染并存），固定路径会让两个进程
+    互相覆盖同一个 tmp，拷出混拼库 → sqlite 报 "no such table: cookies"，
+    表现为余额莫名断显、下轮重试又自愈（2026-10-09 / 10-12 两次实踩）。
+    """
+    tag = hashlib.md5(db_path.encode()).hexdigest()[:8]
+    tmp = f"/tmp/mimo_cookies_{os.getpid()}_{tag}.db"
     for suffix in COOKIE_SUFFIXES:
         src, dst = db_path + suffix, tmp + suffix
         try:
