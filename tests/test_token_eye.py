@@ -251,6 +251,28 @@ class TestNotifyRecovered(unittest.TestCase):
             self.assertEqual(m.call_count, 2)
             self.assertIn("已恢复", m.call_args.args[0])
 
+    def test_force_failure_leaves_no_error_cache(self):
+        """点「刷新」那轮仍失败时不落错误短缓存（2026-10-14 用户实报）。
+
+        回归背景：refresh-now（--force-refresh）失败后会把错误写进 10s 短缓存，
+        紧随的 refresh=true 重渲（无 force）随即命中该缓存 → 菜单照旧显示错误，
+        用户以为「点了没反应」，且看不到失败原因（self_heal_err 不进缓存）。
+        普通渲染则照旧落错误短缓存，避免每 30 秒打爆 API。
+        """
+        d = tempfile.mkdtemp()
+        p = dict(BALANCE_P)
+        cfg = {"cache": {"balance": 300}}
+        fail = {"ok": False, "status": 401, "error_kind": "client",
+                "message": "unauthorized"}
+        path = os.path.join(d, f"token-eye-cache-{p['id']}.json")
+        with mock.patch.object(te, "fetch_api", return_value=fail):
+            te.process_provider(p, cfg, COLORS, "dark", d, d, "/tmp", force=True)
+            self.assertFalse(os.path.exists(path),
+                             "force 失败时不应留下错误缓存（否则重渲命中它）")
+            te.process_provider(p, cfg, COLORS, "dark", d, d, "/tmp")
+            self.assertTrue(os.path.exists(path),
+                            "普通渲染失败仍应落错误短缓存防打爆 API")
+
 
 class TestLogDebug(unittest.TestCase):
     def test_writes_when_enabled(self):

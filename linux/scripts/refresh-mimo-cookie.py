@@ -30,6 +30,7 @@ import hashlib
 import sqlite3
 import shutil
 import glob
+import pathlib
 import subprocess
 
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
@@ -140,19 +141,31 @@ def copy_cookie_db(db_path):
     return tmp
 
 
-def extract_cookie_rows(db_path):
+COOKIE_QUERY = "SELECT host_key, name, encrypted_value FROM cookies WHERE host_key LIKE ?"
+
+
+def read_rows_direct(db_path):
+    """只读直连原库读匹配行（引擎级一致读，不会被浏览器写事务撕裂）。"""
+    uri = pathlib.Path(db_path).as_uri() + "?mode=ro"
+    conn = sqlite3.connect(uri, uri=True, timeout=2)
+    try:
+        return conn.execute(COOKIE_QUERY, (HOST_FILTER,)).fetchall()
+    finally:
+        conn.close()
+
+
+def read_rows_via_copy(db_path):
+    """拷贝快照后读取；返回 (rows, err)，rows=None 表示失败。"""
     tmp = copy_cookie_db(db_path)
-    rows = None
+    rows, err = None, None
     try:
         conn = sqlite3.connect(tmp)
         try:
-            rows = conn.execute(
-                "SELECT host_key, name, encrypted_value FROM cookies WHERE host_key LIKE ?",
-                (HOST_FILTER,)).fetchall()
+            rows = conn.execute(COOKIE_QUERY, (HOST_FILTER,)).fetchall()
         finally:
             conn.close()
     except sqlite3.DatabaseError as e:
-        print(f"警告: Cookie 库读取失败: {e}")
+        err = str(e)
     finally:
         for suffix in COOKIE_SUFFIXES:
             try:
@@ -160,7 +173,29 @@ def extract_cookie_rows(db_path):
                     os.unlink(tmp + suffix)
             except OSError:
                 pass
-    return rows
+    return rows, err
+
+
+def extract_cookie_rows(db_path):
+    """读取匹配行；读取失败返回 None。
+
+    优先只读直连原库（引擎级一致读）；Chromium 用 rollback journal，浏览器写事务
+    期间文件级拷贝会得到不一致快照 → "no such table: cookies"（2026-10-14 与 Mac
+    版同修）。直连失败才退化为拷贝快照并重试。
+    """
+    try:
+        return read_rows_direct(db_path)
+    except (sqlite3.Error, OSError, ValueError) as e:
+        print(f"警告: Cookie 库直连失败（退化为拷贝快照）: {e}")
+    err = None
+    for attempt in range(3):
+        rows, err = read_rows_via_copy(db_path)
+        if rows is not None:
+            return rows
+        if attempt < 2:
+            time.sleep(0.15)
+    print(f"警告: Cookie 库读取失败: {err}")
+    return None
 
 
 def find_cookie_dbs(browser):

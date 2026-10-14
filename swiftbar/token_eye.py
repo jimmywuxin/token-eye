@@ -284,6 +284,14 @@ def save_cache(cache_dir, pid, payload):
         pass
 
 
+def clear_cache(cache_dir, pid):
+    """删掉该 provider 的缓存文件（失败时用于避免污染紧随的重渲）。"""
+    try:
+        os.unlink(cache_path(cache_dir, pid))
+    except OSError:
+        pass
+
+
 def append_history(hdir, pid, value):
     try:
         with open(os.path.join(hdir, f"history-{pid}.jsonl"), "a") as f:
@@ -1147,6 +1155,14 @@ def process_provider(p, config, colors, appearance, cache_dir, hdir, project_dir
 
         if fetch_result["ok"]:
             save_cache(cache_dir, pid, {"ts": now, "data": fetch_result["data"]})
+        elif force:
+            # 用户主动点「刷新」这一轮若仍失败：**不落错误短缓存**。
+            # 否则紧随其后的 refresh=true 重渲（普通渲染、无 force）会命中刚写的
+            # 10s 错误缓存，菜单照旧显示错误 —— 用户以为「点了没反应」，也看不到
+            # 失败原因（self_heal_err 只存在于当轮内存里，不进缓存）。
+            # 清掉缓存后重渲会真实重试一次：成功就直接出余额，仍失败则显示
+            # 带原因的完整错误菜单（2026-10-14 用户实报「点了刷新不能恢复」）。
+            clear_cache(cache_dir, pid)
         else:
             save_cache(cache_dir, pid, {"ts": now, "data": None,
                                         "error": fetch_result["error_kind"],

@@ -30,7 +30,7 @@ sys.path = [p for p in sys.path if not any(x in p for x in (".hermes", ".opencla
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-import sqlite3, subprocess, shutil, hashlib
+import sqlite3, subprocess, shutil, hashlib, pathlib
 
 KEYCHAIN_SERVICE = "MIMO_PLATFORM_TOKEN"
 HOST_FILTER = "%xiaomimimo%"
@@ -95,20 +95,34 @@ def copy_cookie_db(db_path):
     return tmp
 
 
-def extract_cookie_rows(db_path):
-    """拷贝并读取匹配行；读取失败返回 None。拷贝一致性靠伴生文件 + 调用方重试保证。"""
+COOKIE_QUERY = "SELECT host_key, name, encrypted_value FROM cookies WHERE host_key LIKE ?"
+
+
+def read_rows_direct(db_path):
+    """只读直连原库读匹配行（引擎级一致读，不会被浏览器写事务撕裂）。
+
+    连不上或读不出时抛异常，由调用方兜底到拷贝路径。
+    """
+    uri = pathlib.Path(db_path).as_uri() + "?mode=ro"
+    conn = sqlite3.connect(uri, uri=True, timeout=2)
+    try:
+        return conn.execute(COOKIE_QUERY, (HOST_FILTER,)).fetchall()
+    finally:
+        conn.close()
+
+
+def read_rows_via_copy(db_path):
+    """拷贝快照后读取；返回 (rows, err)，rows=None 表示失败。"""
     tmp = copy_cookie_db(db_path)
-    rows = None
+    rows, err = None, None
     try:
         conn = sqlite3.connect(tmp)
         try:
-            rows = conn.execute(
-                "SELECT host_key, name, encrypted_value FROM cookies WHERE host_key LIKE ?",
-                (HOST_FILTER,)).fetchall()
+            rows = conn.execute(COOKIE_QUERY, (HOST_FILTER,)).fetchall()
         finally:
             conn.close()
     except sqlite3.DatabaseError as e:
-        print(f"警告: Cookie 库读取失败: {e}")
+        err = str(e)
     finally:
         for suffix in COOKIE_SUFFIXES:
             try:
@@ -116,7 +130,34 @@ def extract_cookie_rows(db_path):
                     os.unlink(tmp + suffix)
             except OSError:
                 pass
-    return rows
+    return rows, err
+
+
+def extract_cookie_rows(db_path):
+    """读取匹配行；读取失败返回 None。
+
+    **优先只读直连原库**：Chromium 系用 rollback journal 模式，浏览器写事务进行中
+    时主库处于半更新状态，文件级 shutil 拷贝会拷出不一致副本 → SQLite 打开时报
+    "no such table: cookies"（schema 页读不出）。这是 2026-10-09 / 10-12 / 10-14
+    三次 MiMo「余额断显」的真实根因。直连由 SQLite 引擎保证一致，且 WAL/回滚日志
+    并发读是安全的。
+
+    直连失败（hot journal 需要写权限、库被独占锁、库不存在）才退化为拷贝快照，
+    并重试数次 —— 撕裂只在写事务窗口内出现，重试即可命中一致状态。
+    """
+    try:
+        return read_rows_direct(db_path)
+    except (sqlite3.Error, OSError, ValueError) as e:
+        print(f"警告: Cookie 库直连失败（退化为拷贝快照）: {e}")
+    err = None
+    for attempt in range(3):
+        rows, err = read_rows_via_copy(db_path)
+        if rows is not None:
+            return rows
+        if attempt < 2:
+            time.sleep(0.15)
+    print(f"警告: Cookie 库读取失败: {err}")
+    return None
 
 
 def find_cookie_dbs(browser):
