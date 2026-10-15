@@ -265,7 +265,11 @@ class TestNotifyRecovered(unittest.TestCase):
         fail = {"ok": False, "status": 401, "error_kind": "client",
                 "message": "unauthorized"}
         path = os.path.join(d, f"token-eye-cache-{p['id']}.json")
-        with mock.patch.object(te, "fetch_api", return_value=fail):
+        # get_key 必须一并 mock：CI（Linux）没有 security CLI，
+        # 真读 Keychain 会返回空 → no_key 早退，永远走不到写缓存分支
+        # （本机恰好存了真实 DEEPSEEK_API_KEY 才碰巧通过，2026-10-14 CI 实证）。
+        with mock.patch.object(te, "fetch_api", return_value=fail), \
+             mock.patch.object(te, "get_key", return_value="thekey"):
             te.process_provider(p, cfg, COLORS, "dark", d, d, "/tmp", force=True)
             self.assertFalse(os.path.exists(path),
                              "force 失败时不应留下错误缓存（否则重渲命中它）")
