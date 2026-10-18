@@ -293,6 +293,7 @@ SDK 路径写在 `android/local.properties`（本机 `/opt/homebrew/share/androi
 | `display.nameColor` | | 平台名称色，见上表 |
 | `display.currencySymbols` | | 货币代码 → 符号映射，如 `{"USD":"$","EUR":"€"}`；未配置时 USD→`$`、其余→`¥` |
 | `display.label` | | 仅 `status` parser 用：菜单栏显示的标签文字（如「免费」） |
+| `display.showDerived` | | `balance` 类是否显示派生统计（今日消耗 + 预计可用、近 7 天柱状）。`false` = 只显示余额（MiMo 这样配）；快照历史仍照常累积，`dailySpendMax` / `daysLeft` 告警不受影响 |
 | ~~`display.unit`~~ | | ⚠️ 当前版本**未读取**，保留仅为兼容旧配置 |
 
 ### parser 字段

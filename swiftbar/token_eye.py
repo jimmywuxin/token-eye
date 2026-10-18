@@ -1185,6 +1185,7 @@ def process_provider(p, config, colors, appearance, cache_dir, hdir, project_dir
 
     # Balance history + 简约消耗视图（今日消耗 + 预计可用合并为一行；近 7 天柱状独立一行）
     # 余额型 provider（DeepSeek / MiMo 等）无总额上限，故不展示进度条。
+    # display.showDerived=false 的 provider（如 MiMo）只显示余额，跳过下面两行派生统计。
     if ptype == "balance" and render.get("balance_num") is not None:
         append_history(hdir, pid, render["balance_num"])
         symbol = render.get("symbol", "¥")
@@ -1194,23 +1195,27 @@ def process_provider(p, config, colors, appearance, cache_dir, hdir, project_dir
         # 预计可用天数（按最近 24h 消耗速率外推）
         days = days_left(hdir, pid, render["balance_num"])
         render["_days_left"] = days
-        # 行 1：今日消耗 + 预计可用（合并显示，最有业务价值的一行）
-        if pts >= 2 and spend > 0:
-            left = f"  今日消耗 {symbol}{spend:.2f}"
-            if days is not None:
-                left += "  预计可用 " + (f"~{days:.1f} 天" if days < 30 else f"充足（>{days:.0f} 天）")
-            render.setdefault("lines", []).append(left)
-            render.setdefault("colors", []).append(colors["SECONDARY"])
-            # 点这一行打开控制台（充值/账单）
-            render.setdefault("line_params", []).append(
-                {"href": console_url} if console_url else None)
-        # 行 2：近 7 天每日消耗柱状图（右 = 今天）
-        series = daily_spend_series(hdir, pid, 7)
-        if any(v > 0 for v in series):
-            bars = sparkline(series) if max(series) > 0 else "·" * 7
-            render.setdefault("lines", []).append(f"  近7天: {bars}")
-            render.setdefault("colors", []).append(colors["SECONDARY"])
-            render.setdefault("line_params", []).append(None)
+        # display.showDerived=false → 只显示余额，隐藏下面两行派生统计。
+        # 快照历史与每日消耗**照常累积/计算**（append_history/daily_spend 在上面已执行）：
+        # 关掉再开回来历史不断档，alert.dailySpendMax / alert.daysLeft 也不受影响。
+        if p.get("display", {}).get("showDerived", True):
+            # 行 1：今日消耗 + 预计可用（合并显示，最有业务价值的一行）
+            if pts >= 2 and spend > 0:
+                left = f"  今日消耗 {symbol}{spend:.2f}"
+                if days is not None:
+                    left += "  预计可用 " + (f"~{days:.1f} 天" if days < 30 else f"充足（>{days:.0f} 天）")
+                render.setdefault("lines", []).append(left)
+                render.setdefault("colors", []).append(colors["SECONDARY"])
+                # 点这一行打开控制台（充值/账单）
+                render.setdefault("line_params", []).append(
+                    {"href": console_url} if console_url else None)
+            # 行 2：近 7 天每日消耗柱状图（右 = 今天）
+            series = daily_spend_series(hdir, pid, 7)
+            if any(v > 0 for v in series):
+                bars = sparkline(series) if max(series) > 0 else "·" * 7
+                render.setdefault("lines", []).append(f"  近7天: {bars}")
+                render.setdefault("colors", []).append(colors["SECONDARY"])
+                render.setdefault("line_params", []).append(None)
 
     # Alert check (balance 余额 / plan_usage 用量百分比) + 恢复通知
     if os.environ.get("TOKEN_EYE_NOTIFY", "1") != "0":

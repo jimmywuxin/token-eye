@@ -1,5 +1,10 @@
 # Changelog
 
+## [Unreleased]
+
+### 变更
+- **新增 `display.showDerived`（默认 `true`）**：`balance` 类 provider 设 `false` 时只显示余额，隐藏「今日消耗 + 预计可用」「近 7 天」两行派生统计。MiMo 按此配置（用量稀疏，柱状长期平坦，两行信息价值低）。快照历史与每日消耗仍照常累积/计算 —— 关掉再开回来历史不断档，`alert.dailySpendMax` / `alert.daysLeft` 告警不受影响
+
 ## [0.23.7] - 2026-10-18
 
 ### 修复

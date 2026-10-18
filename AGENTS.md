@@ -144,6 +144,7 @@ Python 核心逻辑：
 - `parser.barLength` — 进度条长度，默认 20
 - ~~`parser.statusMap`~~ / ~~`parser.fields.intervalStatus` / `weeklyStatus`~~ / ~~`parser.fields.intervalTotal` / `weeklyTotal`~~ — **已废弃，`token_eye.py` 与 Android `ResultParser` 都不读取**：老接口的「状态码→文案映射」与「按次数算百分比」两条路径在 v0.13 统一为百分比口径时就断了，配置键与 JSON Schema 保留只为兼容旧配置，**别当功能用、也别接线**。现行口径：状态一律按**已用%** 分档（<80 正常 / 80–99 临近 / ≥100 耗尽，Mac 侧常量 `USED_WARN_PCT` / `USED_OVER_PCT`，Android 侧同值硬编码）；余额单位来自接口 `fields.currency`（USD→`$`，其余 `¥`），用量行的 `%` 写死在渲染代码里 → **`display.unit` 同样不读取**（Android 侧已从 `DisplaySpec` 删掉该字段），`display.label` 只有 `status` parser 会用
 - `display.nameColor` — 平台名颜色；支持深浅双套 `{"dark":"#xxx","light":"#xxx"}`，随系统外观切换（注意红绿色弱对比度）
+- `display.showDerived` — `balance` 类是否显示派生统计（今日消耗 + 预计可用、近 7 天柱状），默认 `true`；`false` 只显示余额（MiMo 当前如此）。**快照历史与每日消耗仍照常累积/计算**，关掉再开回来历史不断档，`dailySpendMax` / `daysLeft` 告警也不受影响
 - `refreshParam` — 鉴权错误时自动刷新 + 菜单「🔄 刷新 Cookie」点击项（如 MiMo 的 `refresh-mimo-cookie`）
 - `refreshInterval` — 主动续期周期（秒，≥60）：即使 cookie 仍有效也定期从浏览器复制最新 cookie，保持 keychain 与浏览器会话同步、减少 401 触发面（仅对配置了 `refreshParam` 的 provider 生效）
 - `enabled` — 设为 false 临时禁用

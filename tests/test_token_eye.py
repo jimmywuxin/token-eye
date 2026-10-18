@@ -355,6 +355,55 @@ class TestParseBalance(unittest.TestCase):
         self.assertNotIn("✅", r["menu_bar"])
 
 
+class TestShowDerived(unittest.TestCase):
+    """display.showDerived=false 时只显示余额（2026-10-18 MiMo 需求）。
+
+    派生统计（今日消耗/预计可用、近 7 天柱状）只是展示层开关：
+    快照历史仍要照常累积，否则关掉再开回来那段历史永远是空的；
+    dailySpendMax / daysLeft 告警也依赖这些计算，不能被展示开关带走。
+    """
+
+    def _seed_history(self, hdir):
+        """写入今天内的两笔递减快照 → 今日消耗 ¥2.00，近 7 天有柱。"""
+        now = int(time.time())
+        day0 = te.start_of_day(now)
+        with open(os.path.join(hdir, f"history-{BALANCE_P['id']}.jsonl"), "w") as f:
+            f.write(f"{day0 + 60},10.0\n{day0 + 120},8.0\n")
+
+    def _run(self, display, hdir):
+        p = dict(BALANCE_P, display=display)
+        cfg = {"cache": {"balance": 300}}
+        data = {"balance_infos": [{"total_balance": 8.0, "currency": "CNY"}]}
+        # get_key 必须 mock（CI 无 security CLI），否则 no_key 早退
+        with mock.patch.object(te, "fetch_api", return_value=ok_result(data)), \
+             mock.patch.object(te, "get_key", return_value="k"), \
+             mock.patch.object(te, "send_notify"):
+            return te.process_provider(p, cfg, COLORS, "dark", hdir, hdir, "/tmp")
+
+    def test_default_shows_derived(self):
+        hdir = tempfile.mkdtemp()
+        self._seed_history(hdir)
+        r = self._run({"nameColor": "#fff"}, hdir)
+        self.assertTrue(any("今日消耗" in line for line in r["lines"]))
+        self.assertTrue(any("近7天" in line for line in r["lines"]))
+
+    def test_false_hides_derived(self):
+        hdir = tempfile.mkdtemp()
+        self._seed_history(hdir)
+        r = self._run({"nameColor": "#fff", "showDerived": False}, hdir)
+        self.assertEqual(len(r["lines"]), 1, f"只应剩余额行，实际 {r['lines']}")
+        self.assertFalse(any("今日消耗" in line for line in r["lines"]))
+        self.assertFalse(any("近7天" in line for line in r["lines"]))
+
+    def test_false_still_accumulates_history(self):
+        hdir = tempfile.mkdtemp()
+        self._run({"showDerived": False}, hdir)
+        hist = os.path.join(hdir, f"history-{BALANCE_P['id']}.jsonl")
+        self.assertTrue(os.path.exists(hist), "关掉展示不能断快照历史")
+        with open(hist) as f:
+            self.assertIn(",8.0", f.read())
+
+
 class TestParseStatus(unittest.TestCase):
     def test_ok(self):
         p = {"id": "mimo", "name": "MiMo",
