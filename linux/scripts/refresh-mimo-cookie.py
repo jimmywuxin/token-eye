@@ -258,47 +258,62 @@ def store_keyring(cookie_str):
     return bool(back) and bool(back[0].get_secret())
 
 
+BALANCE_URL = "https://platform.xiaomimimo.com/api/v1/balance"
+BALANCE_UA = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+              "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
+
+
+def check_cookie(cookie_str):
+    """用给定 Cookie 调 balance API，返回 (http_code_str, body)。"""
+    r = subprocess.run(
+        ["curl", "-s", "--max-time", "8", "-w", "|HTTP:%{http_code}",
+         "-H", "Cookie: " + cookie_str,
+         "-H", "Accept: application/json",
+         "-H", "User-Agent: " + BALANCE_UA,
+         BALANCE_URL],
+        capture_output=True, text=True)
+    body = r.stdout.rsplit("|HTTP:", 1)
+    return (body[1] if len(body) > 1 else "?"), (body[0] if len(body) > 1 else "")
+
+
 def main():
     found = None
+    stale = []     # 提取到完整 Cookie 但 API 校验未通过（多半是过期会话）
     tried = []
     for browser in BROWSERS:
         tried.append(browser["name"])
         result = try_extract(browser)
-        if result:
-            found = result
-            break
+        if not result:
+            continue
+        name, cookies = result
+        cookie_str = "; ".join(f"{k}={v}" for k, v in cookies.items())
+        # 先校验再用：否则「在 A 浏览器重新登录，B 浏览器还留着过期的完整
+        # Cookie」时会拿 B 的旧 Cookie 收工 → 永远试不到 A 的新 Cookie
+        # （2026-10-18 与 Mac 版同修）。
+        code, _ = check_cookie(cookie_str)
+        if code != "200":
+            stale.append(f"{name}(HTTP {code})")
+            continue
+        found = (name, cookie_str)
+        break
     if not found:
-        sys.exit(f"错误: 未找到完整 Cookie（已按序尝试 {', '.join(tried)}）。"
-                 f"请先在 Chromium 登录 platform.xiaomimimo.com（保持窗口打开），"
-                 f"并确认 gnome-keyring 未锁，再重试")
+        detail = "、".join(stale) if stale else "未提取到完整 Cookie"
+        sys.exit(f"错误: 浏览器里的 MiMo Cookie 均无效（{detail}；已按序尝试 "
+                 f"{', '.join(tried)}）。请在浏览器重新登录 platform.xiaomimimo.com，"
+                 f"登录完成后等 5 秒再点「重试」")
 
-    browser_name, cookies = found
-    cookie_str = "; ".join(f"{k}={v}" for k, v in cookies.items())
+    browser_name, cookie_str = found
     print(f"提取成功（来源: {browser_name}）: 完整 Cookie 串 {len(cookie_str)} 字符")
 
     if not store_keyring(cookie_str):
         sys.exit("gnome-keyring 写入失败（MIMO_PLATFORM_TOKEN）")
     print(f"已更新 gnome-keyring: {KEYCHAIN_SERVICE}")
-
-    r2 = subprocess.run(
-        ["curl", "-s", "--max-time", "8", "-w", "|HTTP:%{http_code}",
-         "-H", "Cookie: " + cookie_str,
-         "-H", "Accept: application/json",
-         "-H", "User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-               "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-         "https://platform.xiaomimimo.com/api/v1/balance"],
-        capture_output=True, text=True)
-    body = r2.stdout.rsplit("|HTTP:", 1)
-    code = body[1] if len(body) > 1 else "?"
-    print(f"balance API: HTTP={code}")
-    if code == "200":
-        try:
-            os.unlink(CACHE_FILE)
-        except OSError:
-            pass
-        print("✅ Cookie 有效，Token Eye 余额显示已可用")
-    else:
-        print(f"⚠️ HTTP {code}，Cookie 可能无效或过期: {body[0][:150]}")
+    print("balance API: HTTP=200")
+    try:
+        os.unlink(CACHE_FILE)
+    except OSError:
+        pass
+    print("✅ Cookie 有效，Token Eye 余额显示已可用")
 
 
 if __name__ == "__main__":

@@ -197,21 +197,52 @@ def try_extract(browser):
     return None
 
 
+BALANCE_URL = "https://platform.xiaomimimo.com/api/v1/balance"
+BALANCE_UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+              "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 Edg/126.0.0.0")
+
+
+def check_cookie(cookie_str):
+    """用给定 Cookie 调 balance API，返回 (http_code_str, body)。"""
+    r = subprocess.run(
+        ["curl", "-s", "--max-time", "5", "-w", "|HTTP:%{http_code}",
+         "-H", "Cookie: " + cookie_str,
+         "-H", "Accept: application/json",
+         "-H", "User-Agent: " + BALANCE_UA,
+         BALANCE_URL],
+        capture_output=True, text=True)
+    body = r.stdout.rsplit("|HTTP:", 1)
+    return (body[1] if len(body) > 1 else "?"), (body[0] if len(body) > 1 else "")
+
+
 def main():
     found = None
+    stale = []     # 提取到完整 Cookie 但 API 校验未通过（多半是过期会话）
     tried = []
     for browser in BROWSERS:
         tried.append(browser["name"])
         result = try_extract(browser)
-        if result:
-            found = result
-            break
+        if not result:
+            continue
+        name, cookies = result
+        cookie_str = "; ".join(f"{k}={v}" for k, v in cookies.items())
+        # **先校验再用**：旧实现只要凑齐 4 个 Cookie 就直接收工，导致
+        # 「在 A 浏览器重新登录 MiMo，但 B 浏览器还留着过期的完整 Cookie」
+        # 时，脚本拿 B 的旧 Cookie 去验 → 401 → 报刷新失败，永远不会试到
+        # A 的新 Cookie（2026-10-18 用户实报）。
+        code, _ = check_cookie(cookie_str)
+        if code != "200":
+            stale.append(f"{name}(HTTP {code})")
+            continue
+        found = (name, cookie_str)
+        break
     if not found:
-        sys.exit(f"错误: 未找到完整 Cookie（已尝试 {', '.join(tried)}）。"
-                 f"请先在任一浏览器登录 platform.xiaomimimo.com（保持窗口打开），再重试")
+        detail = "、".join(stale) if stale else "未提取到完整 Cookie"
+        sys.exit(f"错误: 浏览器里的 MiMo Cookie 均无效（{detail}；已尝试 "
+                 f"{', '.join(tried)}）。请在浏览器重新登录 platform.xiaomimimo.com，"
+                 f"登录完成后等 5 秒再点「重试」")
 
-    browser_name, cookies = found
-    cookie_str = "; ".join(f"{k}={v}" for k, v in cookies.items())
+    browser_name, cookie_str = found
     print(f"提取成功（来源: {browser_name}）: 完整 Cookie 串 {len(cookie_str)} 字符")
 
     r = subprocess.run(
@@ -220,27 +251,14 @@ def main():
     if r.returncode != 0:
         sys.exit(f"Keychain 更新失败: {r.stderr[:200]}")
     print(f"已更新 Keychain: {KEYCHAIN_SERVICE}")
-
-    r2 = subprocess.run(
-        ["curl", "-s", "--max-time", "8", "-w", "|HTTP:%{http_code}",
-         "-H", "Cookie: " + cookie_str,
-         "-H", "Accept: application/json",
-         "-H", "User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 Edg/126.0.0.0",
-         "https://platform.xiaomimimo.com/api/v1/balance"],
-        capture_output=True, text=True)
-    body = r2.stdout.rsplit("|HTTP:", 1)
-    code = body[1] if len(body) > 1 else "?"
-    print(f"balance API: HTTP={code}")
-    if code == "200":
-        # 刷新成功 → 清掉 Token Eye 的错误短缓存（路径约定见 swiftbar/token_eye.py cache_path），
-        # 让下一次渲染（菜单点击自带的 refresh=true）立即重拉余额，不用等 10s 错误缓存过期
-        try:
-            os.unlink("/tmp/token-eye-cache-mimo.json")
-        except OSError:
-            pass
-        print("✅ Cookie 有效，Token Eye 余额显示已可用")
-    else:
-        print(f"⚠️ HTTP {code}，Cookie 可能无效或过期: {body[0][:150]}")
+    print("balance API: HTTP=200")
+    # 刷新成功 → 清掉 Token Eye 的错误短缓存（路径约定见 swiftbar/token_eye.py cache_path），
+    # 让下一次渲染（菜单点击自带的 refresh=true）立即重拉余额，不用等 10s 错误缓存过期
+    try:
+        os.unlink("/tmp/token-eye-cache-mimo.json")
+    except OSError:
+        pass
+    print("✅ Cookie 有效，Token Eye 余额显示已可用")
 
 
 if __name__ == "__main__":

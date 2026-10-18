@@ -976,7 +976,7 @@ def auto_refresh_cookie(flags_dir, pid, refresh_script, fail_cooldown=60, succes
             pass
     try:
         r = subprocess.run(["/usr/bin/python3", refresh_script],
-                           capture_output=True, text=True, timeout=30)
+                           capture_output=True, text=True, timeout=60)
         if r.returncode == 0 and "HTTP=200" in r.stdout:
             _write_flag(flag, f"{now} ok")
             _clear_flag(_flag_path(flags_dir, pid, "loginopened"))
@@ -1023,7 +1023,7 @@ def proactive_refresh_cookie(flags_dir, pid, refresh_script, interval):
         pass
     try:
         r = subprocess.run(["/usr/bin/python3", refresh_script],
-                           capture_output=True, text=True, timeout=30)
+                           capture_output=True, text=True, timeout=60)
         if r.returncode == 0 and "HTTP=200" in r.stdout:
             _write_flag(flag, str(now))
             _clear_flag(fail_flag)

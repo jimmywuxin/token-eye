@@ -124,7 +124,12 @@ if [ "${1:-}" = "refresh-mimo-cookie" ]; then
         # 失败必须说清楚：后台执行看不到 stdout，取脚本关键行发通知
         MSG="$(printf '%s\n' "$OUTPUT" | grep -m1 -E '错误|失败|⚠️' || true)"
         [ -n "$MSG" ] || MSG="$(printf '%s\n' "$OUTPUT" | tail -1 || true)"
-        notify "MiMo Cookie 刷新失败：$(printf '%s' "$MSG" | sed 's/|/:/g' | cut -c1-120)"
+        if printf '%s' "$MSG" | grep -q "重新登录"; then
+            # 会话真的失效：直接把「要做什么」写进通知，别让用户从长句里自己找
+            notify "MiMo 登录已失效：请在登录页重新登录，完成后点菜单「🔄 登录后重试」"
+        else
+            notify "MiMo Cookie 刷新失败：$(printf '%s' "$MSG" | sed 's/|/:/g' | cut -c1-120)"
+        fi
         echo "👁 | color=$C_ERR"
         echo "---"
         echo "❌ MiMo Cookie 刷新失败 | color=$C_ERR"
@@ -134,7 +139,10 @@ if [ "${1:-}" = "refresh-mimo-cookie" ]; then
             fi
         done
         echo "---"
-        echo "重试 | bash=$SCRIPT_DIR/token-eye.sh param1=refresh-mimo-cookie terminal=false refresh=true"
+        # 失败后的两条出路：先在浏览器重新登录 MiMo（会话过期时只有登录能救），
+        # 登录完成后点「重试」重新提取 Cookie。不写这条链接用户只能自己猜。
+        echo "🌐 打开 MiMo 平台重新登录 | href=https://platform.xiaomimimo.com/console/balance color=$C_WARN"
+        echo "🔄 登录后重试（提取新 Cookie） | bash=$SCRIPT_DIR/token-eye.sh param1=refresh-mimo-cookie terminal=false refresh=true"
         echo "关闭 | refresh=true"
     fi
     exit 0
