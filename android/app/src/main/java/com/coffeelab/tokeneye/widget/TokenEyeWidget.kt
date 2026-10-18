@@ -78,8 +78,8 @@ class TokenEyeWidget : GlanceAppWidget() {
                 .cornerRadius(16.dp)
                 .clickable(onClick = actionRunCallback<RefreshAction>())
                 .padding(horizontal = m.hPad, vertical = m.vPad),
-            // 自上而下排列：字号固定，多余空间留在底部（用户可拖小到 1 格）
-            verticalAlignment = Alignment.Vertical.Top,
+            // 多余高度由居中吸收（上方留白 = 下方留白），不再全堆在底部
+            verticalAlignment = Alignment.Vertical.CenterVertically,
         ) {
             if (m.showHeader) {
                 Row(
@@ -178,7 +178,9 @@ class TokenEyeWidget : GlanceAppWidget() {
             modifier = GlanceModifier
                 .width(size)
                 .height(size)
-                .background(ColorProvider(statusColor(status, stale))),
+                .background(ColorProvider(statusColor(status, stale)))
+                // 圆点：方块在小尺寸下显得笨重，圆点在深色卡片上更精致
+                .cornerRadius((size.value / 2f).dp),
         ) {}
     }
 
@@ -212,61 +214,69 @@ class TokenEyeWidget : GlanceAppWidget() {
         val h = height.value
         val w = width.value
         val n = rows.size.coerceAtLeast(1)
-        // 1 格高（≈40-70dp）装不下「标题行 + 数据行」，此时只留数据
-        val showHeader = h >= 72f
-        val titleSize = 10f.sp
-        val vPad = if (showHeader) 8f.dp else 1f.dp
-        val hPad = if (w < 160f) 8f.dp else 12f.dp
 
-        // 字号固定：只受宽度约束（放不下就缩短摘要，实在不行才缩字）
-        // rows 为空（首装未填密钥 / 快照为空）时 fitRow 无候选可取，直接给默认字号
+        // 先定字号：2 格以上放宽到 READ_FS（宽屏可读性），1 格保持 ROW_FS；
+        // 标题跟随数据行一起放大（原 10sp 固定值在 15sp 数据行旁边显得过小）
+        val big = h >= 120f
+        val baseFs = if (big) READ_FS else ROW_FS
+        val titleFs = if (big) READ_FS else TITLE_FS
+        val metaFs = if (big) 11f else 9f
         val cands = rows.map { summaryCandidates(shortSummary(it)) }
         val nameEm = rows.map { emWidth(it.name) }
-        val availW = w - 2f * hPad.value
-        val (rowSize, level) = if (rows.isEmpty()) ROW_FS to 0
-        else fitRow(availW, nameEm, cands)
+        val availW = w - 2f * hPadFor(w).value
+        val (rowSize, level) = if (rows.isEmpty()) baseFs to 0
+        else fitRow(availW, nameEm, cands, baseFs)
 
-        // 行距：把富余高度匀一部分进来，但不撑太开（上限 MAX_GAP），其余留在底部
-        val headerH = if (showHeader) titleSize.value * 1.4f else 0f
+        // 标题行「装得下才显示」：1 格高 + 多行数据时优先保数据，不再按固定高度阈值切
+        val titleBlock = titleFs * 1.4f + MIN_GAP
+        val showHeader = h - 2f * VPAD_ROOMY - titleBlock - n * rowSize * 1.35f >= 0f
+        val vPad = if (showHeader) VPAD_ROOMY else VPAD_TIGHT
+
+        // 行距：富余高度按「实际间距个数」均分 —— 标题后 1 个 + 行间 n-1 个 = n 个。
+        // 原实现除以 (n+1) 且上限 12dp，导致 2 格高时富余高度全堆在底部（大片空白）。
+        val headerH = if (showHeader) titleFs * 1.4f else 0f
         val contentH = headerH + n * rowSize * 1.35f
-        val spare = (h - 2f * vPad.value - contentH) / (n + 1)
-        val gap = if (showHeader) spare.coerceIn(4f, MAX_GAP) else 1f
+        val spare = (h - 2f * vPad - contentH) / n
+        val gap = if (showHeader) spare.coerceIn(MIN_GAP, MAX_GAP) else MIN_GAP_TIGHT
 
         return Metrics(
             showHeader = showHeader,
             showTime = w >= 210f,
             summaryLevel = level,
-            titleSize = titleSize,
-            metaSize = 9f.sp,
+            titleSize = titleFs.sp,
+            metaSize = metaFs.sp,
             rowSize = rowSize.sp,
             dotSize = (rowSize * 0.5f).roundToInt().toFloat().dp,
             gap = gap.dp,
-            hPad = hPad,
-            vPad = vPad,
+            hPad = hPadFor(w),
+            vPad = vPad.dp,
         )
     }
 
+    private fun hPadFor(width: Float): Dp = if (width < 160f) 8f.dp else 12f.dp
+
     /**
-     * 固定字号 ROW_FS，宽度装不下时逐级缩短摘要；最短摘要仍放不下才缩字号（下限 9sp）。
+     * 以 baseFs 为目标字号，宽度装不下时逐级缩短摘要；最短摘要仍放不下才缩字号（下限 9sp）。
      * 返回 (字号, 摘要级别)
      */
     private fun fitRow(
         availW: Float,
         nameEm: List<Double>,
         cands: List<List<String>>,
+        baseFs: Float = ROW_FS,
     ): Pair<Float, Int> {
         val last = cands[0].lastIndex
         for (level in 0 until last) {
             val need = cands.indices.maxOf { i ->
                 nameEm[i] + DOT_EM + emWidth(cands[i][level])
             }.toFloat()
-            val fs = minOf(ROW_FS, availW / need)
-            if (fs >= ROW_FS * 0.9f) return fs to level
+            val fs = minOf(baseFs, availW / need)
+            if (fs >= baseFs * 0.9f) return fs to level
         }
         val need = cands.indices.maxOf { i ->
             nameEm[i] + DOT_EM + emWidth(cands[i][last])
         }.toFloat()
-        return maxOf(9f, minOf(ROW_FS, availW / need)) to last
+        return maxOf(9f, minOf(baseFs, availW / need)) to last
     }
 
     /**
@@ -290,10 +300,20 @@ class TokenEyeWidget : GlanceAppWidget() {
 
     private companion object {
         val TIME_FMT = SimpleDateFormat("HH:mm", Locale.getDefault())
-        /** 数据行固定字号（不随小部件尺寸放大） */
+        /** 数据行基础字号（1 格紧凑态） */
         const val ROW_FS = 13f
-        /** 富余高度匀给行距的上限，避免高格子里行距撑太开 */
+        /** 2 格及以上的数据行字号：靠字号填充空间，而不是拉大行距 */
+        const val READ_FS = 15f
+        /** 标题字号：1 格紧凑态（2 格以上与数据行同号，见 metrics） */
+        const val TITLE_FS = 11f
+        /** 行距下限 / 1 格无标题时的行距 */
+        const val MIN_GAP = 4f
+        const val MIN_GAP_TIGHT = 1f
+        /** 行距上限：行距只做呼吸感，富余高度交给居中（拉开到 30dp 会显得稀疏） */
         const val MAX_GAP = 12f
+        /** 垂直内边距：有标题时宽松，1 格紧凑时收窄 */
+        const val VPAD_ROOMY = 8f
+        const val VPAD_TIGHT = 4f
         /** 状态圆点 + 间隔占用的宽度（em，以行字号为基准） */
         const val DOT_EM = 1.2
     }
