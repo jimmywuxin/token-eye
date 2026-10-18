@@ -88,19 +88,27 @@
     "name": "智谱 GLM",
     "id": "glm",
     "keychainService": "GLM_API_KEY",
-    "consoleUrl": "https://open.bigmodel.cn/console/overview",
+    "consoleUrl": "https://bigmodel.cn/console/overview",
     "api": {
-      "url": "https://open.bigmodel.cn/api/paas/v4/models",
+      "url": "https://www.bigmodel.cn/api/biz/account/query-customer-account-report",
       "method": "GET",
       "authHeader": "Authorization",
-      "authPrefix": "Bearer "
+      "authPrefix": "",
+      "envelope": {
+        "codePath": "code",
+        "okCodes": [200],
+        "msgPath": "msg"
+      }
     },
     "parser": {
-      "type": "status",
-      "okField": "data"
+      "type": "balance",
+      "fields": {
+        "balance": "data.availableBalance"
+      }
     },
     "display": {
-      "label": "可用"
+      "unit": "¥",
+      "label": "余额"
     }
   },
   {

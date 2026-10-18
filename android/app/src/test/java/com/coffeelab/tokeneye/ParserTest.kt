@@ -240,7 +240,12 @@ class ParserTest {
             """{"is_available":true,"balance_infos":[{"currency":"CNY","total_balance":"9.93"}]}"""
         ).asJsonObject
         val r = ResultParser.parse(p, data, config.alerts, emptyMap())
-        val line = r.details.first { it.startsWith("空闲") || it.startsWith("节假日") || it.startsWith("高峰") }
+        // 周末（周六/日）时段文案是「周末」而非「空闲」，必须一并匹配，
+        // 否则测试只在工作日跑得通（2026-10-18 周日晚实测 NoSuchElementException）
+        val line = r.details.first {
+            it.startsWith("空闲") || it.startsWith("节假日") ||
+                it.startsWith("高峰") || it.startsWith("周末")
+        }
         assertFalse("空表时不应判出「节假日」，实际：$line", line.startsWith("节假日"))
     }
 

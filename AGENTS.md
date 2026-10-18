@@ -141,6 +141,7 @@ Python 核心逻辑：
 - `cacheTtl` — 单 provider 覆盖全局缓存 TTL
 - `alert.minBalance` / `alert.minPct` / `alert.dailySpendMax` / `alert.daysLeft` — 单 provider 告警阈值（balance 余额/用量百分比/当日消耗上限/预计可用天数预警）
 - `api.headers` — 额外请求头（如 OpenAI Organization、User-Agent）
+- `api.envelope` — 业务码校验 `{codePath, okCodes, msgPath}`：国内平台常用 `HTTP 200 + body.code` 表达错误（智谱无效 Key 返回 `code:401`），不配就会渲染成「✅ ¥?」假绿。配了以后非 `okCodes` 的响应走鉴权错误分支，显示平台原文。三端口径一致（Mac `apply_envelope` / Android `envelopeError`）；响应缺该字段时放行
 - `parser.barLength` — 进度条长度，默认 20
 - ~~`parser.statusMap`~~ / ~~`parser.fields.intervalStatus` / `weeklyStatus`~~ / ~~`parser.fields.intervalTotal` / `weeklyTotal`~~ — **已废弃，`token_eye.py` 与 Android `ResultParser` 都不读取**：老接口的「状态码→文案映射」与「按次数算百分比」两条路径在 v0.13 统一为百分比口径时就断了，配置键与 JSON Schema 保留只为兼容旧配置，**别当功能用、也别接线**。现行口径：状态一律按**已用%** 分档（<80 正常 / 80–99 临近 / ≥100 耗尽，Mac 侧常量 `USED_WARN_PCT` / `USED_OVER_PCT`，Android 侧同值硬编码）；余额单位来自接口 `fields.currency`（USD→`$`，其余 `¥`），用量行的 `%` 写死在渲染代码里 → **`display.unit` 同样不读取**（Android 侧已从 `DisplaySpec` 删掉该字段），`display.label` 只有 `status` parser 会用
 - `display.nameColor` — 平台名颜色；支持深浅双套 `{"dark":"#xxx","light":"#xxx"}`，随系统外观切换（注意红绿色弱对比度）

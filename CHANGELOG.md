@@ -2,8 +2,24 @@
 
 ## [Unreleased]
 
+## [0.23.8] - 2026-10-19
+
 ### 变更
 - **新增 `display.showDerived`（默认 `true`）**：`balance` 类 provider 设 `false` 时只显示余额，隐藏「今日消耗 + 预计可用」「近 7 天」两行派生统计。MiMo 按此配置（用量稀疏，柱状长期平坦，两行信息价值低）。快照历史与每日消耗仍照常累积/计算 —— 关掉再开回来历史不断档，`alert.dailySpendMax` / `alert.daysLeft` 告警不受影响
+
+### 新增
+- **智谱 GLM 余额**（`zhipu` provider，`balance` 型）：`GET www.bigmodel.cn/api/biz/account/query-customer-account-report`，字段 `data.availableBalance`。鉴权用 `authPrefix: ""`（裸 API Key，实测带 `Bearer ` 也能通，与官方前端一致用裸 Key）。**不需要 Cookie**，与 MiMo 的会话 Cookie 机制无关
+- **`api.envelope` 业务码校验**：国内平台常用 `HTTP 200 + body.code` 表达错误，只按 HTTP 码判定会把无效 Key 渲染成 `✅ ¥?` 假绿。配置后非 `okCodes` 的响应走鉴权错误分支并显示平台原文（如智谱「令牌已过期或验证不正确」）。Mac `apply_envelope` / Android `envelopeError` 同口径，未配置时行为不变；响应缺该字段时一律放行
+
+### 说明
+- 智谱余额接口是官网前端在用的内部接口（官方文档未收录），只认 API Key、无 Cookie、无会话过期问题
+- 智谱 Coding Plan 额度接口（`/api/monitor/usage/quota/limit`）同样只认 API Key，但未订阅套餐时返回 `code:500 当前用户不存在coding plan`，本期未接入
+- 千问（阿里云百炼）**按量计费查不到余额**：`api/v1/usage`、`api/v1/account/quota`、`compatible-mode/v1/models/quota` 等 6 个候选路径实测全 404；余额在阿里云账号层面，需 BSS AccessKey 签名接口。模板库保留 `status` 型（仅验 Key 有效）
+- 模板库 `glm` 由 `status` 升级为 `balance`；`qwen` 保持 `status`
+- 测试：Python 217 例（新增 envelope 9 例，含「无效 Key 不许假绿」端到端）、Kotlin 51 例（新增 7 例）
+
+### 修复
+- **Android 单测在周末必挂**：`peakWindow_empty_holiday_table_degrades_to_weekdays` 只匹配「空闲/节假日/高峰」，周六日文案是「周末」→ 抛 `NoSuchElementException`。补齐匹配集合，测试不再依赖运行当天是星期几
 
 ## [0.23.7] - 2026-10-18
 

@@ -91,6 +91,21 @@
         "headers": {
           "type": "object",
           "additionalProperties": { "type": "string" }
+        },
+        "envelope": {
+          "type": "object",
+          "description": "业务码校验：国内平台常用 HTTP 200 + body.code 表达错误（如智谱 code=401 表示令牌失效）。配置后非 okCodes 的响应改判为鉴权错误，避免渲染成「✅ ¥?」假绿。不配则只看 HTTP 码。",
+          "properties": {
+            "codePath": { "type": "string", "default": "code", "description": "业务码字段路径" },
+            "okCodes": {
+              "type": "array",
+              "items": { "description": "视为成功的业务码（数字或字符串，按字符串比对）" },
+              "default": [200],
+              "description": "视为成功的业务码（按字符串比对）"
+            },
+            "msgPath": { "type": "string", "default": "msg", "description": "错误文案字段路径" }
+          },
+          "additionalProperties": true
         }
       },
       "additionalProperties": true

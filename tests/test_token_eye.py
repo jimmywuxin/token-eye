@@ -355,6 +355,81 @@ class TestParseBalance(unittest.TestCase):
         self.assertNotIn("✅", r["menu_bar"])
 
 
+class TestEnvelope(unittest.TestCase):
+    """api.envelope 业务码校验（智谱等国内平台用 HTTP 200 + body.code 表达错误）。
+
+    不配 envelope 时必须完全保留旧行为，否则会误伤所有现有 provider。
+    """
+
+    API = {"url": "https://example.com/api", "envelope": {
+        "codePath": "code", "okCodes": [200], "msgPath": "msg"}}
+
+    def test_no_envelope_passthrough(self):
+        r = ok_result({"code": 401, "msg": "令牌已过期"})
+        self.assertEqual(te.apply_envelope(r, {"url": "x"}), r)
+
+    def test_ok_code_passthrough(self):
+        r = ok_result({"code": 200, "data": {"balance": 1}})
+        self.assertEqual(te.apply_envelope(r, self.API), r)
+
+    def test_failed_code_becomes_client_error(self):
+        r = te.apply_envelope(ok_result({"code": 401, "msg": "令牌已过期或验证不正确"}),
+                              self.API)
+        self.assertFalse(r["ok"])
+        self.assertEqual(r["error_kind"], "client")
+        self.assertEqual(r["message"], "令牌已过期或验证不正确")
+        self.assertIsNone(r["data"])
+
+    def test_missing_code_field_passthrough(self):
+        # 响应里没有业务码 → 当成功处理，避免把非 envelope 结构误判
+        r = ok_result({"balance": 1})
+        self.assertEqual(te.apply_envelope(r, self.API), r)
+
+    def test_string_code_matches(self):
+        r = ok_result({"code": "200"})
+        self.assertEqual(te.apply_envelope(r, self.API), r)
+
+    def test_http_error_untouched(self):
+        # HTTP 层已失败时不重复处理（保留原 message）
+        r = {"ok": False, "status": 500, "data": None,
+             "error_kind": "server", "message": "服务端异常 HTTP 500"}
+        self.assertEqual(te.apply_envelope(r, self.API), r)
+
+    def test_missing_msg_uses_code(self):
+        r = te.apply_envelope(ok_result({"code": 1001}), self.API)
+        self.assertIn("1001", r["message"])
+
+    def test_fetch_with_envelope_applies_check(self):
+        # 集成：fetch_api 返回 HTTP 200 但业务码失败 → 最终 error_kind=client
+        api = dict(self.API, method="GET", authHeader="Authorization", authPrefix="")
+        with mock.patch.object(te, "fetch_api",
+                               return_value=ok_result({"code": 401, "msg": "bad key"})):
+            r = te.fetch_with_envelope(api, "k")
+        self.assertFalse(r["ok"])
+        self.assertEqual(r["error_kind"], "client")
+
+    def test_invalid_key_renders_error_not_fake_green(self):
+        """端到端：智谱 Key 失效（HTTP 200 + code 401）必须红，不能是「✅ ¥?」。"""
+        p = {
+            "id": "zhipu", "name": "智谱 GLM", "keychainService": "GLM_API_KEY",
+            "consoleUrl": "https://open.bigmodel.cn/usercenter/financial/overview",
+            "api": dict(self.API),
+            "parser": {"type": "balance",
+                       "fields": {"balance": "data.availableBalance"}},
+            "alert": {"minBalance": 5.0},
+        }
+        cfg = {"cache": {"balance": 300}}
+        fetch = {"ok": False, "status": 200, "data": None, "error_kind": "client",
+                 "message": "令牌已过期或验证不正确"}
+        with tempfile.TemporaryDirectory() as td, \
+                mock.patch.object(te, "get_key", return_value="k"), \
+                mock.patch.object(te, "fetch_with_envelope", return_value=fetch):
+            r = te.process_provider(p, cfg, COLORS, "dark", td, td, td)
+        self.assertEqual(r["status"], "error")
+        self.assertNotIn("✅", r.get("menu_bar", ""))
+        self.assertIn("令牌已过期", "".join(r["lines"]))
+
+
 class TestShowDerived(unittest.TestCase):
     """display.showDerived=false 时只显示余额（2026-10-18 MiMo 需求）。
 

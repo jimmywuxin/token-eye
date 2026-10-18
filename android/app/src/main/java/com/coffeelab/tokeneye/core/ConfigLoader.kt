@@ -81,6 +81,16 @@ object ConfigLoader {
                         authHeader = apiObj.get("authHeader")?.asString ?: "Authorization",
                         authPrefix = apiObj.get("authPrefix")?.asString ?: "Bearer ",
                         headers = strMap(apiObj.getAsJsonObject("headers")),
+                        envelope = apiObj.getAsJsonObject("envelope")?.let { env ->
+                            EnvelopeSpec(
+                                codePath = env.get("codePath")?.asString ?: "code",
+                                okCodes = env.getAsJsonArray("okCodes")
+                                    ?.mapNotNull { it.takeIf { e -> e.isJsonPrimitive }?.asString }
+                                    ?.ifEmpty { null }
+                                    ?: listOf("200"),
+                                msgPath = env.get("msgPath")?.asString ?: "msg",
+                            )
+                        },
                     ),
                     parser = parser,
                     display = display,

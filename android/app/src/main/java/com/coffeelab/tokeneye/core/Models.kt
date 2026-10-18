@@ -8,6 +8,18 @@ data class ApiSpec(
     val authHeader: String = "Authorization",
     val authPrefix: String = "Bearer ",
     val headers: Map<String, String> = emptyMap(),
+    val envelope: EnvelopeSpec? = null,
+)
+
+/**
+ * 业务码校验（对应 token_eye.py 的 apply_envelope）。
+ * 国内平台常用 HTTP 200 + body.code 表达错误（智谱 code=401 = 令牌失效），
+ * 只看 HTTP 码会把无效 Key 渲染成「¥?」假绿。
+ */
+data class EnvelopeSpec(
+    val codePath: String = "code",
+    val okCodes: List<String> = listOf("200"),
+    val msgPath: String = "msg",
 )
 
 /** parser 定义（balance / plan_usage / status） */

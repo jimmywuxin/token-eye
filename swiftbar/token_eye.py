@@ -22,7 +22,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime as _dt
 
-VERSION = "0.23.7"
+VERSION = "0.23.8"
 
 # 按 parser 类型的默认缓存 TTL（秒）
 DEFAULT_CACHE_TTL = {"balance": 300, "plan_usage": 30, "status": 60}
@@ -219,6 +219,38 @@ def classify_response(output, returncode):
                 "error_kind": "parse", "message": f"JSON 解析失败: {e}"}
     return {"ok": True, "status": status_code, "data": data,
             "error_kind": None, "message": ""}
+
+
+def apply_envelope(result, api):
+    """业务码校验：把「HTTP 200 但 body.code 非成功」转成 client 错误。
+
+    国内平台（智谱、百炼等）普遍用 `{"code":401,"msg":"..."}` + HTTP 200 表达
+    鉴权失败。只按 HTTP 码判定会把无效 Key 渲染成「✅ ¥?」假绿。配置
+    `api.envelope = {"codePath":"code","okCodes":[200],"msgPath":"msg"}` 后，
+    非 okCodes 的响应改走 render_error，显示真实原因（如「令牌已过期」）。
+    未配置 envelope 的 provider 行为完全不变。
+    """
+    env = (api or {}).get("envelope")
+    if not env or not result.get("ok"):
+        return result
+    code = resolve_field(result.get("data"), env.get("codePath", "code"))
+    ok_codes = [str(c) for c in (env.get("okCodes") or [200])]
+    if code is None or str(code) in ok_codes:
+        return result
+    msg = resolve_field(result.get("data"), env.get("msgPath", "msg")) or f"业务码 {code}"
+    return {"ok": False, "status": result.get("status"), "data": None,
+            "error_kind": "client", "message": str(msg)[:80]}
+
+
+def fetch_with_envelope(api, key):
+    """按 provider.api 配置发起请求，并应用 envelope 业务码校验。"""
+    result = fetch_api(
+        api["url"], api.get("method", "GET"),
+        api.get("authHeader", "Authorization"),
+        api.get("authPrefix", "Bearer "), key,
+        api.get("headers")
+    )
+    return apply_envelope(result, api)
 
 
 def fetch_api(url, method, auth_header, auth_prefix, key, extra_headers=None,
@@ -1086,12 +1118,7 @@ def process_provider(p, config, colors, appearance, cache_dir, hdir, project_dir
             return {"id": pid, "name": name, "status": "no_key", "lines": [],
                     "menu_bar": "", "console_url": console_url,
                     "keychainService": keychain}
-        fetch_result = fetch_api(
-            api["url"], api.get("method", "GET"),
-            api.get("authHeader", "Authorization"),
-            api.get("authPrefix", "Bearer "), key,
-            api.get("headers")
-        )
+        fetch_result = fetch_with_envelope(api, key)
         log_debug(hdir, f"[{pid}] 请求完成: ok={fetch_result['ok']} "
                         f"status={fetch_result.get('status')} "
                         f"kind={fetch_result.get('error_kind')} "
@@ -1111,12 +1138,7 @@ def process_provider(p, config, colors, appearance, cache_dir, hdir, project_dir
                 if refreshed:
                     key2 = get_key(keychain)
                     if key2:
-                        fetch_result = fetch_api(
-                            api["url"], api.get("method", "GET"),
-                            api.get("authHeader", "Authorization"),
-                            api.get("authPrefix", "Bearer "), key2,
-                            api.get("headers")
-                        )
+                        fetch_result = fetch_with_envelope(api, key2)
                         log_debug(hdir, f"[{pid}] 自愈重试: ok={fetch_result['ok']} "
                                         f"status={fetch_result.get('status')}")
                 elif err:
@@ -1144,12 +1166,7 @@ def process_provider(p, config, colors, appearance, cache_dir, hdir, project_dir
                 if prev is True:
                     key2 = get_key(keychain)
                     if key2:
-                        fetch_result = fetch_api(
-                            api["url"], api.get("method", "GET"),
-                            api.get("authHeader", "Authorization"),
-                            api.get("authPrefix", "Bearer "), key2,
-                            api.get("headers")
-                        )
+                        fetch_result = fetch_with_envelope(api, key2)
                         log_debug(hdir, f"[{pid}] 续期后重拉: ok={fetch_result['ok']} "
                                         f"status={fetch_result.get('status')}")
 

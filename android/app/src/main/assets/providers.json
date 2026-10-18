@@ -19,8 +19,23 @@
         },
         "peakWindow": {
           "tz": "Asia/Shanghai",
-          "weekdays": [1, 2, 3, 4, 5],
-          "hours": [[9, 12], [14, 18]],
+          "weekdays": [
+            1,
+            2,
+            3,
+            4,
+            5
+          ],
+          "hours": [
+            [
+              9,
+              12
+            ],
+            [
+              14,
+              18
+            ]
+          ],
           "holidays": true,
           "peakLabel": "⚡高峰",
           "offPeakLabel": "🌙空闲"
@@ -95,6 +110,41 @@
       },
       "alert": {
         "minPct": 80
+      }
+    },
+    {
+      "id": "zhipu",
+      "name": "智谱 GLM",
+      "keychainService": "GLM_API_KEY",
+      "consoleUrl": "https://bigmodel.cn/console/overview",
+      "api": {
+        "url": "https://www.bigmodel.cn/api/biz/account/query-customer-account-report",
+        "method": "GET",
+        "authHeader": "Authorization",
+        "authPrefix": "",
+        "envelope": {
+          "codePath": "code",
+          "okCodes": [
+            200
+          ],
+          "msgPath": "msg"
+        }
+      },
+      "parser": {
+        "type": "balance",
+        "fields": {
+          "balance": "data.availableBalance"
+        }
+      },
+      "display": {
+        "label": "余额",
+        "nameColor": {
+          "dark": "#5B7CFF",
+          "light": "#1F3AC7"
+        }
+      },
+      "alert": {
+        "minBalance": 5.0
       }
     }
   ],

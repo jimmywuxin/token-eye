@@ -37,6 +37,7 @@ object ApiClient {
         authPrefix: String,
         key: String,
         extraHeaders: Map<String, String> = emptyMap(),
+        envelope: EnvelopeSpec? = null,
     ): FetchResult = withContext(Dispatchers.IO) {
         val builder = Request.Builder().url(url)
         if (key.isNotBlank()) builder.header(authHeader, authPrefix + key)
@@ -63,6 +64,12 @@ object ApiClient {
                 try {
                     val parsed = JsonParser.parseString(body)
                     val obj = if (parsed.isJsonObject) parsed.asJsonObject else JsonObject()
+                    // 业务码校验：HTTP 200 但 body.code 非成功 → 鉴权/业务错误。
+                    // 与 token_eye.py 的 apply_envelope 同口径（未配 envelope 时原样返回）。
+                    val envErr = envelopeError(obj, envelope)
+                    if (envErr != null) {
+                        return@withContext FetchResult(errorKind = ErrorKind.AUTH, message = envErr)
+                    }
                     FetchResult(data = obj)
                 } catch (e: Exception) {
                     FetchResult(errorKind = ErrorKind.PARSE, message = "响应非 JSON：${e.message ?: ""}")
@@ -76,6 +83,18 @@ object ApiClient {
             FetchResult(errorKind = ErrorKind.NETWORK, message = e.message ?: "未知错误")
         }
     }
+}
+
+/**
+ * 业务码校验（纯函数，对齐 token_eye.py 的 apply_envelope）。
+ * 返回 null 表示通过；非 null 为错误文案。
+ * 未配 envelope 或响应里没有业务码字段时一律通过（避免误判非 envelope 结构）。
+ */
+fun envelopeError(obj: JsonObject, envelope: EnvelopeSpec?): String? {
+    if (envelope == null) return null
+    val code = resolveField(obj, envelope.codePath).asStringOrNull() ?: return null
+    if (code in envelope.okCodes) return null
+    return (resolveField(obj, envelope.msgPath).asStringOrNull() ?: "业务码 $code").take(80)
 }
 
 fun errorLabel(kind: ErrorKind): String = when (kind) {

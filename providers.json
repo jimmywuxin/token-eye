@@ -133,6 +133,39 @@
       "alert": {
         "minBalance": 5.0
       }
+    },
+    {
+      "id": "zhipu",
+      "name": "智谱 GLM",
+      "keychainService": "GLM_API_KEY",
+      "consoleUrl": "https://bigmodel.cn/console/overview",
+      "api": {
+        "url": "https://www.bigmodel.cn/api/biz/account/query-customer-account-report",
+        "method": "GET",
+        "authHeader": "Authorization",
+        "authPrefix": "",
+        "envelope": {
+          "codePath": "code",
+          "okCodes": [200],
+          "msgPath": "msg"
+        }
+      },
+      "parser": {
+        "type": "balance",
+        "fields": {
+          "balance": "data.availableBalance"
+        }
+      },
+      "display": {
+        "label": "余额",
+        "nameColor": {
+          "dark": "#5B7CFF",
+          "light": "#1F3AC7"
+        }
+      },
+      "alert": {
+        "minBalance": 5.0
+      }
     }
   ],
   "colors": {

@@ -60,6 +60,7 @@ object RefreshEngine {
                 authPrefix = p.api.authPrefix,
                 key = key,
                 extraHeaders = p.api.headers,
+                envelope = p.api.envelope,
             )
             if (!fetch.ok) {
                 anyFailed = true

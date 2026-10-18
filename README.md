@@ -282,7 +282,8 @@ SDK 路径写在 `android/local.properties`（本机 `/opt/homebrew/share/androi
 | `id` | ✅ | 平台唯一标识，如 `deepseek` |
 | `name` | ✅ | 显示名称 |
 | `keychainService` | ✅ | 密钥条目名（macOS Keychain / Linux gnome-keyring / Android Keystore） |
-| `api` | ✅ | `{ url, method="GET", authHeader="Authorization", authPrefix="Bearer ", headers={} }` |
+| `api` | ✅ | `{ url, method="GET", authHeader="Authorization", authPrefix="Bearer ", headers={}, envelope={} }` |
+| `api.envelope` | | 业务码校验，见「业务码校验（api.envelope）」 |
 | `parser` | ✅ | 见下表 |
 | `enabled` | | `false` 临时禁用该平台，不删配置 |
 | `consoleUrl` | | 详情菜单末尾「→ 打开 X 控制台」跳转链接 |
@@ -396,6 +397,33 @@ provider 配置 `consoleUrl`，详情菜单末尾出现「→ 打开 X 控制台
   "consoleUrl": "https://platform.deepseek.com/usage"
 }
 ```
+
+### 业务码校验（api.envelope）
+
+国内平台常把错误装在 **HTTP 200 + body.code** 里。例如智谱用无效 Key 请求余额接口，返回的是
+`HTTP 200` + `{"code":401,"msg":"令牌已过期或验证不正确"}` —— 只看 HTTP 码会把它渲染成
+`✅ ¥?`（假绿），用户看不到 Key 已失效。
+
+配 `api.envelope` 后，非成功业务码改判为鉴权错误，菜单红字显示平台原文：
+
+```json
+{
+  "api": {
+    "url": "https://www.bigmodel.cn/api/biz/account/query-customer-account-report",
+    "authHeader": "Authorization",
+    "authPrefix": "",
+    "envelope": { "codePath": "code", "okCodes": [200], "msgPath": "msg" }
+  }
+}
+```
+
+| 字段 | 默认 | 说明 |
+|---|---|---|
+| `codePath` | `code` | 业务码字段路径 |
+| `okCodes` | `[200]` | 视为成功的码（数字/字符串都行，按字符串比对） |
+| `msgPath` | `msg` | 错误文案字段路径 |
+
+响应里没有 `codePath` 对应字段时一律放行（避免误判非 envelope 结构的接口）。不配 `envelope` 的 provider 行为完全不变。
 
 ### 自定义请求头（api.headers）
 
