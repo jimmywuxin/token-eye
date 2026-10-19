@@ -50,7 +50,7 @@ echo "下一步：把 API Key 写入 gnome-keyring"
 "$PYTHON" "$LINUX_DIR/setup-keys.py" --list || true
 echo ""
 echo "运行: $PYTHON $LINUX_DIR/setup-keys.py"
-echo "（DeepSeek/MiniMax 填 Bearer key；MiMo 日后在 Chromium 登录后跑 refresh-mimo-cookie.py）"
+echo "（DeepSeek/MiniMax/智谱 填 API key；MiMo 日后在 Chromium 登录后跑 refresh-mimo-cookie.py）"
 echo ""
 echo "管理: systemctl --user status token-eye"
 echo "日志: journalctl --user -u token-eye -f"

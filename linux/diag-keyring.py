@@ -5,7 +5,7 @@ Token Eye — Linux keyring 诊断与修复（桌面运行）
 在【桌面终端】运行（不要在该 AI 沙箱里跑），因为它需要连你登录会话的 DBus。
 会依次：
   1) 尝试解锁默认钥匙环（自动解锁则直接成功，无需输入）
-  2) 列出 3 个 token-eye key 是否存在
+  2) 列出 4 个 token-eye key 是否存在
   3) 若存在但不完整 → 提示补写
   4) 全程不打印 key 明文
 """
@@ -21,6 +21,7 @@ def die(msg):
 SERVICES = [
     ("DEEPSEEK_API_KEY", "DeepSeek 余额监控（Bearer key）"),
     ("MINIMAX_CN_API_KEY", "MiniMax 用量监控（Bearer key）"),
+    ("GLM_API_KEY", "智谱 GLM 余额监控（裸 key，无 Bearer）"),
     ("MIMO_PLATFORM_TOKEN", "MiMo 余额监控（完整 Cookie 串）"),
 ]
 
@@ -78,7 +79,7 @@ for svc, desc in SERVICES:
 # ---- 4) 结论 ----
 print()
 if len(found) == len(SERVICES):
-    print("🎉 全部 3 个 key 都已就位且钥匙环已解锁。")
+    print("🎉 全部 4 个 key 都已就位且钥匙环已解锁。")
     print("   → 托盘仍读不到？手动重启一次托盘：")
     print("     systemctl --user restart token-eye.service    （若之前用的是 systemd）")
     print("     或直接：python3 ~/dev/token-eye/linux/token-eye-tray.py")
@@ -86,6 +87,6 @@ elif found:
     print(f"⚠️ 部分 key 缺失（已有 {len(found)} 个）。")
     print("   补写：python3 ~/dev/token-eye/linux/setup-keys.py")
 else:
-    print("⚠️ 3 个 key 全部缺失 —— 需要重新写入。")
+    print("⚠️ 4 个 key 全部缺失 —— 需要重新写入。")
     print("   逐个写入：python3 ~/dev/token-eye/linux/setup-keys.py DEEPSEEK_API_KEY")
     print("   回车跳过交互即可逐条填。MiMo 建议登录平台后跑 scripts/refresh-mimo-cookie.py 自动提取。")

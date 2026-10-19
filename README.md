@@ -58,7 +58,8 @@ brew install --cask swiftbar
 ```bash
 security add-generic-password -s "DEEPSEEK_API_KEY" -a "" -w "sk-你的key"
 security add-generic-password -s "MINIMAX_CN_API_KEY" -a "" -w "你的key"
-security add-generic-password -s "MIMO_API_KEY" -a "" -w "你的key"
+security add-generic-password -s "GLM_API_KEY" -a "" -w "你的智谱key"
+security add-generic-password -s "MIMO_PLATFORM_TOKEN" -a "" -w "完整Cookie串"
 ```
 
 Keychain 服务名约定：`<平台名大写>_API_KEY`。

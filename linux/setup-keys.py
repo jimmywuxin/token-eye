@@ -2,9 +2,10 @@
 """
 Token Eye — Linux 密钥管理（gnome-keyring / secretstorage）
 
-把三个平台的 API Key / Cookie 写入系统钥匙环（替代 macOS Keychain）：
+把四个平台的 API Key / Cookie 写入系统钥匙环（替代 macOS Keychain）：
   - DeepSeek   → DEEPSEEK_API_KEY      (Bearer key，platform.deepseek.com → API Keys)
   - MiniMax    → MINIMAX_CN_API_KEY    (Bearer key，platform.minimaxi.com → 开发设置)
+  - 智谱 GLM   → GLM_API_KEY           (裸 key 无 Bearer，bigmodel.cn → API Keys)
   - MiMo       → MIMO_PLATFORM_TOKEN   (完整 Cookie 串，先登录 platform.xiaomimimo.com
                                         再运行 scripts/refresh-mimo-cookie.py 自动提取)
 
@@ -20,6 +21,7 @@ import sys
 SERVICES = [
     ("DEEPSEEK_API_KEY", "DeepSeek 余额监控（Bearer key）"),
     ("MINIMAX_CN_API_KEY", "MiniMax 用量监控（Bearer key）"),
+    ("GLM_API_KEY", "智谱 GLM 余额监控（裸 key，无 Bearer）"),
     ("MIMO_PLATFORM_TOKEN", "MiMo 余额监控（完整 Cookie 串，或用刷新脚本自动填）"),
 ]
 

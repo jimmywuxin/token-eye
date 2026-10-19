@@ -57,12 +57,13 @@ python3 ~/dev/token-eye/linux/setup-keys.py
 
 ## 密钥管理
 
-三个平台的 key 存入 **gnome-keyring**（`secretstorage` 库），不落明文文件：
+四个平台的 key 存入 **gnome-keyring**（`secretstorage` 库），不落明文文件：
 
 | 平台 | Service 名 | 鉴权方式 | 说明 |
 |---|---|---|---|
 | DeepSeek | `DEEPSEEK_API_KEY` | Bearer | platform.deepseek.com → API Keys |
 | MiniMax | `MINIMAX_CN_API_KEY` | Bearer | platform.minimaxi.com → 开发设置 |
+| 智谱 GLM | `GLM_API_KEY` | 裸 key（无 Bearer） | bigmodel.cn → API Keys |
 | MiMo | `MIMO_PLATFORM_TOKEN` | Cookie | 需在 **Chromium** 登录后自动提取（见下） |
 
 ### MiMo Cookie 提取（已验证 ✅）
