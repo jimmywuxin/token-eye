@@ -131,33 +131,6 @@ class TestFormatMs(unittest.TestCase):
             self.assertEqual(te.format_ms(ms), format_countdown(ms // 1000))
 
 
-class TestSparkline(unittest.TestCase):
-    def test_empty(self):
-        self.assertEqual(te.sparkline([]), "")
-
-    def test_single(self):
-        # 单点数据：lo == hi → span 兜底为 1.0，映射到最低档 ▁
-        self.assertEqual(te.sparkline([5.0]), "▁")
-
-    def test_flat(self):
-        self.assertEqual(te.sparkline([5.0, 5.0, 5.0]), "▁▁▁")
-
-    def test_rising(self):
-        s = te.sparkline([0.0, 1.0])
-        self.assertEqual(s, "▁█")
-
-    def test_downsample_to_width(self):
-        # 超宽数据均匀降采样（趋势窗口 288 → 显示 24 字符）
-        s = te.sparkline(list(range(100)), width=10)
-        self.assertEqual(len(s), 10)
-        self.assertEqual(s[0], "▁")  # 最小值
-        self.assertEqual(s[-1], "█")  # 最大值
-        self.assertEqual(len(te.sparkline(list(range(100)))), 24)  # 默认宽度
-
-    def test_width_no_downsample_for_small(self):
-        self.assertEqual(len(te.sparkline([1.0, 2.0, 3.0])), 3)
-
-
 class TestNameColor(unittest.TestCase):
     def test_string(self):
         d = {"nameColor": "#FF0000"}
@@ -433,13 +406,13 @@ class TestEnvelope(unittest.TestCase):
 class TestShowDerived(unittest.TestCase):
     """display.showDerived=false 时只显示余额（2026-10-18 MiMo 需求）。
 
-    派生统计（今日消耗/预计可用、近 7 天柱状）只是展示层开关：
+    派生统计（今日消耗）只是展示层开关：
     快照历史仍要照常累积，否则关掉再开回来那段历史永远是空的；
     dailySpendMax / daysLeft 告警也依赖这些计算，不能被展示开关带走。
     """
 
     def _seed_history(self, hdir):
-        """写入今天内的两笔递减快照 → 今日消耗 ¥2.00，近 7 天有柱。"""
+        """写入今天内的两笔递减快照 → 今日消耗 ¥2.00。"""
         now = int(time.time())
         day0 = te.start_of_day(now)
         with open(os.path.join(hdir, f"history-{BALANCE_P['id']}.jsonl"), "w") as f:
@@ -460,7 +433,7 @@ class TestShowDerived(unittest.TestCase):
         self._seed_history(hdir)
         r = self._run({"nameColor": "#fff"}, hdir)
         self.assertTrue(any("今日消耗" in line for line in r["lines"]))
-        self.assertTrue(any("近7天" in line for line in r["lines"]))
+        self.assertEqual(len(r["lines"]), 2, f"余额行 + 今日消耗行，实际 {r['lines']}")
 
     def test_false_hides_derived(self):
         hdir = tempfile.mkdtemp()
@@ -468,7 +441,6 @@ class TestShowDerived(unittest.TestCase):
         r = self._run({"nameColor": "#fff", "showDerived": False}, hdir)
         self.assertEqual(len(r["lines"]), 1, f"只应剩余额行，实际 {r['lines']}")
         self.assertFalse(any("今日消耗" in line for line in r["lines"]))
-        self.assertFalse(any("近7天" in line for line in r["lines"]))
 
     def test_false_still_accumulates_history(self):
         hdir = tempfile.mkdtemp()
@@ -887,20 +859,6 @@ class TestConsumptionAndPrediction(unittest.TestCase):
         spend, pts = te.consumption_since(self.dir, "x", self.day0 - 86400)
         self.assertEqual(pts, 3)
         self.assertAlmostEqual(spend, 15.0)  # 50→40 (10) + 40→35 (5)
-
-    def test_daily_spend_series_buckets(self):
-        def ts(day_offset, sec):
-            return self.day0 + day_offset * 86400 + sec
-        self.write("x", [
-            (ts(-3, 3600), 100.0), (ts(-3, 7200), 95.0),   # day-3 消耗 5
-            (ts(-2, 3600), 95.0), (ts(-2, 7200), 90.0),    # day-2 消耗 5
-            (ts(-1, 86399), 90.0),                          # 前一天 23:59:59
-            (ts(0, 60), 85.0),                              # 今天 00:01 → 跨零点下降归今天
-            (ts(0, 3600), 82.0),                            # 今天再消耗 3
-        ])
-        series = te.daily_spend_series(self.dir, "x", 7)
-        # 索引 0 = 最早一天（6 天前），索引 -1 = 今天；day-3 消耗 5、day-2 消耗 5、今天 8
-        self.assertEqual(series, [0.0, 0.0, 0.0, 5.0, 5.0, 0.0, 8.0])
 
     def test_days_left(self):
         now = int(time.time())
@@ -1510,7 +1468,8 @@ class TestProcessProvider(unittest.TestCase):
         merged = [line for line in r["lines"] if "今日消耗" in line]
         self.assertEqual(len(merged), 1, f"合并行应唯一: {merged}")
         self.assertIn("今日消耗 ¥2.00", merged[0])
-        self.assertIn("预计可用", merged[0])
+        # 「预计可用 ~X 天」已从菜单移除（2026-10-19 用户定），只留今日消耗
+        self.assertNotIn("预计可用", merged[0])
 
     def test_balance_trend_shows_range_and_window_delta(self):
         """余额类详情菜单不再出现 2.4h 趋势行（简约化）；历史继续写入以便将来恢复。"""
@@ -1547,7 +1506,7 @@ class TestProcessProvider(unittest.TestCase):
                          f"不应出现趋势行: {r['lines']}")
 
     def test_balance_consumption_lines(self):
-        """余额类：今日消耗+预计可用合并行 + 近7天柱状 都出现（不再有本周/本月）。"""
+        """余额类：只出现「今日消耗」一行（预计可用、近7天柱状均已移除）。"""
         day0 = te.start_of_day()
         with open(os.path.join(self.dir, "history-deepseek.jsonl"), "w") as f:
             f.write(f"{day0 + 100},{50.0}\n")
@@ -1558,8 +1517,8 @@ class TestProcessProvider(unittest.TestCase):
                                 self.dir, self.dir, "/tmp")
         lines = "\n".join(r["lines"])
         self.assertIn("今日消耗", lines)
-        self.assertIn("预计可用", lines)
-        self.assertIn("近7天", lines)
+        self.assertNotIn("预计可用", lines)
+        self.assertNotIn("近7天", lines)
         # 本周/本月 / 趋势 已合并/删除
         self.assertNotIn("本周", lines)
         self.assertNotIn("本月", lines)

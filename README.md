@@ -28,7 +28,7 @@
 
 - 👁 菜单栏常驻图标，点击展开详情面板（可选显示汇总数字）
 - 💰 DeepSeek 余额监控（¥）+ 余额阈值告警
-- 📉 当日消耗估算 + 消耗监控：今日消耗、预计可用天数（按 24h 速率外推）、本周/本月消耗、近 7 天每日消耗柱状图（余额类平台）
+- 📉 当日消耗估算：余额类平台显示「今日消耗 ¥x.xx」，仅在当天余额确实下降时出现（零消耗日不占高度）
 - 📊 MiniMax 用量监控（M2.7 剩余次数 + 进度条 + 重置倒计时）
 - 💰 MiMo 余额监控（Cookie 鉴权）
 - 🔑 所有 API Key 统一从 macOS Keychain 读取，安全且变更无需重启
@@ -266,7 +266,7 @@ SDK 路径写在 `android/local.properties`（本机 `/opt/homebrew/share/androi
 | 配置字段 | 出现在哪 |
 |---|---|
 | `colors.{theme}.default` | 未设 `display.nameColor` 的 provider 名称行 |
-| `colors.{theme}.secondary` | balance 的「今日消耗 / 预计可用」「近 7 天」两行 |
+| `colors.{theme}.secondary` | balance 的「今日消耗」行 |
 | `colors.{theme}.muted` | 「上次更新」时间戳、「→ 打开 X 控制台」、🔧 自检、缺 Key 时的命令提示 |
 | `colors.{theme}.header` | 菜单栏 👁 标题、菜单首行「Token Eye」、新版本提示 |
 | `colors.{theme}.ok` / `warn` / `err` | 用量进度条行（已用 <80% / 80–99% / ≥100%）、峰谷标记、错误行 |
@@ -295,7 +295,7 @@ SDK 路径写在 `android/local.properties`（本机 `/opt/homebrew/share/androi
 | `display.nameColor` | | 平台名称色，见上表 |
 | `display.currencySymbols` | | 货币代码 → 符号映射，如 `{"USD":"$","EUR":"€"}`；未配置时 USD→`$`、其余→`¥` |
 | `display.label` | | 仅 `status` parser 用：菜单栏显示的标签文字（如「免费」） |
-| `display.showDerived` | | `balance` 类是否显示派生统计（今日消耗 + 预计可用、近 7 天柱状）。`false` = 只显示余额（MiMo 这样配）；快照历史仍照常累积，`dailySpendMax` / `daysLeft` 告警不受影响 |
+| `display.showDerived` | | `balance` 类是否显示派生统计（今日消耗，当日无消耗则不显示该行）。`false` = 只显示余额；快照历史仍照常累积，`dailySpendMax` / `daysLeft` 告警不受影响（`daysLeft` 只发通知，菜单不再展示「预计可用 ~N 天」） |
 | ~~`display.unit`~~ | | ⚠️ 当前版本**未读取**，保留仅为兼容旧配置 |
 
 ### parser 字段

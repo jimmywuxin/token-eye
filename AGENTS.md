@@ -145,7 +145,7 @@ Python 核心逻辑：
 - `parser.barLength` — 进度条长度，默认 20
 - ~~`parser.statusMap`~~ / ~~`parser.fields.intervalStatus` / `weeklyStatus`~~ / ~~`parser.fields.intervalTotal` / `weeklyTotal`~~ — **已废弃，`token_eye.py` 与 Android `ResultParser` 都不读取**：老接口的「状态码→文案映射」与「按次数算百分比」两条路径在 v0.13 统一为百分比口径时就断了，配置键与 JSON Schema 保留只为兼容旧配置，**别当功能用、也别接线**。现行口径：状态一律按**已用%** 分档（<80 正常 / 80–99 临近 / ≥100 耗尽，Mac 侧常量 `USED_WARN_PCT` / `USED_OVER_PCT`，Android 侧同值硬编码）；余额单位来自接口 `fields.currency`（USD→`$`，其余 `¥`），用量行的 `%` 写死在渲染代码里 → **`display.unit` 同样不读取**（Android 侧已从 `DisplaySpec` 删掉该字段），`display.label` 只有 `status` parser 会用
 - `display.nameColor` — 平台名颜色；支持深浅双套 `{"dark":"#xxx","light":"#xxx"}`，随系统外观切换（注意红绿色弱对比度）
-- `display.showDerived` — `balance` 类是否显示派生统计（今日消耗 + 预计可用、近 7 天柱状），默认 `true`；`false` 只显示余额（MiMo 当前如此）。**快照历史与每日消耗仍照常累积/计算**，关掉再开回来历史不断档，`dailySpendMax` / `daysLeft` 告警也不受影响
+- `display.showDerived` — `balance` 类是否显示派生统计（今日消耗），默认 `true`；`false` 只显示余额。该行只在当天余额确实下降（spend>0）时渲染，零消耗日不占高度。**「预计可用 ~N 天」已于 2026-10-19 从菜单移除**（用户定），`days_left()` 仍为 `alert.daysLeft` 计算、只是不再展示；**MiMo 已于同日打开派生统计**（原本 `showDerived:false`），与 DeepSeek/GLM 一致。**快照历史与每日消耗仍照常累积/计算**，关掉再开回来历史不断档，`dailySpendMax` / `daysLeft` 告警也不受影响
 - `refreshParam` — 鉴权错误时自动刷新 + 菜单「🔄 刷新 Cookie」点击项（如 MiMo 的 `refresh-mimo-cookie`）
 - `refreshInterval` — 主动续期周期（秒，≥60）：即使 cookie 仍有效也定期从浏览器复制最新 cookie，保持 keychain 与浏览器会话同步、减少 401 触发面（仅对配置了 `refreshParam` 的 provider 生效）
 - `enabled` — 设为 false 临时禁用
@@ -199,7 +199,7 @@ Python 核心逻辑：
 - **点「刷新」= 主动重拉（`--force-refresh`）**：菜单底部「刷新」是 `bash=… param1=refresh-now terminal=false refresh=true` 动作，**不是裸 `refresh=true`**——裸写法 SwiftBar 以零参数重跑插件，`param1` 根本传不进来（见上文「SwiftBar 交互项铁律」）。启动器收到 `refresh-now` 后以 `--force-refresh` 跑一轮核心逻辑，stdout 丢弃、结果由随后的 `refresh=true` 重渲回显。`force=True` 只做两件事：① 忽略 10s 错误短缓存（否则刚失败就点会直接命中缓存、压根不打 API，看着像「点了没反应」）；② `auto_refresh_cookie(force=True)` 跳过 1 分钟冷却立即跑脚本。于是**一次点击**即可跑完「刷 Cookie → 重拉余额 → 直接显示新余额」，不必等冷却过完再点第二次。**成功缓存（默认 300s）照常复用**，force 不额外打 API；`_open_login_page` 的 30 分钟限频也不受 force 影响（防连点反复弹浏览器）
 - 历史文件（history-*.jsonl）保留 30 天，每天自动清理一次（`cleanup_history` / `last-cleanup.ts` 标记），防无限增长
 - 告警通知默认带提示音（`TOKEN_EYE_SOUND` 换声音名，`0` 静音）；`TOKEN_EYE_DEBUG=1` 时请求明细写入 `~/Library/Caches/token-eye/debug.log`
-- 历史只服务 balance 类平台（消耗统计/预测/7 天柱状）：近 7 天每日消耗按天分桶后用 `sparkline` 渲染成 24 字符宽柱状（`▁▂▃▄▅▆▇█`）；plan_usage **不写历史**（趋势展示已下线，别再加回来）
+- 历史只服务 balance 类平台（今日消耗 / 每天可用天数外推 / `dailySpendMax`·`daysLeft` 告警）；plan_usage **不写历史**（趋势展示已下线，别再加回来）。**近 7 天柱状图与 `sparkline`/`daily_spend_series` 已于 2026-10-19 按用户要求从 mac 版移除**（Linux 版仍保留），别再当现有功能引用
 - **点击动作必须写成 `bash=` + `param1=`**（SwiftBar 铁律，2026-09-11 踩坑）：SwiftBar 的 `param1=`/`param2=` **不会传给插件本身**，只作为 `bash=` 所指定脚本的入参（上游 `MenuLineParameters.bashParams` 仅在 `params.bash` 存在时被消费）；只写 `refresh=true` 时 SwiftBar 会用**零参数**重跑插件，点击等于没反应。正确格式 `bash=<插件绝对路径> param1=<动作> terminal=false refresh=true`：`terminal` 默认 **true**（不写会弹 Terminal.app），`refresh=true` 让脚本跑完自动重渲菜单。路径由 `action_script_path()` 解析（`SWIFTBAR_PLUGIN_PATH` → `SCRIPT_DIR` → 模块同级）
 - 点击动作在后台执行（`terminal=false`），**stdout 会被丢弃**：结果反馈走 `notify()`（osascript 系统通知），自检详情另存 `~/Library/Caches/token-eye/self-check.log`
 - 行级交互参数（`bash=`/`param1=copy-balance` / `href`）通过 render dict 的 `line_params` 列表与 `lines` 一一对应，新增行时必须同步 append（None 或参数 dict）

@@ -22,7 +22,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime as _dt
 
-VERSION = "0.23.13"
+VERSION = "0.23.14"
 
 # 按 parser 类型的默认缓存 TTL（秒）
 DEFAULT_CACHE_TTL = {"balance": 300, "plan_usage": 30, "status": 60}
@@ -436,36 +436,6 @@ def days_left(hdir, pid, current_balance, window_hours=24, epsilon=0.001):
         return 0.0
     # window_hours 内消耗 consumed → 每天速率 consumed*24/window_hours → 可用天数
     return bal * window_hours / (consumed * 24)
-
-
-def daily_spend_series(hdir, pid, days=7, epsilon=0.001):
-    """近 days 天（含今天）每日消耗，索引 0 = 最早一天，索引 -1 = 今天。
-    跨零点下降归到后一天。"""
-    now = int(time.time())
-    today0 = start_of_day(now)
-    start = today0 - (days - 1) * 86400
-    hist = [(ts, val) for ts, val in load_history(hdir, pid, n=10000) if ts >= start]
-    buckets = [0.0] * days
-    for (t1, v1), (t2, v2) in zip(hist, hist[1:]):
-        if v2 < v1 - epsilon:
-            idx = days - 1 - int((today0 - start_of_day(t2)) // 86400)
-            if 0 <= idx < days:
-                buckets[idx] += v1 - v2
-    return buckets
-
-
-def sparkline(values, width=24):
-    """迷你走势图：values 均匀降采样到 width 个点（默认 24 字符宽），
-    窗口内 min→max 归一化到 8 档字符。"""
-    if not values:
-        return ""
-    if len(values) > width:
-        idxs = [int(i * (len(values) - 1) / (width - 1)) for i in range(width)]
-        values = [values[i] for i in idxs]
-    lo, hi = min(values), max(values)
-    span = hi - lo if hi > lo else 1.0
-    chars = "▁▂▃▄▅▆▇█"
-    return "".join(chars[min(len(chars) - 1, int((v - lo) / span * (len(chars) - 1)))] for v in values)
 
 
 # ---------------------------------------------------------------------------
@@ -1217,39 +1187,30 @@ def process_provider(p, config, colors, appearance, cache_dir, hdir, project_dir
     # 避免两处各算各的不一致（特别是 API 字段阈值场景下）。
     min_balance = render.get("min_balance")
 
-    # Balance history + 简约消耗视图（今日消耗 + 预计可用合并为一行；近 7 天柱状独立一行）
+    # Balance history + 简约消耗视图（只有「今日消耗 + 预计可用」一行；7 天柱状已移除，2026-10-19）
     # 余额型 provider（DeepSeek / MiMo 等）无总额上限，故不展示进度条。
-    # display.showDerived=false 的 provider（如 MiMo）只显示余额，跳过下面两行派生统计。
+    # display.showDerived=false 的 provider（如 MiMo）只显示余额，跳过派生统计行。
     if ptype == "balance" and render.get("balance_num") is not None:
         append_history(hdir, pid, render["balance_num"])
         symbol = render.get("symbol", "¥")
         # 今日消耗估算（相邻余额快照下降量之和，充值抬升余额的尖刺不受干扰）
         spend, pts = daily_spend(hdir, pid)
         render["_daily_spend"] = spend
-        # 预计可用天数（按最近 24h 消耗速率外推）
+        # 预计可用天数（按最近 24h 消耗速率外推）：**不再上菜单**（2026-10-19 用户定），
+        # 只留给 alert.daysLeft 告警用；没配该阈值时这项纯属白算，但便宜（毫秒级）。
         days = days_left(hdir, pid, render["balance_num"])
         render["_days_left"] = days
-        # display.showDerived=false → 只显示余额，隐藏下面两行派生统计。
+        # display.showDerived=false → 只显示余额，隐藏派生统计行。
         # 快照历史与每日消耗**照常累积/计算**（append_history/daily_spend 在上面已执行）：
         # 关掉再开回来历史不断档，alert.dailySpendMax / alert.daysLeft 也不受影响。
         if p.get("display", {}).get("showDerived", True):
-            # 行 1：今日消耗 + 预计可用（合并显示，最有业务价值的一行）
+            # 行 1：只有今日消耗（「预计可用 ~X 天」按用户要求去掉，2026-10-19）
             if pts >= 2 and spend > 0:
-                left = f"  今日消耗 {symbol}{spend:.2f}"
-                if days is not None:
-                    left += "  预计可用 " + (f"~{days:.1f} 天" if days < 30 else f"充足（>{days:.0f} 天）")
-                render.setdefault("lines", []).append(left)
+                render.setdefault("lines", []).append(f"  今日消耗 {symbol}{spend:.2f}")
                 render.setdefault("colors", []).append(colors["SECONDARY"])
                 # 点这一行打开控制台（充值/账单）
                 render.setdefault("line_params", []).append(
                     {"href": console_url} if console_url else None)
-            # 行 2：近 7 天每日消耗柱状图（右 = 今天）
-            series = daily_spend_series(hdir, pid, 7)
-            if any(v > 0 for v in series):
-                bars = sparkline(series) if max(series) > 0 else "·" * 7
-                render.setdefault("lines", []).append(f"  近7天: {bars}")
-                render.setdefault("colors", []).append(colors["SECONDARY"])
-                render.setdefault("line_params", []).append(None)
 
     # Alert check (balance 余额 / plan_usage 用量百分比) + 恢复通知
     if os.environ.get("TOKEN_EYE_NOTIFY", "1") != "0":

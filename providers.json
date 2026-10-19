@@ -124,7 +124,6 @@
       "display": {
         "unit": "¥",
         "label": "余额",
-        "showDerived": false,
         "nameColor": {
           "dark": "#FF9F0A",
           "light": "#854F0B"
