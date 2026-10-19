@@ -38,10 +38,23 @@ systemctl --user enable token-eye.service 2>/dev/null || true
 systemctl --user restart token-eye.service 2>/dev/null || true
 echo "✅ systemd service 已装并启动"
 
-# 4. 删 autostart 兜底（与 systemd 双启动会出 2 个图标）
-if [ -f "$AUTOSTART/token-eye.desktop" ]; then
-  rm -f "$AUTOSTART/token-eye.desktop"
-  echo "⚠️ 已删 autostart/token-eye.desktop（避免双启动）"
+# 4. 开机自启去重：只保留 systemd，清掉所有 XDG autostart 条目
+#    token-eye.desktop       旧模板，Exec 直接跑 python3 → 真·双实例
+#    token-eye-start.desktop 手动兜底，Exec=systemctl start → 关掉也照常启动
+BACKUP_DIR="$HOME/.workbuddy/tmp/token-eye-autostart-$(date +%Y%m%d)"
+for legacy in token-eye.desktop token-eye-start.desktop; do
+  f="$AUTOSTART/$legacy"
+  [ -e "$f" ] || continue
+  mkdir -p "$BACKUP_DIR"
+  cp -f "$f" "$BACKUP_DIR/$legacy"
+  rm -f "$f"
+  echo "⚠️ 已移除 autostart/$legacy（备份 $BACKUP_DIR/$legacy）"
+done
+if compgen -G "$AUTOSTART/*token-eye*.desktop" >/dev/null; then
+  echo "❌ autostart 仍残留 token-eye 条目，请手动检查："
+  ls -l "$AUTOSTART"/*token-eye*.desktop || true
+else
+  echo "✅ 无 XDG autostart 条目（唯一启动源：systemd user service）"
 fi
 
 # 5. 密钥提示
@@ -53,5 +66,6 @@ echo "运行: $PYTHON $LINUX_DIR/setup-keys.py"
 echo "（DeepSeek/MiniMax/智谱 填 API key；MiMo 日后在 Chromium 登录后跑 refresh-mimo-cookie.py）"
 echo ""
 echo "管理: systemctl --user status token-eye"
+echo "自启: systemctl --user enable token-eye / disable token-eye（无桌面环境开关，避免两套真相）"
 echo "日志: journalctl --user -u token-eye -f"
 echo "完成 ✅"

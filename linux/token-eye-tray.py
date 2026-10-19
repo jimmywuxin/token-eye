@@ -21,6 +21,7 @@ import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import TimeoutError as FuturesTimeout
 
 # ---------------------------------------------------------------------------
 # 路径约定
@@ -45,26 +46,29 @@ import token_eye  # 上游核心（只读 import）
 # Linux 平台后端（patch 上游模块级函数）
 # ---------------------------------------------------------------------------
 
+KEYRING_LOCKED = "__TOKEN_EYE_KEYRING_LOCKED__"  # 哨兵：collect() 用，不经过 get_key
+
+# 钥匙环状态（collect()/rebuild_menu 间传递）：'ok' | 'locked' | 'unavailable'
+_last_keyring_state = "ok"
+
+# B4：刷新重入锁——30 秒定时器无条件触发，若某轮卡住，线程会逐轮堆积
+_refresh_lock = threading.Lock()
+
+
 def linux_get_key(service):
     """gnome-keyring 读密钥：secretstorage 按 attribute service=<name> 查找。
 
-    钥匙环锁定是「重启后托盘误报未配置 key」的头号原因：默认钥匙环重启后常处于
-    锁定态，若直接返回空会让菜单全显「未配置」。这里先尝试解锁再读；解锁可能弹出
-    桌面密钥框（钥匙环密码≠登录密码时），失败则如实返回空，由菜单提示用户解锁。
+    B2-b：这里**只读不解锁**。默认钥匙环重启后常处于锁定态，若在读路径里
+    解锁，unlock() 内部的 exec_prompt_glib 会嵌套跑一个 GLib 主循环且无超时，
+    提示框不关闭就永久阻塞刷新线程。锁定时直接返回空，由 collect() 的
+    probe_keyring_state() 统一识别锁定态，菜单给出「点击解锁」入口。
     """
     try:
         import secretstorage
         bus = secretstorage.dbus_init()
         coll = secretstorage.get_default_collection(bus)
-        if coll is None:
+        if coll is None or coll.is_locked():
             return ""
-        if coll.is_locked():
-            # 尝试解锁（登录自动解锁则无感成功；需密码则弹框，取消则返回 False）
-            try:
-                if not coll.unlock():
-                    return ""
-            except Exception:
-                return ""
         for item in coll.search_items({"service": service}):
             secret = item.get_secret()
             if secret:
@@ -72,6 +76,61 @@ def linux_get_key(service):
     except Exception:
         pass
     return ""
+
+
+def probe_keyring_state():
+    """只读探测钥匙环状态，不解锁、不弹框。
+
+    返回 'ok' / 'locked' / 'unavailable'（D-Bus 或 keyring 服务未就绪）。
+    """
+    try:
+        import secretstorage
+        bus = secretstorage.dbus_init()
+        coll = secretstorage.get_default_collection(bus)
+        if coll is None:
+            return "unavailable"
+        return "locked" if coll.is_locked() else "ok"
+    except Exception:
+        return "unavailable"
+
+
+def ensure_keyring_unlocked(timeout=10.0):
+    """带超时的解锁尝试（用户点击菜单项时调用，返回 (ok, msg)）。
+
+    B1：secretstorage 2.3.x 的 Collection.unlock() 返回「是否被用户取消」
+    （True=取消，False=解锁成功）——旧代码把 False 当失败，锁定态下输对
+    密码也会静默返回空。升级 secretstorage 后需复核语义（见其 util.py
+    unlock_objects 实现）。超时后底层线程可能仍挂着（等提示框关闭），
+    属已接受的取舍：解锁是用户主动触发、低频路径。
+    """
+    def _try():
+        try:
+            import secretstorage
+            bus = secretstorage.dbus_init()
+            coll = secretstorage.get_default_collection(bus)
+            if coll is None:
+                return False, "密钥服务不可用"
+            if not coll.is_locked():
+                return True, ""
+            try:
+                dismissed = coll.unlock()   # True = 用户取消
+            except Exception as e:
+                return False, f"解锁调用失败: {e}"
+            if dismissed:
+                return False, "已取消"
+            if coll.is_locked():
+                return False, "仍未解锁（密码不对？）"
+            return True, ""
+        except Exception as e:
+            return False, str(e)
+
+    ex = ThreadPoolExecutor(max_workers=1)
+    try:
+        return ex.submit(_try).result(timeout=timeout)
+    except FuturesTimeout:
+        return False, "解锁超时"
+    finally:
+        ex.shutdown(wait=False)
 
 
 def linux_send_notify(title, message, sound=None):
@@ -192,8 +251,28 @@ token_eye.fetch_api = _fetch_api_relaxed
 # 数据收集（复用上游 process_provider / 并行逻辑）
 # ---------------------------------------------------------------------------
 
+def _notify_keyring_locked_once():
+    """锁定态通知限频：标记文件 1 小时内只提醒一次，避免每 30 秒刷屏。"""
+    flag = "/tmp/token-eye-keyring-notified.flag"
+    try:
+        if os.path.exists(flag) and time.time() - os.path.getmtime(flag) < 3600:
+            return
+        linux_send_notify("Token Eye 钥匙环未解锁",
+                          "点击托盘菜单「解锁钥匙环」以恢复余额显示")
+        with open(flag, "w") as f:
+            f.write(time.strftime("%Y-%m-%d %H:%M:%S"))
+    except Exception:
+        pass
+
+
 def collect(config_path, project_dir):
-    """与上游 run() 相同的并行收集，返回 (results, config, colors, appearance)。"""
+    """与上游 run() 相同的并行收集，返回 (results, config, colors, appearance)。
+
+    锁定态快捷路径（B2-b/B3）：钥匙环锁定时所有 key 都读不出，拉网络毫无意义，
+    直接合成 no_key 结果并给出解锁入口；由 rebuild_menu 渲染横幅替代逐行
+    「未配置 Key」。
+    """
+    global _last_keyring_state
     os.makedirs(CACHE_ROOT, exist_ok=True)
     # 历史保留期清理（上游 run() 里有，Linux 版曾漏掉 → history-*.jsonl 无限增长）
     token_eye.maybe_cleanup_history(CACHE_ROOT)
@@ -201,6 +280,18 @@ def collect(config_path, project_dir):
         config = json.load(f)
     appearance, colors = token_eye.load_colors(config)
     providers_list = [p for p in config.get("providers", []) if p.get("enabled", True)]
+
+    _last_keyring_state = probe_keyring_state()
+    if _last_keyring_state == "locked":
+        _notify_keyring_locked_once()
+        results = [{
+            "id": p.get("id", "?"), "name": p.get("name", "?"),
+            "status": "no_key", "lines": [],
+            "colors": [colors.get("WARN", "#e67e22")],
+            "menu_bar": "", "console_url": p.get("console_url"),
+        } for p in providers_list]
+        return results, config, colors, appearance
+
     results = [None] * len(providers_list)
     if providers_list:
         with ThreadPoolExecutor(max_workers=max(1, len(providers_list))) as executor:
@@ -313,46 +404,53 @@ def rebuild_menu(results, config, colors, appearance):
     menu_add_label(menu, "👁 Token Eye", color=colors["HEADER"], bold=True)
     menu_add_sep(menu)
 
-    worst = worst_status(results)
-    for r in results:
-        if not r:
-            continue
-        name = r["name"]
-        status = r["status"]
-        lines = r.get("lines", [])
-        cu = r.get("console_url")
+    if _last_keyring_state == "locked":
+        # B3：锁定态要有明确 UI 出口，与「真未配置 Key」区分
+        menu_add_label(menu, "🔒 钥匙环未解锁", color=colors["WARN"], bold=True)
+        menu_add_label(menu, "点击解锁钥匙环并刷新 →", color=colors["OK"],
+                       on_activate=unlock_and_refresh)
+        menu_add_label(menu, "（解锁前无法读取任何 Key，数据不可用）",
+                       color=colors["MUTED"], size="small")
+    else:
+        for r in results:
+            if not r:
+                continue
+            name = r["name"]
+            status = r["status"]
+            lines = r.get("lines", [])
+            cu = r.get("console_url")
 
-        if status == "no_key":
-            menu_add_label(menu, f"🔑 {name}: 未配置 Key", color=colors["WARN"])
-            svc = r.get("keychainService", "")
-            if svc:
-                menu_add_label(menu, f"  运行 setup-keys.py 添加 {svc}",
-                               color=colors["MUTED"], size="small")
-        elif status == "error":
-            msg = lines[0] if lines else "请求失败"
-            c = (r.get("colors") or [colors["ERR"]])[0]
-            menu_add_label(menu, f"🔴 {name}: {msg}", color=c)
-        else:
-            rcolors = r.get("colors", [])
-            line_params = r.get("line_params") or []
-            for i, line in enumerate(lines):
-                c = rcolors[i] if i < len(rcolors) else colors["DEFAULT"]
-                lp = line_params[i] if i < len(line_params) else None
-                action = None
-                tip = None
-                if lp and lp.get("param1") == "copy-balance":
-                    payload = lp.get("param2", "")
-                    action = lambda p=payload: copy_to_clipboard(p)
-                    tip = "点击复制余额"
-                elif lp and lp.get("href"):
-                    url = lp["href"]
-                    action = lambda u=url: open_url(u)
-                    tip = "打开控制台"
-                menu_add_label(menu, line, color=c, on_activate=action, tooltip=tip)
-        if cu:
-            menu_add_label(menu, f"  → 打开 {name} 控制台", color=colors["MUTED"],
-                           size="small", on_activate=lambda u=cu: open_url(u))
-        menu_add_sep(menu)
+            if status == "no_key":
+                menu_add_label(menu, f"🔑 {name}: 未配置 Key", color=colors["WARN"])
+                svc = r.get("keychainService", "")
+                if svc:
+                    menu_add_label(menu, f"  运行 setup-keys.py 添加 {svc}",
+                                   color=colors["MUTED"], size="small")
+            elif status == "error":
+                msg = lines[0] if lines else "请求失败"
+                c = (r.get("colors") or [colors["ERR"]])[0]
+                menu_add_label(menu, f"🔴 {name}: {msg}", color=c)
+            else:
+                rcolors = r.get("colors", [])
+                line_params = r.get("line_params") or []
+                for i, line in enumerate(lines):
+                    c = rcolors[i] if i < len(rcolors) else colors["DEFAULT"]
+                    lp = line_params[i] if i < len(line_params) else None
+                    action = None
+                    tip = None
+                    if lp and lp.get("param1") == "copy-balance":
+                        payload = lp.get("param2", "")
+                        action = lambda p=payload: copy_to_clipboard(p)
+                        tip = "点击复制余额"
+                    elif lp and lp.get("href"):
+                        url = lp["href"]
+                        action = lambda u=url: open_url(u)
+                        tip = "打开控制台"
+                    menu_add_label(menu, line, color=c, on_activate=action, tooltip=tip)
+            if cu:
+                menu_add_label(menu, f"  → 打开 {name} 控制台", color=colors["MUTED"],
+                               size="small", on_activate=lambda u=cu: open_url(u))
+            menu_add_sep(menu)
 
     # 手动刷新
     menu_add_label(menu, "🔄 立即刷新", color=colors["OK"],
@@ -382,13 +480,21 @@ def icon_for_worst(worst):
 
 
 def refresh_once():
-    """后台线程执行：拉取数据，回主线程重建菜单。"""
+    """后台线程执行：拉取数据，回主线程重建菜单。
+
+    B4：非阻塞重入锁——上一轮未结束时定时器再触发直接跳过，防止线程逐轮堆积。
+    """
+    if not _refresh_lock.acquire(blocking=False):
+        return
+
     def _work():
         try:
             results, config, colors, appearance = collect(CONFIG_FILE, RUNTIME_DIR)
             GLib.idle_add(lambda: _apply(results, config, colors))
         except Exception as e:
             GLib.idle_add(lambda: _apply_error(str(e)))
+        finally:
+            _refresh_lock.release()
 
     def _apply(results, config, colors):
         global _indicator, _menu
@@ -428,6 +534,29 @@ def refresh_once():
 def request_refresh():
     refresh_once()
     return True  # 供 GLib timeout 复用
+
+
+def unlock_and_refresh():
+    """菜单「解锁钥匙环」入口：后台线程解锁（带超时），回主线程刷新或提示。"""
+    def _work():
+        ok, msg = ensure_keyring_unlocked(timeout=10.0)
+        GLib.idle_add(lambda: _after_unlock(ok, msg))
+    threading.Thread(target=_work, daemon=True).start()
+
+
+def _after_unlock(ok, msg):
+    try:
+        if ok:
+            try:
+                os.remove("/tmp/token-eye-keyring-notified.flag")
+            except OSError:
+                pass
+            request_refresh()
+        else:
+            linux_send_notify("Token Eye 钥匙环", f"解锁未成功：{msg or '未知原因'}")
+    except Exception:
+        pass
+    return False  # GLib.idle_add 单次执行
 
 
 def copy_to_clipboard(text):
@@ -517,6 +646,12 @@ def main_check():
     except Exception as e:
         cfg_ok = False
         print(f"❌ 配置读取失败: {e}")
+    state = probe_keyring_state()
+    if state == "locked":
+        print("⚠️ 钥匙环处于锁定态，下方 key 读取结果不准（重启后常见）；"
+              "解锁后重跑本命令，或点托盘菜单「解锁钥匙环」")
+    elif state == "unavailable":
+        print("⚠️ 密钥服务（D-Bus/gnome-keyring）未就绪，key 读取结果可能不准")
     for p in config.get("providers", []):
         svc = p.get("keychainService", "")
         key = linux_get_key(svc) if svc else ""

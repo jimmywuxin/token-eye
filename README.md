@@ -106,7 +106,7 @@ UKUI / 银河麒麟系统托盘移植版，**零改动复用上游核心**（直
 ### 快速开始
 
 ```bash
-# 1. 一键安装（systemd user service + autostart + 图标）
+# 1. 一键安装（systemd user service + 图标；自动清理旧 autostart 条目）
 bash ~/dev/token-eye/linux/install.sh
 
 # 2. 写入 API Key（交互式，存入 gnome-keyring）

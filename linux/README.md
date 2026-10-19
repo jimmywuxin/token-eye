@@ -34,13 +34,26 @@
 ├── linux/
 │   ├── token-eye-tray.py   ← 托盘主程序（GLib MainLoop + AppIndicator3）
 │   ├── setup-keys.py       ← 密钥管理（写入 gnome-keyring）
-│   ├── install.sh          ← 一键安装（service + autostart + 图标）
+│   ├── install.sh          ← 一键安装（service + 图标 + 自启去重）
 │   ├── token-eye.service   ← systemd user service（崩溃自动重启）
-│   ├── token-eye.desktop   ← autostart 兜底
 │   ├── scripts/
 │   │   └── refresh-mimo-cookie.py  ← MiMo Cookie 自动提取（Linux 版）
 │   └── icons/              ← 三态 PNG（ok/warn/err）
-└── tests/                  ← 上游单元测试（129 个用例，Python 3.8 验证通过）
+└── tests/                  ← 上游单元测试（217 个用例）
+```
+
+## 开机自启（唯一来源：systemd）
+
+自启动**只走 systemd user service**，没有 XDG autostart 兜底项。历史版本曾用
+`token-eye.desktop`（autostart 模板，Exec 直接跑 python3）和 `token-eye-start.desktop`
+（Exec=systemctl start）做兜底，与 systemd 并存会导致双实例/开关失真，已全部移除；
+`install.sh` 每次执行都会自动清理这两种残留（先备份到 `~/.workbuddy/tmp/` 再删）。
+
+开关统一用命令，桌面环境的「开机启动」列表里**不会出现 Token Eye**（预期行为，非故障）：
+
+```bash
+systemctl --user enable token-eye    # 开机自启
+systemctl --user disable token-eye   # 关闭自启
 ```
 
 ## 快速开始

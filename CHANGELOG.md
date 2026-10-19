@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+## [0.23.11] - 2026-10-19
+
+### 修复（Linux 托盘钥匙环路径——单位机实战反馈）
+- **B1 解锁语义修正**：secretstorage 2.3.x 的 `Collection.unlock()` 返回「是否被用户取消」（True=取消，False=成功），旧代码把 False 当失败——锁定态下输对密码也会静默返回空、全平台误报「未配置 Key」。现按正确语义处理，密码不对另有明确提示
+- **B2-b 读路径只读不解锁**：`linux_get_key` 不再在读取路径触发解锁（旧实现嵌套跑 GLib 主循环且无超时，提示框不关闭就永久卡死刷新线程）。新增 `probe_keyring_state()` 只读探测 + `ensure_keyring_unlocked(timeout)` 带超时解锁（用户点击触发，超时 10 秒）
+- **B3 锁定态 UI 出口**：锁定时菜单显示「🔒 钥匙环未解锁 → 点击解锁并刷新」（与真未配置 Key 区分），`notify-send` 限频提醒（标记文件 1 小时一次）；`--check` 自检同步提示锁定态
+- **B4 刷新重入锁**：30 秒定时器无条件触发的 daemon 线程加非阻塞重入锁，某轮卡住不再逐轮堆积
+
+### 改进（自启动去重，upstream 单位机补丁）
+- `install.sh` 自启去重重写：覆盖 `token-eye.desktop`（旧模板，Exec 直跑 python3 → 真双实例）与 `token-eye-start.desktop`（Exec=systemctl start → GUI 开关失真）两个历史命名，先备份（`~/.workbuddy/tmp/token-eye-autostart-<日期>/`）再删，删完 `compgen` 自检
+- **删除仓库内旧模板 `linux/token-eye.desktop`**（双实例地雷）
+- 开机自启唯一来源 = systemd user service；README 补「开机自启」小节，说明桌面自启列表不出现 Token Eye 是预期行为
+- 新增 `tests/test_linux_keyring.py`（12 用例）：假 secretstorage 模拟解锁/取消/超时/重入，锁死 B1 语义与 B2-b 只读约束
+
 ## [0.23.10] - 2026-10-19
 
 ### 修复
