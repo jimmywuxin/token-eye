@@ -30,9 +30,25 @@ sys.path = [p for p in sys.path if not any(x in p for x in (".hermes", ".opencla
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-import sqlite3, subprocess, shutil, hashlib, pathlib
+import sqlite3, subprocess, shutil, hashlib, pathlib, errno
 
 KEYCHAIN_SERVICE = "MIMO_PLATFORM_TOKEN"
+# 读不到库时要区分「权限不足」与「会话过期」：后者重登有效，前者重登多少次都没用。
+# macOS 27 起浏览器数据目录受 TCC 保护（kTCCServiceSystemPolicyAllFiles），
+# 未开「完全磁盘访问权限」的进程连 open() 都是 EPERM —— 2026-10-19 实测，
+# SwiftBar 与 dsh 两个宿主都被拒；旧文案只说「请重新登录」，把人带偏。
+PERMISSION_DENIED = False
+
+
+def fail(msg):
+    """失败退出：结论打到 stdout 末行再以非零码退出。
+
+    token_eye.py 从脚本 stdout 里挑「错误:」开头的末行写进 flag/菜单
+    （_reason_tail），所以结论必须走 stdout —— 用 sys.exit(str) 只写 stderr，
+    菜单就只剩「警告: ...」过程噪音，用户看不到该怎么办（2026-10-19 实踩）。
+    """
+    print(msg)
+    sys.exit(1)
 HOST_FILTER = "%xiaomimimo%"
 REQUIRED = ["api-platform_ph", "api-platform_serviceToken", "api-platform_slh", "userId"]
 # 拷贝主库时要一起带的伴生文件：浏览器运行中时最新写入常在 -wal/-shm/-journal 里
@@ -91,6 +107,9 @@ def copy_cookie_db(db_path):
             elif os.path.exists(dst):
                 os.unlink(dst)
         except OSError as e:
+            global PERMISSION_DENIED
+            if e.errno in (errno.EPERM, errno.EACCES):
+                PERMISSION_DENIED = True
             print(f"警告: 拷贝 {os.path.basename(src) or 'Cookies'} 失败: {e}")
     return tmp
 
@@ -148,6 +167,11 @@ def extract_cookie_rows(db_path):
     try:
         return read_rows_direct(db_path)
     except (sqlite3.Error, OSError, ValueError) as e:
+        # "authorization denied" 是 SQLITE_AUTH：macOS 的 TCC 在 open() 阶段就拒了
+        # （见上方 PERMISSION_DENIED 注释），不是库坏了、也不是会话过期。
+        global PERMISSION_DENIED
+        if isinstance(e, PermissionError) or "authorization denied" in str(e):
+            PERMISSION_DENIED = True
         print(f"警告: Cookie 库直连失败（退化为拷贝快照）: {e}")
     err = None
     for attempt in range(3):
@@ -237,10 +261,13 @@ def main():
         found = (name, cookie_str)
         break
     if not found:
+        if PERMISSION_DENIED:
+            # 末行必须自成一句：token_eye.py 只把输出最后一行抄进 flag/菜单
+            fail("错误: 读不到浏览器 Cookie 库——需给 SwiftBar（或运行本脚本的程序）开「完全磁盘访问权限」")
         detail = "、".join(stale) if stale else "未提取到完整 Cookie"
-        sys.exit(f"错误: 浏览器里的 MiMo Cookie 均无效（{detail}；已尝试 "
-                 f"{', '.join(tried)}）。请在浏览器重新登录 platform.xiaomimimo.com，"
-                 f"登录完成后等 5 秒再点「重试」")
+        fail(f"错误: 浏览器里的 MiMo Cookie 均无效（{detail}；已尝试 "
+             f"{', '.join(tried)}）。请在浏览器重新登录 platform.xiaomimimo.com，"
+             f"登录完成后等 5 秒再点「重试」")
 
     browser_name, cookie_str = found
     print(f"提取成功（来源: {browser_name}）: 完整 Cookie 串 {len(cookie_str)} 字符")
@@ -249,7 +276,7 @@ def main():
         ["security", "add-generic-password", "-U", "-s", KEYCHAIN_SERVICE, "-a", "", "-w", cookie_str],
         capture_output=True, text=True)
     if r.returncode != 0:
-        sys.exit(f"Keychain 更新失败: {r.stderr[:200]}")
+        fail(f"错误: Keychain 更新失败: {r.stderr[:200]}")
     print(f"已更新 Keychain: {KEYCHAIN_SERVICE}")
     print("balance API: HTTP=200")
     # 刷新成功 → 清掉 Token Eye 的错误短缓存（路径约定见 swiftbar/token_eye.py cache_path），

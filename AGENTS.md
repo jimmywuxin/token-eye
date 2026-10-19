@@ -159,6 +159,7 @@ Python 核心逻辑：
 - **点菜单底部「刷新」= 一次点击搞定**（`refresh-now` + `--force-refresh`）：忽略 10s 错误短缓存 + 跳过 1 分钟自愈冷却，在同一轮内完成「刷 Cookie → 重拉余额 → 直接显示新余额」，不必等冷却过完再点第二次。Cookie 本身已死（浏览器会话也过期）时会照常弹登录页 + 通知，你登录完再点一次「刷新」即刻出余额
 - **两条刷新路径必须对称：任何「拿到新 cookie」的动作都要紧跟一次重拉**（2026-10-06 用户实报）。自愈路径（401 → `auto_refresh_cookie` → 重拉）本来就有，主动续期（`refreshInterval` → `proactive_refresh_cookie`）原先只写 debug 日志、**不重拉** —— 脚本自己验过 200、keychain 已是新 cookie，但本轮 `fetch_result` 仍是「换cookie 前」那次的结果（旧的 401），菜单要红到下个渲染周期。改这类逻辑时：自愈、主动续期、菜单手动点三条路径逐一检查有没有都「刷新 + 重拉」
 - **刷新失败要留痕，但「留痕标记」与「冷却标记」必须分开**（2026-10-06 用户建议）：`lastrefresh` 语义是「上次**成功**续期时间」，推进它会触发 `refreshInterval` 冷却、让失败后 6 小时内不再重试（与「失败不推进标记、下轮继续试」的原语义冲突）→ 失败原因另写独立标记 `token-eye-proactive-fail-{id}.flag`（成功时清掉）。自愈的 `autorefresh` 标记本来就兼作冷却判定（fail → 1 分钟短冷却），加原因段只能加在**第三段**（解析只取 `parts[0]`/`parts[1]`，向后兼容）。失败原因最终要能显示到错误菜单，用户才不用靠时间线反推
+- **macOS 读浏览器 Cookie 库需要「完全磁盘访问权限」，缺权限时别误诊成会话过期**（2026-10-19 实报）：macOS 27 把浏览器数据目录纳入 `kTCCServiceSystemPolicyAllFiles` 保护，未授权进程 `open()`/`cp` 直接 `EPERM`，SQLite 只会报 `no such table: cookies`（临时文件被创建成空库）。判断依据：`EPERM`/SQLite `authorization denied` 才是权限；`401 + loginUrl` 才是会话过期。修复方式是给 **SwiftBar**（菜单路径由它负责读库）勾选 FDA，重登多少次都无效。错误结论必须写进 stdout 末行（`fail()`），因为 `token_eye.py` 的 `_reason_tail()` 只从 stdout 找「错误:」行抄进 flag/菜单 —— `sys.exit(str)` 只写 stderr，菜单就只剩「警告: …」噪音
 
 详细配置示例见 `README.md`。
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # <bitbar.title>Token Eye</bitbar.title>
-# <bitbar.version>v0.23.12</bitbar.version>
+# <bitbar.version>v0.23.13</bitbar.version>
 # <bitbar.author>wuxin</bitbar.author>
 # <bitbar.desc>LLM Token usage monitor — config-driven, with caching & alerts</bitbar.desc>
 # <bitbar.refreshTime>30</bitbar.refreshTime>
@@ -122,9 +122,18 @@ if [ "${1:-}" = "refresh-mimo-cookie" ]; then
         echo "关闭 | refresh=true"
     else
         # 失败必须说清楚：后台执行看不到 stdout，取脚本关键行发通知
-        MSG="$(printf '%s\n' "$OUTPUT" | grep -m1 -E '错误|失败|⚠️' || true)"
+        # 优先取脚本的结论行（「错误: …」）——它带可操作动作；「警告: …」只是过程噪音，
+        # 以前的贪婪匹配会先命中「警告: 拷贝 Cookies 失败」，把真正原因挤掉。
+        MSG="$(printf '%s\n' "$OUTPUT" | grep -m1 '^错误' || true)"
+        [ -n "$MSG" ] || MSG="$(printf '%s\n' "$OUTPUT" | grep -m1 -E '错误|失败|⚠️' || true)"
         [ -n "$MSG" ] || MSG="$(printf '%s\n' "$OUTPUT" | tail -1 || true)"
-        if printf '%s' "$MSG" | grep -q "重新登录"; then
+        if printf '%s' "$MSG" | grep -q "磁盘访问"; then
+            # 读不到浏览器 Cookie 库 = TCC 拦了 open()：重登多少次都没用，
+            # 必须先授权（macOS 27 起浏览器数据目录算系统策略保护），
+            # 通知里直接给出授权路径，别让用户以为是自己没登录（2026-10-19 实报）
+            PERM_DENIED=1
+            notify "MiMo 刷新失败：系统不让读浏览器 Cookie 库——到「系统设置 → 隐私与安全性 → 完全磁盘访问权限」勾选 SwiftBar（手动运行则勾选终端），再点重试"
+        elif printf '%s' "$MSG" | grep -q "重新登录"; then
             # 会话真的失效：直接把「要做什么」写进通知，别让用户从长句里自己找
             notify "MiMo 登录已失效：请在登录页重新登录，完成后点菜单「🔄 登录后重试」"
         else
@@ -141,6 +150,9 @@ if [ "${1:-}" = "refresh-mimo-cookie" ]; then
         echo "---"
         # 失败后的两条出路：先在浏览器重新登录 MiMo（会话过期时只有登录能救），
         # 登录完成后点「重试」重新提取 Cookie。不写这条链接用户只能自己猜。
+        if [ "${PERM_DENIED:-0}" = 1 ]; then
+            echo "🔧 打开「完全磁盘访问权限」设置 | href=x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_AllFiles color=$C_WARN"
+        fi
         echo "🌐 打开 MiMo 平台重新登录 | href=https://platform.xiaomimimo.com/console/balance color=$C_WARN"
         echo "🔄 登录后重试（提取新 Cookie） | bash=$SCRIPT_DIR/token-eye.sh param1=refresh-mimo-cookie terminal=false refresh=true"
         echo "关闭 | refresh=true"

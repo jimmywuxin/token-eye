@@ -22,7 +22,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime as _dt
 
-VERSION = "0.23.12"
+VERSION = "0.23.13"
 
 # 按 parser 类型的默认缓存 TTL（秒）
 DEFAULT_CACHE_TTL = {"balance": 300, "plan_usage": 30, "status": 60}
@@ -978,6 +978,20 @@ def _open_login_page(flags_dir, pid, login_url, cooldown=1800):
     return True
 
 
+def _reason_tail(text, limit=80):
+    """从刷新脚本输出里挑一行给人看的原因。
+
+    优先「错误:」开头的行 —— 那是脚本 sys.exit 给的结论，通常带可操作动作
+    （如「需给 SwiftBar 开完全磁盘访问权限」）；其次才退回最后一行，因为
+    末行常是「警告: ...」这类过程噪音，写给用户看不出该怎么办。
+    """
+    lines = [ln for ln in (text or "").strip().splitlines() if ln.strip()]
+    if not lines:
+        return "无输出"
+    picked = next((ln for ln in reversed(lines) if ln.startswith("错误:")), lines[-1])
+    return picked[:limit]
+
+
 def auto_refresh_cookie(flags_dir, pid, refresh_script, fail_cooldown=60, success_cooldown=1800,
                         login_url=None, force=False):
     """自动刷新 Cookie（401 自愈）。
@@ -1016,14 +1030,14 @@ def auto_refresh_cookie(flags_dir, pid, refresh_script, fail_cooldown=60, succes
             _write_flag(_flag_path(flags_dir, pid, "lastrefresh"), str(now))
             return True, ""
         reason = (r.stdout or r.stderr or "").strip().splitlines()
-        tail = reason[-1][:80] if reason else "无输出"
+        tail = _reason_tail("\n".join(reason))
         # 失败留痕：`<ts> fail <原因末行>`。旧解析只取 parts[0]/parts[1]（时间戳与
         # ok|fail），新增的第三段不影响冷却判定；排障时能直接看到「钥匙串未解锁」
         # 之类的话，不必靠时间线反推（2026-10-06 用户建议）。
         _write_flag(flag, f"{now} fail {tail}")
         if login_url:
             _open_login_page(flags_dir, pid, login_url)
-        return False, (r.stdout or r.stderr).strip()[-150:]
+        return False, tail
     except Exception as e:
         _write_flag(flag, f"{now} fail {str(e)[:80]}")
         return False, str(e)
@@ -1063,7 +1077,7 @@ def proactive_refresh_cookie(flags_dir, pid, refresh_script, interval):
         # 失败留痕：把原因写进独立标记（排障时能在菜单/log 里直接看到
         # 「钥匙串未解锁」之类的话，不必靠时间线反推）
         reason = (r.stdout or r.stderr or "").strip().splitlines()
-        tail = reason[-1][:80] if reason else "无输出"
+        tail = _reason_tail("\n".join(reason))
         _write_flag(fail_flag, f"{now} {tail}")
         return False, tail
     except Exception as e:
@@ -1087,7 +1101,7 @@ def process_provider(p, config, colors, appearance, cache_dir, hdir, project_dir
     # 自愈/续期的失败原因，累积后展示在错误菜单里。
     # 初始化放在函数开头：命中缓存的早退分支不会经过 fetch 段，
     # 若只在 fetch 段里赋值，后面读它会NameError（既存隐患，本次一并修）。
-    self_heal_err = None
+    self_heal_errs = []
 
     # Cache check
     ttl = p.get("cacheTtl", config.get("cache", {}).get(ptype, DEFAULT_CACHE_TTL.get(ptype, 30)))
@@ -1142,7 +1156,7 @@ def process_provider(p, config, colors, appearance, cache_dir, hdir, project_dir
                         log_debug(hdir, f"[{pid}] 自愈重试: ok={fetch_result['ok']} "
                                         f"status={fetch_result.get('status')}")
                 elif err:
-                    self_heal_err = err
+                    self_heal_errs.append(err)
 
         # 主动续期：配置了 refreshInterval 时，即使当前 cookie 有效也按周期从浏览器
         # 复制最新 cookie，保持 keychain 与浏览器会话同步，减少 401 触发面。
@@ -1156,9 +1170,11 @@ def process_provider(p, config, colors, appearance, cache_dir, hdir, project_dir
                 if prev is False and prev_err:
                     # 续期失败原因也进错误菜单（否则用户只看到「配置/鉴权错误」，
                     # 不知道是浏览器没开、钥匙串没解锁，还是 cookie 库读不到）。
-                    # 与自愈失败原因**并存**（两者是不同信息，可能都成立）
-                    self_heal_err = (f"{self_heal_err}; " if self_heal_err else "") + \
-                                     f"主动续期失败: {prev_err[:60]}"
+                    # 与自愈失败原因并存但去重：两条路径同因失败（如都没权限读
+                    # Cookie 库）时，重复两遍只是噪音。
+                    line = f"主动续期失败: {prev_err[:60]}"
+                    if prev_err[:60] not in " ".join(self_heal_errs):
+                        self_heal_errs.append(line)
                 # 续期成功 → 立刻用新 cookie 重拉一次。
                 # 少了这一步：脚本自己验过 200、keychain 里已是新 cookie，但本轮
                 # fetch_result 仍是「续期前」那次拉取的结果（可能是旧的 401），
@@ -1176,7 +1192,7 @@ def process_provider(p, config, colors, appearance, cache_dir, hdir, project_dir
             # 用户主动点「刷新」这一轮若仍失败：**不落错误短缓存**。
             # 否则紧随其后的 refresh=true 重渲（普通渲染、无 force）会命中刚写的
             # 10s 错误缓存，菜单照旧显示错误 —— 用户以为「点了没反应」，也看不到
-            # 失败原因（self_heal_err 只存在于当轮内存里，不进缓存）。
+            # 失败原因（self_heal_errs 只存在于当轮内存里，不进缓存）。
             # 清掉缓存后重渲会真实重试一次：成功就直接出余额，仍失败则显示
             # 带原因的完整错误菜单（2026-10-14 用户实报「点了刷新不能恢复」）。
             clear_cache(cache_dir, pid)
@@ -1188,9 +1204,10 @@ def process_provider(p, config, colors, appearance, cache_dir, hdir, project_dir
     if not fetch_result["ok"]:
         err_render = render_error(pid, name, fetch_result["error_kind"],
                                   fetch_result["message"], console_url, colors)
-        if self_heal_err:
-            # 自愈失败原因展示在错误菜单里，用户知道为什么需要手动
-            err_render.setdefault("lines", []).append(f"  ↻ 自动刷新未生效: {self_heal_err[:60]}")
+        # 自愈/续期失败原因逐行展示：用户才知道「为什么刷新也没用」，而不是
+        # 只看到一句泛泛的「配置/鉴权错误」四处乱试（2026-10-19 实报）。
+        for line in self_heal_errs:
+            err_render.setdefault("lines", []).append(f"  ↻ 自动刷新未生效: {line[:70]}")
             err_render.setdefault("colors", []).append(colors["MUTED"])
         return err_render
 
@@ -1358,10 +1375,21 @@ def render(results, config, colors, refresh_map, hdir):
                 msg = lines[0] if lines else '请求失败'
                 c = (r.get("colors") or [colors["ERR"]])[0]
                 print(f"🔴 {name}: {msg} | color={c}")
+                # 错误分支原先只打印 lines[0]，把 process_provider 追加的
+                # 「↻ 自动刷新未生效: <原因>」整行吞掉了 —— 用户只看到泛泛的
+                # 「配置/鉴权错误」，看不到真正原因（2026-10-19 实报：MiMo 读不到
+                # 浏览器 Cookie 库，菜单却只提示重新登录，白折腾几次）。补齐即可。
+                for extra_line in lines[1:]:
+                    print(f"{extra_line} | color={colors['MUTED']} size=11")
                 rp = refresh_map.get(r.get("id"))
                 if rp:
                     act = bash_action(rp, refresh=True) or f"param1={rp} refresh=true"
                     print(f"  🔄 刷新 {name} Cookie | {act} color={colors['WARN']} size=11")
+                if "磁盘访问" in " ".join(lines):
+                    print("  🔧 打开「完全磁盘访问权限」设置 | "
+                          "href=x-apple.systempreferences:com.apple.settings."
+                          "PrivacySecurity.extension?Privacy_AllFiles "
+                          f"color={colors['WARN']} size=11")
             else:
                 rcolors = r.get("colors", [])
                 line_params = r.get("line_params") or []
