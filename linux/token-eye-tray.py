@@ -51,6 +51,9 @@ KEYRING_LOCKED = "__TOKEN_EYE_KEYRING_LOCKED__"  # 哨兵：collect() 用，不�
 # 钥匙环状态（collect()/rebuild_menu 间传递）：'ok' | 'locked' | 'unavailable'
 _last_keyring_state = "ok"
 
+# 解锁请求进行中标记：防止连点菜单堆出多个等待线程（2026-10-19）
+_unlock_in_progress = False
+
 # B4：刷新重入锁——30 秒定时器无条件触发，若某轮卡住，线程会逐轮堆积
 _refresh_lock = threading.Lock()
 
@@ -94,7 +97,7 @@ def probe_keyring_state():
         return "unavailable"
 
 
-def ensure_keyring_unlocked(timeout=10.0):
+def ensure_keyring_unlocked(timeout=60.0):
     """带超时的解锁尝试（用户点击菜单项时调用，返回 (ok, msg)）。
 
     B1：secretstorage 2.3.x 的 Collection.unlock() 返回「是否被用户取消」
@@ -102,6 +105,10 @@ def ensure_keyring_unlocked(timeout=10.0):
     密码也会静默返回空。升级 secretstorage 后需复核语义（见其 util.py
     unlock_objects 实现）。超时后底层线程可能仍挂着（等提示框关闭），
     属已接受的取舍：解锁是用户主动触发、低频路径。
+
+    2026-10-19 超时从 10s 放宽到 60s：gcr-prompter 首次经 D-Bus 激活本身
+    就要几秒，加上用户输密码的时间，10s 经常在密码框刚出现时就被放弃，
+    表现为「点了没反应」。
     """
     def _try():
         try:
@@ -128,7 +135,7 @@ def ensure_keyring_unlocked(timeout=10.0):
     try:
         return ex.submit(_try).result(timeout=timeout)
     except FuturesTimeout:
-        return False, "解锁超时"
+        return False, "解锁超时（密码框可能未弹出），请重试"
     finally:
         ex.shutdown(wait=False)
 
@@ -537,14 +544,32 @@ def request_refresh():
 
 
 def unlock_and_refresh():
-    """菜单「解锁钥匙环」入口：后台线程解锁（带超时），回主线程刷新或提示。"""
+    """菜单「解锁钥匙环」入口：后台线程解锁（带超时），回主线程刷新或提示。
+
+    2026-10-19 单位机实报「点了没反应」：① gcr-prompter 首次 D-Bus 激活
+    往往超过旧 10s 超时，密码框还没出现线程就被放弃；② 菜单点击后立即
+    收起，用户拿不到任何「正在处理」的反馈。改为 60s 超时 + 点击即通知 +
+    防重入（连点不会堆出多个等待线程）。
+    """
+    global _unlock_in_progress
+    if _unlock_in_progress:
+        return
+    _unlock_in_progress = True
+    linux_send_notify("Token Eye 钥匙环", "正在请求解锁，请在弹出的窗口中输入密码…")
+
     def _work():
-        ok, msg = ensure_keyring_unlocked(timeout=10.0)
+        ok, msg = False, "未知错误"
+        try:
+            ok, msg = ensure_keyring_unlocked(timeout=60.0)
+        except Exception as e:  # 线程内异常不能让刷新回调丢失
+            msg = str(e)
         GLib.idle_add(lambda: _after_unlock(ok, msg))
     threading.Thread(target=_work, daemon=True).start()
 
 
 def _after_unlock(ok, msg):
+    global _unlock_in_progress
+    _unlock_in_progress = False
     try:
         if ok:
             try:
