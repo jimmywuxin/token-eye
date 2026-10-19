@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### 文档（更正「Linux 端仍保留近 7 天柱状 / 预计可用」的错误说法）
+- `linux/` 不是独立实现的渲染层，而是零改动 `import swiftbar/token_eye.py` 的注入层（托盘只把核心产出的 `lines` 渲染成菜单）→ v0.23.14 移除这两项后 **Linux 一并生效**，原文「Linux 版未动/仍保留」有误
+- 同步更正 `linux/README.md` 的能力描述、AGENTS.md 与 DESIGN.md 的相关条目
+
 ## [0.23.15] - 2026-10-19
 
 ### 变更（平台显示次序：MiniMax 置顶）
@@ -16,7 +22,8 @@
 - 「预计可用 ~N 天」从菜单移除（24h 速率外推，一次大请求就能把它拉得很短）。`days_left()` **保留**，继续服务 `alert.daysLeft`，只是不再展示
 - 余额类详情现在只剩一行「今日消耗 ¥x.xx」，且**当天余额没下降就不显示**（零消耗日不占高度）
 - **MiMo 打开派生统计**（去掉 `display.showDerived:false`）：今日消耗对 DeepSeek / MiMo / GLM 一视同仁。留意 MiMo 余额一个月只掉 0.38、GLM 38 条快照全是 9.97131273 —— 短期内这行很可能一直不出现，那是「今天真没扣余额」的意思，不是坏了
-- 快照历史 / `dailySpendMax` / `daysLeft` 告警**都不受影响**（仍照常累积/计算）；Linux 版未动（仍保留 7 天柱状与预计可用）
+- 快照历史 / `dailySpendMax` / `daysLeft` 告警**都不受影响**（仍照常累积/计算）
+- **Linux 版一并生效**（`linux/` 是零改动 import 同一份 `swiftbar/token_eye.py` 的注入层，托盘只负责把 `lines` 渲染成菜单）；原文「Linux 版未动（仍保留）」有误，2026-10-19 更正
 
 ## [0.23.13] - 2026-10-19
 

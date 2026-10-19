@@ -121,7 +121,7 @@ LLM 余额/用量实时监控工具，覆盖三端：**macOS**（SwiftBar 菜单
 - **存储**：`~/Library/Caches/token-eye/history-{id}.jsonl`，append-only，每行 `时间戳,数值`
 - **消耗统计**：`consumption_since(cutoff)` 通用窗口函数——按「相邻快照下降量之和」统计任意窗口的消耗（充值抬升不干扰），复用于今日 / 本周 / 本月 / 滚动 24h
 - **耗尽预测**：按最近 24h 消耗速率外推可用天数（`days_left`）—— 2026-10-19 起**只用于 `alert.daysLeft` 告警，菜单不再展示**
-- ~~近 7 天柱状图~~：已于 2026-10-19 从 mac 版移除（Linux 版仍保留）
+- ~~近 7 天柱状图~~：已于 2026-10-19 移除（Linux 复用同一核心，一并移除；Android 从未实现）
 - 历史只服务 balance 类平台（今日消耗 / 耗尽预测 / 告警）；plan_usage 不写历史
 
 ### 4.7 渲染层
