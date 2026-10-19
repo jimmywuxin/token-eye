@@ -189,6 +189,7 @@ Python 核心逻辑：
   4. 失败时 `successAt` 保持「上次成功」的真实时间戳（失败不是成功）—— 但这带来一个必须配套的规则：**缓存判定要额外要求 `!prevResult.stale`**（见 `canReuse()`），否则网络刚恢复时若距上次成功不足 TTL（balance 300s）就会复用旧结果、压根不发请求，永远停在陈旧态
 - **拉取失败时优先「显示上次成功的数据」而非错误文案**：余额/百分比是有用信息，「网络错误」不是。做法是给结果加独立的 `stale` 标记（`ProviderResult.stale`）而不是改 `status` —— 混成 WARN 会与「余额真的低于阈值」的告警混淆，多轮失败还会叠加放大；details 里的陈旧提示要**按前缀去重、只保留最后一条**，否则断网一晚会堆出一长串。兜底逻辑抽成纯函数 `staleResult()` 才能单测（埋在 `refresh()` 里依赖 Context + 真实网络，没法验证）
 - **版本号唯一真源 = `token_eye.py` 的 `VERSION`**：发版只改这一处 + `token-eye.sh` 头部 `bitbar.version`（CI 校验两者一致）。Android 的 `versionName` / `versionCode` 由 `app/build.gradle.kts` 构建时**自动读取** `VERSION` 派生（0.22.0 → 2200），**不要手工填**，也别再让 app 版本号单独漂移（曾长期停在 0.19.1）
+- **发版节奏（2026-10-19 Jimmy 认可）**：纯 cosmetic 的配置改动（providers 次序、文案、配色微调）**默认不单独打 tag**——git commit 即可（mac/Linux 读仓库即时生效，发布对它们是纯簿记），改动躺在 CHANGELOG `[Unreleased]` 攒着，随下一个真改动发版顺路带走。**必须升版本再发**的两种情形：① 手机要拿到该改动（APK 的 versionCode 由 VERSION 派生，同版本号不同行为 = filesDir 遮蔽事故的翻版）；② 改动需要独立回滚锚点（修复类、用户行为可感的分界）。反例教训：v0.23.15（仅挪平台次序）本可并入后续版本
 - 脚本使用 `set -euo pipefail`，任何命令失败都会退出（注意：命令替换里放可能失败的脚本时需 `|| true` 兜底，见 refresh-mimo-cookie 分支）
 - API 超时时间：curl 5s，subprocess 10s
 - SwiftBar 刷新间隔：30 秒（脚本内 `# <bitbar.refreshTime>30</bitbar.refreshTime>` 声明）

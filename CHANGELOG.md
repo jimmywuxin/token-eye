@@ -2,7 +2,8 @@
 
 ## [Unreleased]
 
-### 文档（更正「Linux 端仍保留近 7 天柱状 / 预计可用」的错误说法）
+### 文档（更正「Linux 端仍保留近 7 天柱状 / 预计可用」的错误说法 + 发版节奏约定）
+- **发版节奏（2026-10-19 Jimmy 认可，详规见 AGENTS.md）**：纯 cosmetic 配置改动默认不单独打 tag，攒进 `[Unreleased]` 随下一个真改动发版；只有「手机要拿到该改动（APK 版本由 VERSION 派生）」或「需要独立回滚锚点」才升版本发版
 - `linux/` 不是独立实现的渲染层，而是零改动 `import swiftbar/token_eye.py` 的注入层（托盘只把核心产出的 `lines` 渲染成菜单）→ v0.23.14 移除这两项后 **Linux 一并生效**，原文「Linux 版未动/仍保留」有误
 - 同步更正 `linux/README.md` 的能力描述、AGENTS.md 与 DESIGN.md 的相关条目
 
