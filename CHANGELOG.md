@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.23.10] - 2026-10-19
+
+### 修复
+- **Linux 侧补全 GLM 支持**：`setup-keys.py` / `diag-keyring.py` 的 SERVICES 列表漏了 `GLM_API_KEY`（v0.23.8 新增的 zhipu provider 用的就是这个名字），导致脚本写入智谱 key 报「未知 service」——补齐后 Linux 用户可用 `setup-keys.py GLM_API_KEY` 写入；diag-keyring 三处硬编码「3 个」同步改「4 个」
+- 文档同步：`linux/README.md`「密钥管理」补智谱行；根 README Keychain 命令补 `GLM_API_KEY`，并修正 MiMo 服务名笔误（`MIMO_API_KEY` → `MIMO_PLATFORM_TOKEN`，与 providers.json 对齐）；`install.sh` 结尾提示加入智谱
+
 ## [0.23.9] - 2026-10-19
 
 ### 改进
