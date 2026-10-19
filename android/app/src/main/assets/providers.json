@@ -1,59 +1,6 @@
 {
   "providers": [
     {
-      "id": "deepseek",
-      "name": "DeepSeek",
-      "keychainService": "DEEPSEEK_API_KEY",
-      "consoleUrl": "https://platform.deepseek.com/usage",
-      "api": {
-        "url": "https://api.deepseek.com/user/balance",
-        "method": "GET",
-        "authHeader": "Authorization",
-        "authPrefix": "Bearer "
-      },
-      "parser": {
-        "type": "balance",
-        "fields": {
-          "balance": "balance_infos.0.total_balance",
-          "currency": "balance_infos.0.currency"
-        },
-        "peakWindow": {
-          "tz": "Asia/Shanghai",
-          "weekdays": [
-            1,
-            2,
-            3,
-            4,
-            5
-          ],
-          "hours": [
-            [
-              9,
-              12
-            ],
-            [
-              14,
-              18
-            ]
-          ],
-          "holidays": true,
-          "peakLabel": "⚡高峰",
-          "offPeakLabel": "🌙空闲"
-        }
-      },
-      "display": {
-        "unit": "¥",
-        "label": "余额",
-        "nameColor": {
-          "dark": "#FF375F",
-          "light": "#B3154A"
-        }
-      },
-      "alert": {
-        "minBalance": 5.0
-      }
-    },
-    {
       "id": "minimax",
       "name": "MiniMax",
       "keychainService": "MINIMAX_CN_API_KEY",
@@ -110,6 +57,59 @@
       },
       "alert": {
         "minPct": 80
+      }
+    },
+    {
+      "id": "deepseek",
+      "name": "DeepSeek",
+      "keychainService": "DEEPSEEK_API_KEY",
+      "consoleUrl": "https://platform.deepseek.com/usage",
+      "api": {
+        "url": "https://api.deepseek.com/user/balance",
+        "method": "GET",
+        "authHeader": "Authorization",
+        "authPrefix": "Bearer "
+      },
+      "parser": {
+        "type": "balance",
+        "fields": {
+          "balance": "balance_infos.0.total_balance",
+          "currency": "balance_infos.0.currency"
+        },
+        "peakWindow": {
+          "tz": "Asia/Shanghai",
+          "weekdays": [
+            1,
+            2,
+            3,
+            4,
+            5
+          ],
+          "hours": [
+            [
+              9,
+              12
+            ],
+            [
+              14,
+              18
+            ]
+          ],
+          "holidays": true,
+          "peakLabel": "⚡高峰",
+          "offPeakLabel": "🌙空闲"
+        }
+      },
+      "display": {
+        "unit": "¥",
+        "label": "余额",
+        "nameColor": {
+          "dark": "#FF375F",
+          "light": "#B3154A"
+        }
+      },
+      "alert": {
+        "minBalance": 5.0
       }
     },
     {

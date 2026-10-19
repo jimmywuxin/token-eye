@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.23.15] - 2026-10-19
+
+### 变更（平台显示次序：MiniMax 置顶）
+- `providers.json` 的 providers 数组次序改为 **MiniMax → DeepSeek → MiMo → 智谱 GLM**（2026-10-19 用户要求：MiniMax 放最上面，DeepSeek 紧随其后）
+- 菜单次序 = 配置数组次序（`run()` 按 providers 顺序分发、`render()` 按同序输出），改配置即可，无需动代码
+- Android `assets/providers.json` 同步同一次序（跨端校验按 `id` 比对、与顺序无关，但两端保持一致更好；手机端要看到新次序需重装 APK）
+- Linux 读同一份 `providers.json`，次序一并跟随
+
 ## [0.23.14] - 2026-10-19
 
 ### 变更（mac 版菜单精简：去掉「近 7 天」柱状图与「预计可用 ~N 天」）
