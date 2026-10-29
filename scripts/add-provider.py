@@ -22,7 +22,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_CONFIG = os.path.join(HERE, "..", "providers.json")
 TEMPLATES_PATH = os.path.join(HERE, "provider-templates.json")
 
-PTYPE_LABEL = {"balance": "余额型", "plan_usage": "用量型", "status": "状态型"}
+PTYPE_LABEL = {"balance": "余额型", "plan_usage": "用量型", "status": "状态型", "command": "命令型"}
 
 
 def load_templates():
@@ -132,6 +132,31 @@ def build_plan_usage(display_name, keychain):
     return provider
 
 
+def build_command(display_name, keychain=None):
+    print("\n▶ command（命令型）字段映射：")
+    command = ask("可执行文件绝对路径（如 ~/.local/bin/qianwen）", required=True)
+    args_raw = ask("命令参数（空格分隔，如 billing balance summary --format json）", "")
+    timeout = ask("超时秒数", "10")
+    balance = ask("余额字段路径", "availableAmount")
+    currency = ask("货币字段路径", "currency")
+    label = ask("展示标签", "余额")
+    min_balance = ask("告警阈值 minBalance（回车跳过）", None)
+    provider = {
+        "id": "", "name": display_name,
+        "parser": {
+            "type": "command",
+            "command": command,
+            "args": args_raw.split() if args_raw else [],
+            "timeout": int(timeout),
+            "fields": {"balance": balance, "currency": currency},
+        },
+        "display": {"label": label},
+    }
+    if min_balance:
+        provider["alert"] = {"minBalance": float(min_balance)}
+    return provider
+
+
 def build_status(display_name, keychain):
     print("\n▶ status（状态型）字段映射：")
     url = ask("API URL", required=True)
@@ -180,9 +205,12 @@ def main():
                 sys.exit("错误: 模板序号无效，终止")
             display_name = ask("平台显示名", tmpl.get("name", ""))
             pid = ask("平台 id", tmpl.get("id", ""))
-            keychain = ask("Keychain 服务名", tmpl.get("keychainService", ""))
             provider = copy.deepcopy(tmpl)
-            provider["name"], provider["id"], provider["keychainService"] = display_name, pid, keychain
+            provider["name"], provider["id"] = display_name, pid
+            # command 型不需要 Keychain（凭证由外部 CLI 自己管）
+            if (tmpl.get("parser") or {}).get("type") != "command":
+                keychain = ask("Keychain 服务名", tmpl.get("keychainService", ""))
+                provider["keychainService"] = keychain
             min_balance = ask("告警阈值 minBalance（回车跳过）", None)
             if min_balance:
                 provider.setdefault("alert", {})["minBalance"] = float(min_balance)
@@ -195,14 +223,17 @@ def main():
         display_name = ask("平台显示名（如 OpenAI、Kimi）", required=True)
         pid_default = display_name.lower().replace(" ", "-")
         pid = ask("平台 id", pid_default)
-        keychain = ask("Keychain 服务名", display_name.upper().replace(" ", "_") + "_API_KEY")
-        ptype = ask("parser 类型（1=balance 2=plan_usage 3=status）", "1")
-        ptype_map = {"1": "balance", "2": "plan_usage", "3": "status"}
+        ptype = ask("parser 类型（1=balance 2=plan_usage 3=status 4=command）", "1")
+        ptype_map = {"1": "balance", "2": "plan_usage", "3": "status", "4": "command"}
         ptype = ptype_map.get(ptype, ptype)
 
-        builder = {"balance": build_balance, "plan_usage": build_plan_usage,
-                   "status": build_status}[ptype]
-        provider = builder(display_name, keychain)
+        if ptype == "command":
+            provider = build_command(display_name)
+        else:
+            keychain = ask("Keychain 服务名", display_name.upper().replace(" ", "_") + "_API_KEY")
+            builder = {"balance": build_balance, "plan_usage": build_plan_usage,
+                       "status": build_status}[ptype]
+            provider = builder(display_name, keychain)
         provider["id"] = pid
 
         print("\n▶ 可选：")
@@ -238,8 +269,12 @@ def main():
         json.dump(config, f, ensure_ascii=False, indent=2)
         f.write("\n")
     print(f"✅ 已写入 {config_path}（共 {len(providers)} 个 provider）")
-    print("\n下一步：把 API Key 加入 Keychain：")
-    print(f'  security add-generic-password -s "{keychain}" -a "" -w "your-key"')
+    svc = provider.get("keychainService")
+    if svc:
+        print("\n下一步：把 API Key 加入 Keychain：")
+        print(f'  security add-generic-password -s "{svc}" -a "" -w "your-key"')
+    else:
+        print("\n命令型：确认 parser.command 指向的 CLI 已安装并完成登录。")
     print("\nSwiftBar 下次刷新（30 秒内）自动生效，无需重启。")
 
 

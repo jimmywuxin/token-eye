@@ -403,6 +403,90 @@ class TestEnvelope(unittest.TestCase):
         self.assertIn("令牌已过期", "".join(r["lines"]))
 
 
+class TestCommandParser(unittest.TestCase):
+    """parser.type=command：执行外部 CLI 并解析 JSON（千问 qianwen CLI 场景）。
+
+    用当前解释器跑 `-c` 脚本，不依赖真实 CLI 是否安装。
+    """
+
+    P = {
+        "id": "qwen", "name": "千问",
+        "consoleUrl": "https://platform.qianwenai.com/home",
+        "parser": {
+            "type": "command",
+            "command": sys.executable,
+            "args": ["-c", "print('{\"availableAmount\": \"5.03\", \"currency\": \"CNY\"}')"],
+            "fields": {"balance": "availableAmount", "currency": "currency"},
+        },
+        "display": {"nameColor": {"dark": "#FF9A4D", "light": "#A84300"}},
+        "alert": {"minBalance": 5.0},
+    }
+
+    def test_fetch_command_parses_json(self):
+        r = te.fetch_command(self.P["parser"])
+        self.assertTrue(r["ok"])
+        self.assertEqual(r["data"]["availableAmount"], "5.03")
+
+    def test_missing_command(self):
+        r = te.fetch_command({"type": "command"})
+        self.assertFalse(r["ok"])
+        self.assertEqual(r["error_kind"], "client")
+        self.assertIn("parser.command", r["message"])
+
+    def test_command_not_found(self):
+        r = te.fetch_command({"command": "/nonexistent/qianwen-xyz"})
+        self.assertFalse(r["ok"])
+        self.assertEqual(r["error_kind"], "client")
+        self.assertIn("命令不存在", r["message"])
+
+    def test_nonzero_exit_reports_stderr(self):
+        r = te.fetch_command({"command": sys.executable,
+                              "args": ["-c", "import sys; sys.stderr.write('AUTH_REQUIRED\\n'); sys.exit(2)"]})
+        self.assertFalse(r["ok"])
+        self.assertEqual(r["error_kind"], "client")
+        self.assertIn("AUTH_REQUIRED", r["message"])
+
+    def test_invalid_json(self):
+        r = te.fetch_command({"command": sys.executable, "args": ["-c", "print('not json')"]})
+        self.assertFalse(r["ok"])
+        self.assertEqual(r["error_kind"], "parse")
+
+    def test_path_includes_command_dir(self):
+        """SwiftBar 的 PATH 很短，npm CLI 的 #!/usr/bin/env node 会找不到 node。
+
+        执行前必须把命令所在目录提到 PATH 最前（同时保留调用方原 PATH）。
+        """
+        r = te.fetch_command({
+            "command": sys.executable,
+            "args": ["-c", "import os,json;print(json.dumps({'p':os.environ['PATH']}))"],
+        })
+        path = r["data"]["p"].split(os.pathsep)
+        self.assertEqual(path[0], os.path.dirname(sys.executable))
+
+    def test_env_override(self):
+        r = te.fetch_command({
+            "command": sys.executable,
+            "args": ["-c", "import os,json;print(json.dumps({'v':os.environ.get('TE_PROBE','')}))"],
+            "env": {"TE_PROBE": "ok"},
+        })
+        self.assertEqual(r["data"]["v"], "ok")
+
+    def test_parse_provider_renders_balance(self):
+        r = te.parse_provider(self.P, ok_result({"availableAmount": "5.03", "currency": "CNY"}),
+                              COLORS, "dark")
+        self.assertEqual(r["status"], "ok")
+        self.assertEqual(r["menu_bar"], "✅ ¥5.03")
+        self.assertEqual(r["balance_num"], 5.03)
+
+    def test_process_provider_skips_keychain(self):
+        """command 型没有 keychainService，不能被 get_key 拦成 no_key。"""
+        cfg = {"cache": {"command": 300}}
+        with tempfile.TemporaryDirectory() as td:
+            r = te.process_provider(self.P, cfg, COLORS, "dark", td, td, td)
+        self.assertEqual(r["status"], "ok")
+        self.assertEqual(r["menu_bar"], "✅ ¥5.03")
+
+
 class TestShowDerived(unittest.TestCase):
     """display.showDerived=false 时只显示余额（2026-10-18 MiMo 需求）。
 

@@ -317,6 +317,9 @@ SDK 路径写在 `android/local.properties`（本机 `/opt/homebrew/share/androi
 | | `barLength` | 进度条格数，默认 20 |
 | | ~~`statusMap`~~ / ~~`fields.intervalStatus`~~ / ~~`weeklyStatus`~~ / ~~`intervalTotal`~~ / ~~`weeklyTotal`~~ | ⚠️ 当前版本**未读取**：状态一律按已用% 分档（<80% 正常 / 80–99% 临近耗尽 / ≥100% 耗尽），字段仅为兼容旧配置保留 |
 | `status` | `okField` / `okValue` | 判断 Key 有效性的字段路径与期望值；两者都留空则只看响应是否存在 |
+| `command` | `command` / `args` / `timeout` | 执行外部 CLI 并解析其 **stdout JSON**（见下方「命令型（command）」），`timeout` 默认 10 秒 |
+| | `fields.balance` / `fields.currency` | 与 `balance` 同口径，从 CLI 输出的 JSON 里取余额与货币 |
+| | `env` | 覆盖执行命令时的环境变量（默认已把命令所在目录提到 `PATH` 最前） |
 
 余额告警阈值优先级链：`parser.fields.alertThreshold`（API 字段）> `provider.alert.minBalance`（未配时看根 `alerts.{id}.minBalance`）> `parser.defaultMinBalance` > 不告警。菜单栏状态图标与告警通知共用同一阈值。
 
@@ -425,6 +428,36 @@ provider 配置 `consoleUrl`，详情菜单末尾出现「→ 打开 X 控制台
 | `msgPath` | `msg` | 错误文案字段路径 |
 
 响应里没有 `codePath` 对应字段时一律放行（避免误判非 envelope 结构的接口）。不配 `envelope` 的 provider 行为完全不变。
+
+### 命令型（command）
+
+有些平台**没有 HTTP 余额接口**，只有官方 CLI 能查（如千问 `qianwen` CLI）。`command` 型执行命令、把 stdout 当 JSON 解析，其余渲染 / 告警 / 历史全部复用 `balance`：
+
+```json
+{
+  "id": "qwen",
+  "name": "千问",
+  "consoleUrl": "https://platform.qianwenai.com/home",
+  "parser": {
+    "type": "command",
+    "command": "~/.local/bin/qianwen",
+    "args": ["billing", "balance", "summary", "--format", "json"],
+    "timeout": 15,
+    "fields": { "balance": "availableAmount", "currency": "currency" }
+  },
+  "alert": { "minBalance": 5.0 }
+}
+```
+
+| 要点 | 说明 |
+|---|---|
+| 不需要 `api` / `keychainService` | 凭证由 CLI 自己管（千问存系统钥匙串），token-eye 不碰 |
+| 不走 shell | 命令与参数以数组传给 `subprocess`，无注入面；`command` / `args` 支持 `~` 展开 |
+| 命令写绝对路径 | SwiftBar 的 `PATH` 很短（`/usr/bin:/bin:...`），裸命令名大概率找不到 |
+| PATH 自动补齐 | 执行前会把 **命令所在目录**提到 `PATH` 最前 —— npm 装的 CLI 多是 `#!/usr/bin/env node`，不加就报 `env: node: No such file or directory`。需要别的变量时可配 `parser.env`（如 `{"PATH": "/opt/homebrew/bin:/usr/bin:/bin"}`） |
+| 错误分类 | 非零退出 → 取 stderr 最后一行；非 JSON → 解析失败；超时 → 超时；命令不存在 → 「命令不存在」 |
+| 缓存 | 默认 300 秒（同 `balance`）。CLI 有 2–3 秒启动开销，别把 `cacheTtl` 调太低 |
+| Android | **不支持**，加载配置时剔除该类型（同 `refreshParam`） |
 
 ### 自定义请求头（api.headers）
 
@@ -652,7 +685,7 @@ make holidays   # 更新中国法定节假日/调休表（holidays/<年>.json，
 
 - **单元测试**：`swiftbar/token_eye.py` 的解析/告警/错误分类/缓存等核心函数全部可测，`tests/` 覆盖 197 个用例，`python3 -m unittest discover -s tests` 即可运行
 - **JSON Schema**：`schema/providers.schema.json` 描述配置结构；VS Code 等编辑器打开 `providers.json` 时自动补全与校验；`python3 scripts/validate-schema.py` 提供零依赖的运行时校验（脚本内置的轻量校验用于菜单栏提示）
-- **跨端配置同步**：`scripts/check-config-sync.py` 比对根 `providers.json` / `holidays/` 与 Android 的手工副本 `android/app/src/main/assets/`，**改根配置忘了同步会让 `make check` 与 CI 直接失败**（唯一允许的差异：带 `refreshParam` 的平台——Cookie 刷新无法移植——在 Android 侧被剔除）
+- **跨端配置同步**：`scripts/check-config-sync.py` 比对根 `providers.json` / `holidays/` 与 Android 的手工副本 `android/app/src/main/assets/`，**改根配置忘了同步会让 `make check` 与 CI 直接失败**（允许的差异：带 `refreshParam` 的平台——Cookie 刷新无法移植——与 `parser.type=command` 的平台——手机不能执行 CLI——在 Android 侧被剔除）
 - **CI**：GitHub Actions（`.github/workflows/ci.yml`）自动执行 bash 语法 + ShellCheck、Python 编译、单元测试、Schema 校验、跨端配置同步、配色对比度、版本一致性检查
 - **配色回归**：`scripts/check-colors.py` 保证全部颜色 WCAG AA ≥4.5:1
 - **排查**：`TOKEN_EYE_DEBUG=1` 输出调试日志到 `~/Library/Caches/token-eye/debug.log`

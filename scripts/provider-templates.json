@@ -20,7 +20,9 @@
     "display": {
       "unit": "$",
       "label": "余额",
-      "currencySymbols": { "USD": "$" }
+      "currencySymbols": {
+        "USD": "$"
+      }
     }
   },
   {
@@ -96,7 +98,9 @@
       "authPrefix": "",
       "envelope": {
         "codePath": "code",
-        "okCodes": [200],
+        "okCodes": [
+          200
+        ],
         "msgPath": "msg"
       }
     },
@@ -112,22 +116,27 @@
     }
   },
   {
-    "name": "阿里云百炼 Qwen",
+    "name": "千问（qianwen CLI）",
     "id": "qwen",
-    "keychainService": "QWEN_API_KEY",
-    "consoleUrl": "https://bailian.console.aliyun.com/",
-    "api": {
-      "url": "https://dashscope.aliyuncs.com/compatible-mode/v1/models",
-      "method": "GET",
-      "authHeader": "Authorization",
-      "authPrefix": "Bearer "
-    },
+    "consoleUrl": "https://platform.qianwenai.com/home",
     "parser": {
-      "type": "status",
-      "okField": "data"
+      "type": "command",
+      "command": "~/.local/bin/qianwen",
+      "args": [
+        "billing",
+        "balance",
+        "summary",
+        "--format",
+        "json"
+      ],
+      "timeout": 15,
+      "fields": {
+        "balance": "availableAmount",
+        "currency": "currency"
+      }
     },
     "display": {
-      "label": "可用"
+      "label": "余额"
     }
   },
   {
@@ -180,7 +189,11 @@
         "image-01": "图片",
         "music-2.5": "音乐"
       },
-      "statusMap": { "1": "可用", "2": "耗尽临近", "3": "耗尽" },
+      "statusMap": {
+        "1": "可用",
+        "2": "耗尽临近",
+        "3": "耗尽"
+      },
       "barLength": 20
     },
     "display": {

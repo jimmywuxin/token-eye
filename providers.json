@@ -78,8 +78,23 @@
         },
         "peakWindow": {
           "tz": "Asia/Shanghai",
-          "weekdays": [1, 2, 3, 4, 5],
-          "hours": [[9, 12], [14, 18]],
+          "weekdays": [
+            1,
+            2,
+            3,
+            4,
+            5
+          ],
+          "hours": [
+            [
+              9,
+              12
+            ],
+            [
+              14,
+              18
+            ]
+          ],
           "holidays": true,
           "peakLabel": "⚡高峰",
           "offPeakLabel": "🌙空闲"
@@ -145,7 +160,9 @@
         "authPrefix": "",
         "envelope": {
           "codePath": "code",
-          "okCodes": [200],
+          "okCodes": [
+            200
+          ],
           "msgPath": "msg"
         }
       },
@@ -160,6 +177,37 @@
         "nameColor": {
           "dark": "#5B7CFF",
           "light": "#1F3AC7"
+        }
+      },
+      "alert": {
+        "minBalance": 5.0
+      }
+    },
+    {
+      "id": "qwen",
+      "name": "千问",
+      "consoleUrl": "https://platform.qianwenai.com/home",
+      "parser": {
+        "type": "command",
+        "command": "~/.local/bin/qianwen",
+        "args": [
+          "billing",
+          "balance",
+          "summary",
+          "--format",
+          "json"
+        ],
+        "timeout": 15,
+        "fields": {
+          "balance": "availableAmount",
+          "currency": "currency"
+        }
+      },
+      "display": {
+        "label": "余额",
+        "nameColor": {
+          "dark": "#FF9A4D",
+          "light": "#A84300"
         }
       },
       "alert": {

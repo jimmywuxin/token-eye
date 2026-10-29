@@ -8,8 +8,9 @@ macOS / Linux 直接读项目根目录。改了根配置忘了同步 → 手机�
 
 校验两处副本：
   1. `providers.json` ↔ `android/app/src/main/assets/providers.json`
-     允许的**唯一**差异：带 `refreshParam` 的 provider 在 Android 侧被剔除
-     （Cookie 刷新依赖浏览器会话，无法移植，见 android/README.md「已知差异」）。
+     允许的差异：带 `refreshParam` 的 provider 在 Android 侧被剔除（Cookie 刷新依赖
+     浏览器会话，无法移植），`parser.type=command` 的 provider 同样剔除（手机不能执行
+     外部 CLI）。见 android/README.md「已知差异」。
   2. `holidays/<年>.json` ↔ `android/app/src/main/assets/holidays/<年>.json`
      文件集合与内容都必须一致（`make holidays` 更新后要手工拷贝，新增年份同理）。
 
@@ -43,11 +44,12 @@ def _changed_paths(expected, actual, prefix=""):
 
 
 def check_providers(providers_path, android_path, errors):
-    """providers.json ↔ assets 副本；带 refreshParam 的平台在 Android 侧应缺失。"""
+    """providers.json ↔ assets 副本；带 refreshParam / command 型的平台在 Android 侧应缺失。"""
     root = _load(providers_path)
     android = _load(android_path)
     expected = {p["id"]: p for p in root.get("providers", [])
-                if not p.get("refreshParam")}
+                if not p.get("refreshParam")
+                and (p.get("parser") or {}).get("type") != "command"}
     actual = {p["id"]: p for p in android.get("providers", []) if p.get("id")}
 
     for pid in sorted(set(expected) - set(actual)):

@@ -53,7 +53,7 @@
   "definitions": {
     "provider": {
       "type": "object",
-      "required": ["id", "name", "keychainService", "api", "parser"],
+      "required": ["id", "name", "parser"],
       "properties": {
         "id": { "type": "string", "minLength": 1 },
         "name": { "type": "string", "minLength": 1 },
@@ -114,7 +114,7 @@
       "type": "object",
       "required": ["type"],
       "properties": {
-        "type": { "type": "string", "enum": ["balance", "plan_usage", "status"] },
+        "type": { "type": "string", "enum": ["balance", "plan_usage", "status", "command"] },
         "fields": {
           "type": "object",
           "description": "字段路径映射，支持 . 分隔嵌套与数组索引（如 balance_infos.0.total_balance）。balance 类可配 alertThreshold 指向 API 返回的告警阈值字段（若平台返回），用于自动读阈值",
@@ -124,6 +124,25 @@
           "type": "number",
           "minimum": 0,
           "description": "balance 类余额告警阈值兜底值（按 parser 类型）。优先级链：API 阈值字段（parser.fields.alertThreshold）> provider.alert.minBalance > 此处 > 不告警"
+        },
+        "command": {
+          "type": "string",
+          "description": "parser.type=command 时必填：要执行的命令（绝对路径或 ~ 展开）。用于没有 HTTP 余额接口、只有官方 CLI 的平台（如千问 qianwen CLI）。不走 shell，参数以数组传递"
+        },
+        "args": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "命令参数数组（如 [\"billing\",\"balance\",\"summary\",\"--format\",\"json\"]）"
+        },
+        "timeout": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "命令超时秒数，默认 10"
+        },
+        "env": {
+          "type": "object",
+          "additionalProperties": { "type": "string" },
+          "description": "覆盖执行命令时的环境变量（如 PATH）。默认会把 command 所在目录提到 PATH 最前，解决 SwiftBar 窄 PATH 下 `#!/usr/bin/env node` 找不到 node 的问题"
         },
         "arrayPath": { "type": "string" },
         "modelLabels": { "type": "object" },

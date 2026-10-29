@@ -79,9 +79,20 @@ class TestConfigSync(unittest.TestCase):
         self.assertTrue(any("多出 provider「gamma」" in e for e in self.errors()))
 
     def test_refresh_param_provider_may_be_absent(self):
-        """Android 剔除 Cookie 平台（带 refreshParam）是允许的唯一差异。"""
+        """Android 剔除 Cookie 平台（带 refreshParam）是允许的差异。"""
         self.write_root_providers([provider("alpha"),
                                    provider("mimo", refreshParam="refresh-mimo-cookie")])
+        self.write_assets_providers([provider("alpha")])
+        self.assertEqual(self.errors(), [])
+
+    def test_command_provider_may_be_absent(self):
+        """Android 剔除 command 型平台（手机不能执行外部 CLI）。"""
+        cmd = provider("qwen")
+        cmd.pop("api", None)
+        cmd.pop("keychainService", None)
+        cmd["parser"] = {"type": "command", "command": "~/.local/bin/qianwen",
+                         "args": ["billing", "balance", "summary", "--format", "json"]}
+        self.write_root_providers([provider("alpha"), cmd])
         self.write_assets_providers([provider("alpha")])
         self.assertEqual(self.errors(), [])
 

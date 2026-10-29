@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+## [0.23.16] - 2026-10-29
+
+### 新增
+- **`command` 型 parser**：执行外部 CLI 并解析其 stdout JSON，字段映射复用 `balance` 的 `fields.balance` / `fields.currency`，渲染 / 告警 / 历史 / 缓存全部沿用。用于**没有 HTTP 余额接口、只有官方 CLI** 的平台。不需要 `api` / `keychainService`（凭证由 CLI 自己管）；不走 shell（列表传参，无注入面）；`command` / `args` 支持 `~` 展开；`timeout` 默认 10 秒。错误分类：命令不存在 / 非零退出（取 stderr 末行）/ 非 JSON / 超时
+- **千问余额**（`qwen` provider）：千问 AI 平台（`platform.qianwenai.com`）在百炼之外独立存在，**没有可用的 HTTP 余额接口**（`api/v1/usage`、`account/quota` 等 6 个候选全 404；网关 `platform-api.qianwenai.com/data/api.json?action=BroadScopeAspnGateway` 缺签名，6 种请求体全 `AccessDenied`）。改用官方 CLI `@qianwenai/qianwen-cli`：`qianwen billing balance summary --format json` → `availableAmount` / `currency`
+
+### 说明
+- **Android 不支持 `command` 型**：手机无法执行外部 CLI，`check-config-sync.py` 已把该类型加入「允许在 assets 侧剔除」的白名单（与 `refreshParam` 同处理）
+- 千问 CLI 安装：`npm install --prefix ~/.local @qianwenai/qianwen-cli`，再 `ln -sf ~/.local/node_modules/.bin/qianwen ~/.local/bin/qianwen`；登录 `qianwen auth login`（设备码授权，凭证存系统钥匙串）
+- **千问 CLI 的登录态约 2 天过期**（`expires_at`），到期后需重新 `qianwen auth login`；过期时菜单会显示 CLI 返回的错误原文
+- 单次 CLI 调用约 2.8 秒（Node 启动），缓存沿用 `balance` 的 300 秒
+- 模板库 `qwen` 由 `status` 改为 `command`；`add-provider.py` 向导支持 command 型
+
 ### 文档（更正「Linux 端仍保留近 7 天柱状 / 预计可用」的错误说法 + 发版节奏约定）
 - **发版节奏（2026-10-19 Jimmy 认可，详规见 AGENTS.md）**：纯 cosmetic 配置改动默认不单独打 tag，攒进 `[Unreleased]` 随下一个真改动发版；只有「手机要拿到该改动（APK 版本由 VERSION 派生）」或「需要独立回滚锚点」才升版本发版
 - `linux/` 不是独立实现的渲染层，而是零改动 `import swiftbar/token_eye.py` 的注入层（托盘只把核心产出的 `lines` 渲染成菜单）→ v0.23.14 移除这两项后 **Linux 一并生效**，原文「Linux 版未动/仍保留」有误

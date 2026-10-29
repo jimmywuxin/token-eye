@@ -22,10 +22,10 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime as _dt
 
-VERSION = "0.23.15"
+VERSION = "0.23.16"
 
 # 按 parser 类型的默认缓存 TTL（秒）
-DEFAULT_CACHE_TTL = {"balance": 300, "plan_usage": 30, "status": 60}
+DEFAULT_CACHE_TTL = {"balance": 300, "plan_usage": 30, "status": 60, "command": 300}
 ERROR_CACHE_TTL = 10  # 失败短缓存，避免连续打 API
 
 # 环境变量 -> 颜色名（与 token-eye.sh 导出的 C_* 对应）
@@ -48,7 +48,7 @@ CONFIG_COLOR_KEYS = {
     "WARN": "warn",
     "ERR": "err",
 }
-VALID_PARSER_TYPES = ("balance", "plan_usage", "status")
+VALID_PARSER_TYPES = ("balance", "plan_usage", "status", "command")
 
 # 把项目根加入 sys.path，以便 import parsers.* 子模块
 # （PROJECT_DIR 由 token-eye.sh 通过环境变量传入；缺省取本文件父目录的父目录）
@@ -127,15 +127,20 @@ def schema_validate(config):
             errors.append(f"providers[{idx}] 不是对象")
             continue
         pid = p.get("id", "?")
-        for f in ("id", "name", "keychainService"):
-            if not p.get(f):
-                errors.append(f"providers[{idx}]（{pid}）缺字段 {f}")
-        api = p.get("api") or {}
-        if not api.get("url"):
-            errors.append(f"providers[{idx}]（{pid}）api 缺字段 url")
         ptype = (p.get("parser") or {}).get("type")
         if ptype not in VALID_PARSER_TYPES:
             errors.append(f"providers[{idx}]（{pid}）parser.type 无效: {ptype!r}")
+        if ptype == "command":
+            # 命令型：无 api / keychain（凭证由外部 CLI 自己管），必须给 command
+            if not (p.get("parser") or {}).get("command"):
+                errors.append(f"providers[{idx}]（{pid}）command 型缺 parser.command")
+        else:
+            for f in ("id", "name", "keychainService"):
+                if not p.get(f):
+                    errors.append(f"providers[{idx}]（{pid}）缺字段 {f}")
+            api = p.get("api") or {}
+            if not api.get("url"):
+                errors.append(f"providers[{idx}]（{pid}）api 缺字段 url")
         # peakWindow 轻量校验（与 parsers/peak_window.py 的规则一致）
         pw_cfg = (p.get("parser") or {}).get("peakWindow")
         if pw_cfg is not None:
@@ -251,6 +256,54 @@ def fetch_with_envelope(api, key):
         api.get("headers")
     )
     return apply_envelope(result, api)
+
+
+def fetch_command(parser):
+    """执行外部命令并解析其 JSON 输出（parser.type=command）。
+
+    用于**没有 HTTP 余额接口、只有官方 CLI** 的平台（如千问 `qianwen` CLI）。
+    不走 shell（列表传参，天然免注入）；command / args 均支持 `~` 展开。
+    命令来自用户自己的配置文件，不对外部输入求值。
+    """
+    cmd = os.path.expanduser(str(parser.get("command") or ""))
+    if not cmd:
+        return {"ok": False, "status": None, "data": None,
+                "error_kind": "client", "message": "未配置 parser.command"}
+    args = [os.path.expanduser(str(a)) for a in (parser.get("args") or [])]
+    timeout = parser.get("timeout", 10)
+    # SwiftBar 的 PATH 只有 /usr/bin:/bin:/usr/sbin:/sbin，npm 装的 CLI 多是
+    # `#!/usr/bin/env node`，找不到 node 就直接 "env: node: No such file or directory"。
+    # 默认把命令所在目录提到 PATH 最前（~/.local/bin/qianwen 旁边通常就有 node），
+    # 再用 parser.env 允许显式覆盖。
+    env = dict(os.environ)
+    cmd_dir = os.path.dirname(cmd)
+    if cmd_dir:
+        env["PATH"] = cmd_dir + os.pathsep + env.get("PATH", "/usr/bin:/bin")
+    for k, v in (parser.get("env") or {}).items():
+        env[str(k)] = os.path.expanduser(str(v))
+    try:
+        r = subprocess.run([cmd] + args, capture_output=True, text=True, timeout=timeout,
+                           env=env)
+    except FileNotFoundError:
+        return {"ok": False, "status": None, "data": None,
+                "error_kind": "client", "message": f"命令不存在: {os.path.basename(cmd)}"}
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "status": None, "data": None,
+                "error_kind": "timeout", "message": "命令超时"}
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "status": None, "data": None,
+                "error_kind": "network", "message": f"执行失败: {e}"}
+    if r.returncode != 0:
+        lines = (r.stderr or r.stdout or "").strip().splitlines()
+        detail = lines[-1][:80] if lines else f"退出码 {r.returncode}"
+        return {"ok": False, "status": None, "data": None,
+                "error_kind": "client", "message": detail}
+    try:
+        data = json.loads(r.stdout or "")
+    except json.JSONDecodeError as e:
+        return {"ok": False, "status": None, "data": None,
+                "error_kind": "parse", "message": f"JSON 解析失败: {e}"}
+    return {"ok": True, "status": None, "data": data, "error_kind": None, "message": ""}
 
 
 def fetch_api(url, method, auth_header, auth_prefix, key, extra_headers=None,
@@ -567,7 +620,7 @@ def parse_provider(p, fetch_result, colors, appearance):
     ptype = parser["type"]
     NC = name_color(display, appearance, colors["DEFAULT"])
 
-    if ptype == "balance":
+    if ptype in ("balance", "command"):
         fields = parser.get("fields", {})
         balance = resolve_field(data, fields.get("balance", ""))
         currency = resolve_field(data, fields.get("currency", "CNY")) or "CNY"
@@ -1061,7 +1114,8 @@ def proactive_refresh_cookie(flags_dir, pid, refresh_script, interval):
 
 def process_provider(p, config, colors, appearance, cache_dir, hdir, project_dir, force=False):
     pid, name = p["id"], p["name"]
-    keychain, api, parser = p["keychainService"], p["api"], p["parser"]
+    # command 型没有 api / keychainService（凭证由外部 CLI 自己管），用 .get 取
+    keychain, api, parser = p.get("keychainService"), p.get("api"), p["parser"]
     ptype = parser["type"]
     console_url = p.get("consoleUrl")
     refresh_param = p.get("refreshParam")
@@ -1096,17 +1150,23 @@ def process_provider(p, config, colors, appearance, cache_dir, hdir, project_dir
         fetch_result = {"ok": True, "status": 200, "data": cached["data"],
                         "error_kind": None, "message": ""}
     else:
-        key = get_key(keychain)
-        if not key:
-            log_debug(hdir, f"[{pid}] Keychain 无密钥（{keychain}）")
-            return {"id": pid, "name": name, "status": "no_key", "lines": [],
-                    "menu_bar": "", "console_url": console_url,
-                    "keychainService": keychain}
-        fetch_result = fetch_with_envelope(api, key)
-        log_debug(hdir, f"[{pid}] 请求完成: ok={fetch_result['ok']} "
-                        f"status={fetch_result.get('status')} "
-                        f"kind={fetch_result.get('error_kind')} "
-                        f"耗时={time.time() - t0:.2f}s")
+        if ptype == "command":
+            fetch_result = fetch_command(parser)
+            log_debug(hdir, f"[{pid}] 命令完成: ok={fetch_result['ok']} "
+                            f"kind={fetch_result.get('error_kind')} "
+                            f"耗时={time.time() - t0:.2f}s")
+        else:
+            key = get_key(keychain)
+            if not key:
+                log_debug(hdir, f"[{pid}] Keychain 无密钥（{keychain}）")
+                return {"id": pid, "name": name, "status": "no_key", "lines": [],
+                        "menu_bar": "", "console_url": console_url,
+                        "keychainService": keychain}
+            fetch_result = fetch_with_envelope(api, key)
+            log_debug(hdir, f"[{pid}] 请求完成: ok={fetch_result['ok']} "
+                            f"status={fetch_result.get('status')} "
+                            f"kind={fetch_result.get('error_kind')} "
+                            f"耗时={time.time() - t0:.2f}s")
 
         # 自动自愈：请求失败 + 配置了 refreshParam → 刷新 Cookie 后重试一次。
         # 2026-10-09 放宽：原先仅在 client 鉴权错误（4xx）时触发，但 MiMo 10-07~
@@ -1190,7 +1250,7 @@ def process_provider(p, config, colors, appearance, cache_dir, hdir, project_dir
     # Balance history + 简约消耗视图（只有「今日消耗 + 预计可用」一行；7 天柱状已移除，2026-10-19）
     # 余额型 provider（DeepSeek / MiMo 等）无总额上限，故不展示进度条。
     # display.showDerived=false 的 provider（如 MiMo）只显示余额，跳过派生统计行。
-    if ptype == "balance" and render.get("balance_num") is not None:
+    if ptype in ("balance", "command") and render.get("balance_num") is not None:
         append_history(hdir, pid, render["balance_num"])
         symbol = render.get("symbol", "¥")
         # 今日消耗估算（相邻余额快照下降量之和，充值抬升余额的尖刺不受干扰）
@@ -1214,7 +1274,7 @@ def process_provider(p, config, colors, appearance, cache_dir, hdir, project_dir
 
     # Alert check (balance 余额 / plan_usage 用量百分比) + 恢复通知
     if os.environ.get("TOKEN_EYE_NOTIFY", "1") != "0":
-        if ptype == "balance" and render.get("balance_num") is not None:
+        if ptype in ("balance", "command") and render.get("balance_num") is not None:
             alerted = _flag_path(hdir, pid, "alerted")
             was_alerted = os.path.exists(alerted)
             notify_msg = alert_check(pid, name, render["balance_num"], alert_cfg, hdir, min_bal=min_balance)
