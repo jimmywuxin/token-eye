@@ -320,6 +320,7 @@ SDK 路径写在 `android/local.properties`（本机 `/opt/homebrew/share/androi
 | `command` | `command` / `args` / `timeout` | 执行外部 CLI 并解析其 **stdout JSON**（见下方「命令型（command）」），`timeout` 默认 10 秒 |
 | | `fields.balance` / `fields.currency` | 与 `balance` 同口径，从 CLI 输出的 JSON 里取余额与货币 |
 | | `env` | 覆盖执行命令时的环境变量（默认已把命令所在目录提到 `PATH` 最前） |
+| | `recovery` | 登录自愈脚本名（`scripts/<名字>.py`）：命令失败时自动跑，退出码 `0`=已恢复 / `3`=等浏览器授权 / 其他=失败；脚本必须快速返回（轮询丢后台） |
 
 余额告警阈值优先级链：`parser.fields.alertThreshold`（API 字段）> `provider.alert.minBalance`（未配时看根 `alerts.{id}.minBalance`）> `parser.defaultMinBalance` > 不告警。菜单栏状态图标与告警通知共用同一阈值。
 
@@ -443,6 +444,7 @@ provider 配置 `consoleUrl`，详情菜单末尾出现「→ 打开 X 控制台
     "command": "~/.local/bin/qianwen",
     "args": ["billing", "balance", "summary", "--format", "json"],
     "timeout": 15,
+    "recovery": "qwen-login",
     "fields": { "balance": "availableAmount", "currency": "currency" }
   },
   "alert": { "minBalance": 5.0 }
@@ -455,9 +457,21 @@ provider 配置 `consoleUrl`，详情菜单末尾出现「→ 打开 X 控制台
 | 不走 shell | 命令与参数以数组传给 `subprocess`，无注入面；`command` / `args` 支持 `~` 展开 |
 | 命令写绝对路径 | SwiftBar 的 `PATH` 很短（`/usr/bin:/bin:...`），裸命令名大概率找不到 |
 | PATH 自动补齐 | 执行前会把 **命令所在目录**提到 `PATH` 最前 —— npm 装的 CLI 多是 `#!/usr/bin/env node`，不加就报 `env: node: No such file or directory`。需要别的变量时可配 `parser.env`（如 `{"PATH": "/opt/homebrew/bin:/usr/bin:/bin"}`） |
-| 错误分类 | 非零退出 → 取 stderr 最后一行；非 JSON → 解析失败；超时 → 超时；命令不存在 → 「命令不存在」 |
+| 错误分类 | 非零退出 → 先解 stderr/stdout JSON 的 `error.message`（千问的 `TOKEN_EXPIRED` 就在这里），取不到才用末行；非 JSON → 解析失败；超时 → 超时；命令不存在 → 「命令不存在」 |
+| 登录自愈 | `parser.recovery` 指向 `scripts/<名字>.py`，命令失败时自动运行：退出码 `0`=已恢复并当轮重跑命令 / `3`=已发起登录、等浏览器授权 / 其他=失败。冷却 ok 5 分钟、waiting 2 分钟、fail 15 分钟，点菜单「🔑 重新登录 X」或底部「刷新」可跳过 |
 | 缓存 | 默认 300 秒（同 `balance`）。CLI 有 2–3 秒启动开销，别把 `cacheTtl` 调太低 |
 | Android | **不支持**，加载配置时剔除该类型（同 `refreshParam`） |
+
+#### 千问登录自愈（`scripts/qwen-login.py`）
+
+`qianwen` CLI 的 token 约 **2 天**过期且没有 refresh token，只能重走一次设备码授权（device flow）。配了 `parser.recovery` 后过程是全自动的：
+
+1. 菜单发现 `billing balance summary` 报 `TOKEN_EXPIRED` → 自动跑自愈脚本；
+2. 脚本 `login --init-only` 拿授权 URL → 打开浏览器 → 后台进程跑 `login --complete` 等确认（**不阻塞** 30 秒一轮的菜单渲染）；
+3. 浏览器还登录着千问账号时授权页会直接确认（实测 7 秒）；账号掉登录才需要手动点一次确认；
+4. 授权完成 → 凭据写入系统钥匙串 → 下一轮渲染自动出余额，同时发系统通知。
+
+排障：日志 `~/Library/Caches/token-eye/qwen-login.log`，待授权状态 `qwen-login-pending.json`；找不到 CLI 时可用环境变量 `QIANWEN_CLI` 指定路径。
 
 ### 自定义请求头（api.headers）
 

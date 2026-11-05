@@ -149,6 +149,7 @@ Python 核心逻辑：
 - `display.showDerived` — `balance` 类是否显示派生统计（今日消耗），默认 `true`；`false` 只显示余额。该行只在当天余额确实下降（spend>0）时渲染，零消耗日不占高度。**「预计可用 ~N 天」已于 2026-10-19 从菜单移除**（用户定），`days_left()` 仍为 `alert.daysLeft` 计算、只是不再展示；**MiMo 已于同日打开派生统计**（原本 `showDerived:false`），与 DeepSeek/GLM 一致。**快照历史与每日消耗仍照常累积/计算**，关掉再开回来历史不断档，`dailySpendMax` / `daysLeft` 告警也不受影响
 - `refreshParam` — 鉴权错误时自动刷新 + 菜单「🔄 刷新 Cookie」点击项（如 MiMo 的 `refresh-mimo-cookie`）
 - `refreshInterval` — 主动续期周期（秒，≥60）：即使 cookie 仍有效也定期从浏览器复制最新 cookie，保持 keychain 与浏览器会话同步、减少 401 触发面（仅对配置了 `refreshParam` 的 provider 生效）
+- `parser.recovery` — **仅 command 型**：登录自愈脚本名（`scripts/<recovery>.py`）。命令失败时自动运行，按**退出码**判定：`0`=已恢复（当轮重跑命令）、`3`=已发起登录、等待浏览器授权、其他=失败。脚本必须**几秒内返回**——device flow 的轮询要丢进脚本自己的后台进程，否则会卡住 30 秒一轮的渲染。冷却按状态分开：ok 5 分钟 / waiting 2 分钟 / fail 15 分钟（`RECOVERY_COOLDOWN`），`--force-refresh` 与菜单点击都跳过冷却
 - `enabled` — 设为 false 临时禁用
 
 ### Cookie 鉴权（MiMo 特例）
@@ -163,6 +164,14 @@ Python 核心逻辑：
 - **macOS 读浏览器 Cookie 库需要「完全磁盘访问权限」，缺权限时别误诊成会话过期**（2026-10-19 实报）：macOS 27 把浏览器数据目录纳入 `kTCCServiceSystemPolicyAllFiles` 保护，未授权进程 `open()`/`cp` 直接 `EPERM`，SQLite 只会报 `no such table: cookies`（临时文件被创建成空库）。判断依据：`EPERM`/SQLite `authorization denied` 才是权限；`401 + loginUrl` 才是会话过期。修复方式是给 **SwiftBar**（菜单路径由它负责读库）勾选 FDA，重登多少次都无效。错误结论必须写进 stdout 末行（`fail()`），因为 `token_eye.py` 的 `_reason_tail()` 只从 stdout 找「错误:」行抄进 flag/菜单 —— `sys.exit(str)` 只写 stderr，菜单就只剩「警告: …」噪音
 
 详细配置示例见 `README.md`。
+
+### CLI 登录自愈（千问特例，2026-11-05 立）
+
+- 千问只走 `qianwen` CLI（`parser.type=command`），凭证由 CLI 自己写进 Keychain（service `qianwen-cli` / account `cli_credentials`），**没有 refresh token**：`auth status` 的 `token.expires_at` 约 2 天到期，到期只能重走一次 **device flow**（`qianwen login`）。
+- `parser.recovery: "qwen-login"` → `scripts/qwen-login.py`，检测到 token 过期即**自动发起授权**：`login --init-only --format json` 取 `verification_url` → `open` 浏览器 → detached 起 `--poll` 子进程跑 `login --complete`（超时下限 180 秒）→ 用户点确认后凭据写入 Keychain，下一轮渲染（≤30 秒）自动出余额。
+- **浏览器仍登录着千问账号时，授权页会直接确认**（实测 7 秒完成，无需点任何东西）；账号掉登录时才需要人工点一次确认。发起授权会发系统通知，菜单同时出现「🔑 重新登录 千问」兜底入口（`param1=recover param2=qwen-login` → `token-eye.sh` 的 `recover` 分支，带 `--force` 跳过冷却）。
+- 待授权会话存在 `~/Library/Caches/token-eye/qwen-login-pending.json`（含 url / expires_at / poller_pid），未过期时复用、只重开浏览器，不会反复申请新 device code；日志在 `qwen-login.log`。
+- **CLI 报错文案必须解 JSON**：千问把错误打在 **stderr** 的 `{"error":{...,"message":...}}`，旧实现取「最后一行」只会得到 `}`（2026-11-05 用户实报「显示不出余额」其实菜单只有一个花括号）→ `_cli_error_detail()` 先解 `error.message`/`error.code`，再退回末行。
 
 ## 添加新平台
 

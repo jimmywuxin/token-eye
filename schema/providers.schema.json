@@ -139,6 +139,10 @@
           "minimum": 1,
           "description": "命令超时秒数，默认 10"
         },
+        "recovery": {
+          "type": "string",
+          "description": "parser.type=command 的登录自愈脚本名（scripts/<recovery>.py）。命令失败时自动运行，约定退出码：0=已恢复（重跑命令）、3=已发起登录等待浏览器授权、其他=失败。脚本必须快速返回，device flow 的轮询要放到脚本内部的后台进程（如千问的 qwen-login）"
+        },
         "env": {
           "type": "object",
           "additionalProperties": { "type": "string" },

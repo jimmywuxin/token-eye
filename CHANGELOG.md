@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### 新增（千问登录自动恢复）
+- **`parser.recovery`：command 型平台的登录自愈**。命令执行失败（如千问 `TOKEN_EXPIRED`）时自动运行 `scripts/<recovery>.py`，按**退出码**判定：`0`=已恢复（当轮直接重跑命令，余额立刻回来）、`3`=已发起登录、等待浏览器授权、其他=失败。冷却分状态（ok 5 分钟 / waiting 2 分钟 / fail 15 分钟），菜单「刷新」与「🔑 重新登录 X」都跳过冷却
+- **`scripts/qwen-login.py`：千问 device flow 自愈**。千问 token 约 2 天过期且**没有 refresh token**，过期只能重走设备码授权。脚本自动 `login --init-only` 取授权 URL → 打开浏览器 → **detached 后台进程**跑 `login --complete` 轮询（不阻塞 30 秒一轮的菜单渲染）→ 授权完成写入钥匙串，下一轮渲染自动出余额。浏览器仍登录着千问账号时授权页直接确认（实测 7 秒全自动），账号掉登录才需手动点一次。待授权会话存 `qwen-login-pending.json`，未过期时复用而非重复申请
+- 菜单错误分支新增「🔑 重新登录 千问」兜底入口（`param1=recover param2=qwen-login` → `token-eye.sh` 的 `recover` 分支，带 `--force`）
+
+### 修复
+- **千问「显示不出余额」实为错误文案被吞**：CLI 把错误 JSON 打在 stderr，旧实现取「最后一行」只拿到收尾的 `}`，菜单显示一个花括号，看不出是登录过期 → 新增 `_cli_error_detail()`，先解 `error.message` / `error.code`，取不到才退回末行（现在显示 `配置/鉴权错误: Token expired. Run: qianwen login`）
+- 错误菜单里自愈失败原因的前缀（「↻ 自动刷新未生效:」）改由追加方给出，避免把「🔑 等待浏览器授权」这类**非失败**提示也套上「未生效」字样
+
 ## [0.23.16] - 2026-10-29
 
 ### 新增

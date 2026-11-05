@@ -9,7 +9,7 @@
 
 PYTHON ?= python3
 SWIFTBAR_DIR ?= $(HOME)/SwiftBar
-PY_FILES := swiftbar/token_eye.py scripts/check-colors.py scripts/check-config-sync.py scripts/refresh-mimo-cookie.py scripts/validate-schema.py scripts/update-holidays.py
+PY_FILES := swiftbar/token_eye.py scripts/check-colors.py scripts/check-config-sync.py scripts/refresh-mimo-cookie.py scripts/qwen-login.py scripts/validate-schema.py scripts/update-holidays.py
 
 .PHONY: install test lint validate check all holidays
 

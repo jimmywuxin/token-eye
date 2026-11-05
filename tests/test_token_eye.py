@@ -1299,6 +1299,93 @@ class TestAutoRefreshCooldown(unittest.TestCase):
         m.assert_called_once()
 
 
+class TestRunRecovery(unittest.TestCase):
+    """command 型（CLI）provider 的登录自愈：按脚本退出码判定状态 + 分状态冷却。"""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+
+    def flag_path(self):
+        return os.path.join(self.dir, "token-eye-recovery-qwen.flag")
+
+    def test_exit_zero_means_recovered(self):
+        with mock.patch.object(te.subprocess, "run",
+                               return_value=mock.Mock(returncode=0, stdout="千问已登录\n")):
+            state, msg = te.run_recovery(self.dir, "qwen", "/x.py")
+        self.assertEqual(state, "ok")
+        self.assertEqual(msg, "千问已登录")
+        # ok 也留标记：脚本说已登录但命令仍失败时不能每 30 秒重跑一次
+        with open(self.flag_path()) as f:
+            self.assertIn(" ok", f.read())
+
+    def test_exit_three_means_waiting_and_cools_down(self):
+        with mock.patch.object(te.subprocess, "run",
+                               return_value=mock.Mock(returncode=3, stdout="等待浏览器授权\n")):
+            state, msg = te.run_recovery(self.dir, "qwen", "/x.py")
+        self.assertEqual(state, "waiting")
+        self.assertIn("等待浏览器授权", msg)
+        with mock.patch.object(te.subprocess, "run") as m:
+            state2, msg2 = te.run_recovery(self.dir, "qwen", "/x.py")
+        self.assertEqual(state2, "waiting")
+        self.assertIn("等待浏览器授权", msg2)   # 冷却中沿用上次原因，菜单不至于空白
+        m.assert_not_called()
+
+    def test_failure_records_reason(self):
+        with mock.patch.object(te.subprocess, "run",
+                               return_value=mock.Mock(returncode=1, stdout="错误: 找不到 CLI\n")):
+            state, msg = te.run_recovery(self.dir, "qwen", "/x.py")
+        self.assertEqual(state, "fail")
+        self.assertIn("找不到 CLI", msg)
+        with open(self.flag_path()) as f:
+            self.assertIn(" fail ", f.read())
+
+    def test_timeout_is_failure(self):
+        with mock.patch.object(te.subprocess, "run",
+                               side_effect=subprocess.TimeoutExpired("x", 30)):
+            state, msg = te.run_recovery(self.dir, "qwen", "/x.py")
+        self.assertEqual(state, "fail")
+        self.assertIn("超时", msg)
+
+    def test_force_bypasses_cooldown(self):
+        te._write_flag(self.flag_path(), f"{int(time.time()) - 5} waiting 等待浏览器授权")
+        with mock.patch.object(te.subprocess, "run") as m:
+            te.run_recovery(self.dir, "qwen", "/x.py")
+            m.assert_not_called()
+        with mock.patch.object(te.subprocess, "run",
+                               return_value=mock.Mock(returncode=0, stdout="千问已登录")):
+            state, _ = te.run_recovery(self.dir, "qwen", "/x.py", force=True)
+        self.assertEqual(state, "ok")
+
+    def test_fail_cooldown_expires(self):
+        te._write_flag(self.flag_path(), f"{int(time.time()) - 1000} fail 找不到 CLI")
+        with mock.patch.object(te.subprocess, "run",
+                               return_value=mock.Mock(returncode=0, stdout="ok")) as m:
+            state, _ = te.run_recovery(self.dir, "qwen", "/x.py")
+        self.assertEqual(state, "ok")
+        m.assert_called_once()
+
+
+class TestCliErrorDetail(unittest.TestCase):
+    """千问等 CLI 把错误装进 JSON 打在 stderr：旧实现取末行只会得到 `}`。"""
+
+    def test_extracts_message_from_json_stderr(self):
+        err = json.dumps({"error": {"code": "TOKEN_EXPIRED",
+                                    "message": "Token expired. Run: qianwen login",
+                                    "exit_code": 2}}, indent=2)
+        detail = te._cli_error_detail("", err, 2)
+        self.assertEqual(detail, "Token expired. Run: qianwen login")
+
+    def test_falls_back_to_code_when_message_missing(self):
+        err = '{"error": {"code": "TOKEN_EXPIRED"}}'
+        self.assertEqual(te._cli_error_detail("", err, 2), "TOKEN_EXPIRED")
+
+    def test_plain_text_uses_last_line(self):
+        self.assertEqual(te._cli_error_detail("", "警告: x\n真的错了", 1), "真的错了")
+
+    def test_no_output_reports_exit_code(self):
+        self.assertIn("退出码 7", te._cli_error_detail("", "", 7))
+
+
 class TestSemiAutoRefresh(unittest.TestCase):
     """半自动刷新：主动续期 + 会话失效自动打开登录页自动拾取。"""
 

@@ -161,6 +161,45 @@ if [ "${1:-}" = "refresh-mimo-cookie" ]; then
 fi
 
 # ---------------------------------------------------------------------------
+# 动作：CLI 型平台的登录自愈（bash=… param1=recover param2=<脚本名>）
+# 千问这类「只有 CLI、没有 HTTP 余额接口」的平台没有 cookie 可刷，token 过期只能重走
+# 设备码授权。脚本负责「打开浏览器授权页 + 后台轮询」，这里只补一条兜底通知：
+# 后台执行看不到 stdout，但脚本自己会发通知，所以这里成功不打扰、失败才回显。
+# ---------------------------------------------------------------------------
+if [ "${1:-}" = "recover" ]; then
+    REC_NAME="${2:-}"
+    REC_SCRIPT="$PROJECT_DIR/scripts/$REC_NAME.py"
+    if [ -z "$REC_NAME" ] || [ ! -f "$REC_SCRIPT" ]; then
+        notify "登录脚本不存在: $REC_SCRIPT"
+        echo "👁 | color=$C_ERR"
+        echo "---"
+        echo "登录脚本不存在: $REC_SCRIPT | color=$C_ERR"
+        echo "---"
+        echo "关闭 | refresh=true"
+        exit 0
+    fi
+    OUTPUT="$(/usr/bin/python3 "$REC_SCRIPT" --force 2>&1 || true)"
+    # 脚本三种结局：已登录 / 已发起授权等待确认 / 发起失败。
+    # 前两种脚本自己会弹通知（发起授权时），所以这里只为「失败」补一条，避免重复打扰。
+    echo "👁"
+    echo "---"
+    if printf '%s' "$OUTPUT" | grep -q "^错误"; then
+        notify "$(printf '%s' "$OUTPUT" | grep -m1 '^错误' | cut -c1-120)"
+        echo "❌ 登录发起失败 | color=$C_ERR"
+    elif printf '%s' "$OUTPUT" | grep -q "已登录"; then
+        echo "✅ 已是登录状态 | color=$C_OK"
+    else
+        echo "✅ 已打开浏览器授权页，确认后自动恢复 | color=$C_OK"
+    fi
+    printf '%s\n' "$OUTPUT" | tail -3 | sed 's/|/:/g' | while IFS= read -r line; do
+        [ -n "$line" ] && echo "$line | color=$C_MUTED size=11"
+    done
+    echo "---"
+    echo "关闭 | refresh=true"
+    exit 0
+fi
+
+# ---------------------------------------------------------------------------
 # 动作：自检（bash=… param1=self-check）——结果写日志 + 通知回显
 # ---------------------------------------------------------------------------
 if [ "${1:-}" = "self-check" ]; then

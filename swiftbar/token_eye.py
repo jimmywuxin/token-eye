@@ -258,6 +258,39 @@ def fetch_with_envelope(api, key):
     return apply_envelope(result, api)
 
 
+def _cli_error_detail(stdout, stderr, code):
+    """从外部命令的失败输出里挑一句人看得懂的原因。
+
+    千问等国内 CLI 把错误装进 JSON 打在 **stderr**：
+    `{"error":{"code":"TOKEN_EXPIRED","message":"Token expired. Run: qianwen login"}}`。
+    旧实现取「最后一行」，恰好拿到收尾的 `}`，菜单上就显示一个花括号（2026-11-05 实报），
+    用户看不出是登录过期。优先解 JSON 的 error.message / error.code，再退回末行。
+    """
+    for text in (stderr, stdout):
+        body = (text or "").strip()
+        start = body.find("{")
+        if start < 0:
+            continue
+        try:
+            data = json.loads(body[start:])
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(data, dict):
+            continue
+        err = data.get("error")
+        if isinstance(err, dict):
+            msg = err.get("message") or err.get("code")
+            if msg:
+                return str(msg)[:120]
+        elif isinstance(err, str) and err.strip():
+            return err.strip()[:120]
+        msg = data.get("message") or data.get("msg")
+        if isinstance(msg, str) and msg.strip():
+            return msg.strip()[:120]
+    lines = [ln for ln in (stderr or stdout or "").strip().splitlines() if ln.strip()]
+    return lines[-1][:80] if lines else f"退出码 {code}"
+
+
 def fetch_command(parser):
     """执行外部命令并解析其 JSON 输出（parser.type=command）。
 
@@ -294,8 +327,7 @@ def fetch_command(parser):
         return {"ok": False, "status": None, "data": None,
                 "error_kind": "network", "message": f"执行失败: {e}"}
     if r.returncode != 0:
-        lines = (r.stderr or r.stdout or "").strip().splitlines()
-        detail = lines[-1][:80] if lines else f"退出码 {r.returncode}"
+        detail = _cli_error_detail(r.stdout, r.stderr, r.returncode)
         return {"ok": False, "status": None, "data": None,
                 "error_kind": "client", "message": detail}
     try:
@@ -1015,6 +1047,59 @@ def _reason_tail(text, limit=80):
     return picked[:limit]
 
 
+RECOVERY_OK = 0        # 自愈脚本：已恢复（调用方重跑命令）
+RECOVERY_WAITING = 3   # 自愈脚本：已发起登录，等待用户浏览器授权
+# 各状态的冷却秒数：waiting 期间不必每 30 秒都去问一次 CLI；
+# fail（命令不存在、CLI 报错）拉长到 15 分钟，避免每轮渲染都白跑一遍 node；
+# ok 也留 5 分钟——脚本说「已登录」但命令仍失败时，否则会每 30 秒重跑一次死循环。
+RECOVERY_COOLDOWN = {"ok": 300, "waiting": 120, "fail": 900}
+
+
+def run_recovery(flags_dir, pid, recovery_script, force=False):
+    """command 型（CLI 型）provider 的登录自愈：跑 scripts/<recovery>.py 并解释退出码。
+
+    与 refreshParam 的 cookie 路径分开实现：command 型的凭证由外部 CLI 自己管，
+    没有 keychain / api 可以「换 cookie 后重拉」，所以只按退出码判定状态。
+
+    契约：0=已恢复 / 3=已发起登录、等待浏览器授权 / 其他=失败。
+    **脚本必须自身快速返回**：device flow 的轮询要放到脚本内部的后台进程里，
+    否则会卡住 SwiftBar 30 秒一轮的渲染（千问 device code 有效期 300 秒）。
+
+    返回 (state, message)：state ∈ {"ok", "waiting", "fail"}。
+    """
+    flag = _flag_path(flags_dir, pid, "recovery")
+    now = int(time.time())
+    if not force:
+        try:
+            if os.path.exists(flag):
+                with open(flag) as f:
+                    parts = f.read().strip().split(maxsplit=2)
+                last = int(parts[0])
+                state = parts[1] if len(parts) > 1 else "fail"
+                cooldown = RECOVERY_COOLDOWN.get(state, RECOVERY_COOLDOWN["fail"])
+                if now - last < cooldown:
+                    return state, (parts[2] if len(parts) > 2 else "")
+        except Exception:
+            pass
+    try:
+        r = subprocess.run([sys.executable or "/usr/bin/python3", recovery_script],
+                           capture_output=True, text=True, timeout=30)
+    except subprocess.TimeoutExpired:
+        msg = "自愈脚本超时（应把轮询放到后台，见 run_recovery 注释）"
+        _write_flag(flag, f"{now} fail {msg}")
+        return "fail", msg
+    except Exception as e:  # noqa: BLE001
+        _write_flag(flag, f"{now} fail {str(e)[:80]}")
+        return "fail", str(e)[:80]
+    state = {RECOVERY_OK: "ok", RECOVERY_WAITING: "waiting"}.get(r.returncode, "fail")
+    lines = [ln for ln in (r.stdout or "").strip().splitlines() if ln.strip()]
+    if not lines:
+        lines = [ln for ln in (r.stderr or "").strip().splitlines() if ln.strip()]
+    msg = lines[-1][:100] if lines else ""
+    _write_flag(flag, f"{now} {state} {msg}" if msg else f"{now} {state}")
+    return state, msg
+
+
 def auto_refresh_cookie(flags_dir, pid, refresh_script, fail_cooldown=60, success_cooldown=1800,
                         login_url=None, force=False):
     """自动刷新 Cookie（401 自愈）。
@@ -1155,6 +1240,23 @@ def process_provider(p, config, colors, appearance, cache_dir, hdir, project_dir
             log_debug(hdir, f"[{pid}] 命令完成: ok={fetch_result['ok']} "
                             f"kind={fetch_result.get('error_kind')} "
                             f"耗时={time.time() - t0:.2f}s")
+            # 登录自愈：千问这类 CLI 型平台的 token 约 2 天过期，CLI 不会自动续，
+            # 只能重走 device flow 人工授权。parser.recovery 指向 scripts/<name>.py，
+            # 由它自动发起授权（打开浏览器）+ 后台轮询；授权完成后本轮或下一轮即恢复。
+            # 用独立标记做冷却，避免每 30 秒都去问一次 CLI。
+            recovery = parser.get("recovery")
+            if not fetch_result["ok"] and recovery:
+                rec_script = os.path.join(project_dir, "scripts", f"{recovery}.py")
+                if os.path.exists(rec_script):
+                    state, msg = run_recovery(hdir, pid, rec_script, force=force)
+                    log_debug(hdir, f"[{pid}] 登录自愈: state={state} {msg}")
+                    if state == "ok":
+                        fetch_result = fetch_command(parser)
+                        log_debug(hdir, f"[{pid}] 自愈后重拉: ok={fetch_result['ok']}")
+                    elif msg:
+                        self_heal_errs.append(f"{'🔑' if state == 'waiting' else '⚠️'} {msg}")
+                else:
+                    log_debug(hdir, f"[{pid}] 自愈脚本缺失: {rec_script}")
         else:
             key = get_key(keychain)
             if not key:
@@ -1186,7 +1288,7 @@ def process_provider(p, config, colors, appearance, cache_dir, hdir, project_dir
                         log_debug(hdir, f"[{pid}] 自愈重试: ok={fetch_result['ok']} "
                                         f"status={fetch_result.get('status')}")
                 elif err:
-                    self_heal_errs.append(err)
+                    self_heal_errs.append(f"↻ 自动刷新未生效: {err}")
 
         # 主动续期：配置了 refreshInterval 时，即使当前 cookie 有效也按周期从浏览器
         # 复制最新 cookie，保持 keychain 与浏览器会话同步，减少 401 触发面。
@@ -1202,7 +1304,7 @@ def process_provider(p, config, colors, appearance, cache_dir, hdir, project_dir
                     # 不知道是浏览器没开、钥匙串没解锁，还是 cookie 库读不到）。
                     # 与自愈失败原因并存但去重：两条路径同因失败（如都没权限读
                     # Cookie 库）时，重复两遍只是噪音。
-                    line = f"主动续期失败: {prev_err[:60]}"
+                    line = f"↻ 主动续期失败: {prev_err[:60]}"
                     if prev_err[:60] not in " ".join(self_heal_errs):
                         self_heal_errs.append(line)
                 # 续期成功 → 立刻用新 cookie 重拉一次。
@@ -1234,10 +1336,11 @@ def process_provider(p, config, colors, appearance, cache_dir, hdir, project_dir
     if not fetch_result["ok"]:
         err_render = render_error(pid, name, fetch_result["error_kind"],
                                   fetch_result["message"], console_url, colors)
-        # 自愈/续期失败原因逐行展示：用户才知道「为什么刷新也没用」，而不是
-        # 只看到一句泛泛的「配置/鉴权错误」四处乱试（2026-10-19 实报）。
+        # 自愈/续期原因逐行展示：用户才知道「为什么刷新也没用」（或「已经替你在浏览器
+        # 打开授权页了」），而不是只看到一句泛泛的「配置/鉴权错误」四处乱试
+        # （2026-10-19 实报）。前缀由追加方给出，这里不要再套统一文案。
         for line in self_heal_errs:
-            err_render.setdefault("lines", []).append(f"  ↻ 自动刷新未生效: {line[:70]}")
+            err_render.setdefault("lines", []).append(f"  {line[:72]}")
             err_render.setdefault("colors", []).append(colors["MUTED"])
         return err_render
 
@@ -1345,7 +1448,8 @@ def process_provider(p, config, colors, appearance, cache_dir, hdir, project_dir
 # 渲染 SwiftBar 输出
 # ---------------------------------------------------------------------------
 
-def render(results, config, colors, refresh_map, hdir):
+def render(results, config, colors, refresh_map, hdir, recovery_map=None):
+    recovery_map = recovery_map or {}
     try:
         menu_cfg = config.get("menuBar", {})
         show_cfg = menu_cfg.get("showSummary", False)
@@ -1406,6 +1510,13 @@ def render(results, config, colors, refresh_map, hdir):
                 if rp:
                     act = bash_action(rp, refresh=True) or f"param1={rp} refresh=true"
                     print(f"  🔄 刷新 {name} Cookie | {act} color={colors['WARN']} size=11")
+                rc = recovery_map.get(r.get("id"))
+                if rc:
+                    # CLI 型平台（千问）没有 cookie 可刷，只能重新走 device flow。
+                    # 点这一项 = 跳过冷却、立即重新发起授权（已在等授权时会复用现有 URL）。
+                    act = (bash_action("recover", rc, refresh=True)
+                           or f"param1=recover param2={rc} refresh=true")
+                    print(f"  🔑 重新登录 {name} | {act} color={colors['WARN']} size=11")
                 if "磁盘访问" in " ".join(lines):
                     print("  🔧 打开「完全磁盘访问权限」设置 | "
                           "href=x-apple.systempreferences:com.apple.settings."
@@ -1615,6 +1726,9 @@ def run(args):
     providers_list = [p for p in config.get("providers", []) if p.get("enabled", True)]
     refresh_map = {p.get("id"): p.get("refreshParam")
                    for p in providers_list if p.get("refreshParam")}
+    # command 型的登录自愈脚本名（parser.recovery），只在出错菜单里出「重新登录」入口
+    recovery_map = {p.get("id"): (p.get("parser") or {}).get("recovery")
+                    for p in providers_list if (p.get("parser") or {}).get("recovery")}
     results = [None] * len(providers_list)
     if providers_list:
         with ThreadPoolExecutor(max_workers=max(1, len(providers_list))) as executor:
@@ -1632,7 +1746,7 @@ def run(args):
                                     "lines": [f"处理异常: {e}"], "colors": [colors["ERR"]],
                                     "menu_bar": "", "console_url": None}
 
-    render(results, config, colors, refresh_map, hdir)
+    render(results, config, colors, refresh_map, hdir, recovery_map)
     return 0
 
 

@@ -198,6 +198,7 @@
           "json"
         ],
         "timeout": 15,
+        "recovery": "qwen-login",
         "fields": {
           "balance": "availableAmount",
           "currency": "currency"
