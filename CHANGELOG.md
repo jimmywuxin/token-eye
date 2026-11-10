@@ -4,6 +4,9 @@
 
 > 下次改动攒在这里；发版时把本节固化成版本章节（格式见下方 0.24.0）。
 
+### CI
+- `android-test` job 去掉 `android-actions/setup-android@v3`：其内部执行 `sdkmanager tools`，runner 新版 cmdline-tools（16.0）已移除 legacy `tools` 包，导致 `Failed to find package 'tools'` 直接失败（v0.24.0 首推实测）。改为直接用 runner 预装 SDK（`ANDROID_HOME`）生成 `local.properties`，并校验 `platforms` 目录存在。同时把 job 名里硬编码的测试数（「51 例」）去掉，避免与真实用例数脱节
+
 ## [0.24.0] - 2026-11-10
 
 > 全项目审查整改批次（覆盖代码质量、架构、安全、性能、错误处理、测试覆盖与文档）。三端 P0 全部闭环 + 护栏/文档校准 + 死配置清理。
