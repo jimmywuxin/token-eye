@@ -56,13 +56,11 @@ MINIMAX_P = {
     "parser": {
         "type": "plan_usage",
         "arrayPath": "model_remains",
+        # 与 providers.json 对齐：已废弃的 *Status / *Total / statusMap 不再出现在 fixture，
+        # 顺带验证 parse_provider 不依赖它们（状态一律按已用% 分档）。
         "fields": {
             "model": "model_name", "intervalPct": "current_interval_remaining_percent",
-            "intervalStatus": "current_interval_status",
-            "intervalTotal": "current_interval_total_count",
             "weeklyPct": "current_weekly_remaining_percent",
-            "weeklyStatus": "current_weekly_status",
-            "weeklyTotal": "current_weekly_total_count",
             "intervalBoost": "interval_boost_permille",
             "weeklyBoost": "weekly_boost_permille",
             "resetMs": "remains_time",
@@ -70,7 +68,6 @@ MINIMAX_P = {
         "modelLabels": {"general": "", "video": "视频"},
         "showModels": ["general"],
         "windowLabels": {"interval": "5h", "weekly": "7d"},
-        "statusMap": {"1": "可用", "2": "耗尽临近", "3": "耗尽"},
         "barLength": 20,
     },
     "display": {"nameColor": "#1D9E75"},
@@ -313,10 +310,20 @@ class TestParseBalance(unittest.TestCase):
         self.assertEqual(r["menu_bar"], "✅ $8.0")
 
     def test_missing_balance(self):
+        # 字段缺失 = 错误态，绝不能是「✅ ¥?」假绿（与 Android ResultParser 的 ERR 对齐）
         r = te.parse_provider(BALANCE_P, ok_result({
             "balance_infos": [{"currency": "CNY"}]}), COLORS, "dark")
-        self.assertEqual(r["menu_bar"], "✅ ¥?")
+        self.assertEqual(r["status"], "error")
+        self.assertEqual(r["error_kind"], "parse")
+        self.assertIn("余额字段缺失", r["lines"][0])
+        self.assertEqual(r["menu_bar"], "")
         self.assertIsNone(r["balance_num"])
+
+    def test_unparsable_balance_is_error_not_fake_green(self):
+        r = te.parse_provider(BALANCE_P, ok_result({
+            "balance_infos": [{"total_balance": "N/A", "currency": "CNY"}]}),
+            COLORS, "dark")
+        self.assertEqual(r["status"], "error")
 
     def test_not_available(self):
         r = te.parse_provider(BALANCE_P, ok_result({
@@ -798,9 +805,12 @@ class TestFetchApi(unittest.TestCase):
                              extra_headers={"X-A": "1"})
         self.assertTrue(r["ok"])
         cmd = m.call_args.args[0]
-        self.assertIn("-H", cmd)
-        self.assertIn("Authorization: Bearer k", cmd)
-        self.assertIn("X-A: 1", cmd)
+        cfg = m.call_args.kwargs.get("input", "")
+        # 凭证从 stdin 的 curl config 传入，绝不进 argv（同机 ps / 审计日志可读 argv）
+        self.assertIn("--config", cmd)
+        self.assertIn("Authorization: Bearer k", cfg)
+        self.assertIn("X-A: 1", cfg)
+        self.assertNotIn("Bearer k", " ".join(cmd))
 
 
 class TestSchemaValidate(unittest.TestCase):
@@ -946,7 +956,9 @@ class TestConsumptionAndPrediction(unittest.TestCase):
 
     def test_days_left(self):
         now = int(time.time())
-        self.write("x", [(now - 86400, 100.0), (now - 43200, 90.0), (now - 3600, 85.0)])
+        # 首点留 400s 余量：days_left() 内部会再取一次 time.time()，
+        # 写死 -86400 时跨 1 秒就被 24h 窗口排除 → 消耗 15 变 5、结果 17.0（flaky）。
+        self.write("x", [(now - 86000, 100.0), (now - 43200, 90.0), (now - 3600, 85.0)])
         d = te.days_left(self.dir, "x", 85.0)
         self.assertIsNotNone(d)
         self.assertAlmostEqual(d, 85.0 / 15.0, places=2)  # 24h 消耗 15 → 可用 85/15 天
@@ -1561,17 +1573,37 @@ class TestVersion(unittest.TestCase):
         self.assertFalse(te._ver_gt("0.9.0", "v0.9.0"))
 
     def test_check_latest_version_cached(self):
+        # 版本检查已改为「渲染只读缓存 + 后台异步刷新」：任何情况都不在渲染里联网
         d = tempfile.mkdtemp()
-        fake = mock.Mock(stdout='{"tag_name":"v0.10.0"}')
-        with mock.patch.object(te.subprocess, "run", return_value=fake) as m:
+        with open(os.path.join(d, "latest-release.json"), "w", encoding="utf-8") as f:
+            json.dump({"ts": int(time.time()), "tag_name": "v0.10.0"}, f)
+        with mock.patch.object(te.subprocess, "run") as m:
             self.assertEqual(te.check_latest_version(d), "v0.10.0")
             self.assertEqual(te.check_latest_version(d), "v0.10.0")
-            m.assert_called_once()  # 第二次走 24h 缓存，不再请求网络
+            m.assert_not_called()
 
     def test_check_latest_version_network_fail(self):
         d = tempfile.mkdtemp()
         with mock.patch.object(te.subprocess, "run", side_effect=OSError("no net")):
             self.assertEqual(te.check_latest_version(d), "")
+
+    def test_version_refresh_is_async_and_validates_tag(self):
+        d = tempfile.mkdtemp()
+        with mock.patch.object(te, "_fetch_latest_tag", return_value="v9.9.9") as m:
+            te.maybe_refresh_version_async(d)
+            for _ in range(50):  # 等后台线程落盘，主线程本身不阻塞
+                if os.path.isfile(te.version_cache_path(d)):
+                    break
+                time.sleep(0.02)
+            m.assert_called_once()
+        self.assertEqual(te.check_latest_version(d), "v9.9.9")
+
+    def test_version_refresh_rejects_dirty_tag(self):
+        d = tempfile.mkdtemp()
+        with mock.patch.object(te, "_fetch_latest_tag", return_value="v999.0.0-evil"):
+            te.maybe_refresh_version_async(d)
+            time.sleep(0.1)
+        self.assertEqual(te.check_latest_version(d), "")
 
 
 class TestProcessProvider(unittest.TestCase):
@@ -1716,8 +1748,9 @@ class TestProcessProvider(unittest.TestCase):
     def test_days_left_alert(self):
         """alert.daysLeft：预测可用天数低于阈值 → 告警。"""
         now = int(time.time())
+        # 同上：首点留 400s 余量，避免 days_left() 重取时间时把边界点排除（flaky）
         with open(os.path.join(self.dir, "history-deepseek.jsonl"), "w") as f:
-            f.write(f"{now - 86400},{100.0}\n")
+            f.write(f"{now - 86000},{100.0}\n")
             f.write(f"{now - 43200},{90.0}\n")
             f.write(f"{now - 3600},{85.0}\n")
         p = dict(BALANCE_P, alert={"minBalance": 0.1, "daysLeft": 10})

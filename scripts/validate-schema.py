@@ -4,7 +4,9 @@ Token Eye — providers.json JSON Schema 校验（零依赖，纯标准库）
 
 实现 schema/providers.schema.json 用到的 draft-07 子集：
   type / required / properties / items / additionalProperties / enum /
-  oneOf / minLength / minimum / $ref / definitions($defs)
+  oneOf / minLength / minimum / $ref / definitions($defs) / if-then-else
+（if-then-else 只实现「条件必填」所需的最小语义：if 子模式的断言结果仅用于选分支，
+ 不上报为错误；then/else 分支的断言正常累加。）
 
 用法:
   /usr/bin/python3 scripts/validate-schema.py [providers.json] [schema.json]
@@ -102,6 +104,14 @@ def validate(instance, schema, path="$", refs=None):
     if isinstance(instance, list) and "items" in schema:
         for i, item in enumerate(instance):
             errors.extend(validate(item, schema["items"], f"{path}[{i}]", refs))
+
+    # if/then/else（draft-07 条件必填的最小实现）：if 子模式只用来选分支，
+    # 其自身的断言结果（含 const/enum 不匹配）不上报；只累加被选中分支的断言。
+    if "if" in schema:
+        condition_holds = not validate(instance, schema["if"], path, refs)
+        branch = schema.get("then") if condition_holds else schema.get("else")
+        if branch is not None:
+            errors.extend(validate(instance, branch, path, refs))
 
     return errors
 

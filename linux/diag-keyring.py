@@ -12,6 +12,9 @@ Token Eye — Linux keyring 诊断与修复（桌面运行）
 import sys
 import os
 
+# 解锁语义统一：解锁后用 is_locked() 复核，不猜 unlock() 返回值（见 keyring_common）
+import keyring_common
+
 os.environ.setdefault("DBUS_SESSION_BUS_ADDRESS", "")
 
 def die(msg):
@@ -30,35 +33,31 @@ try:
 except ImportError:
     die("缺 python3-secretstorage，先装：sudo apt install python3-secretstorage")
 
-# ---- 1) 连 bus ----
-try:
-    bus = secretstorage.dbus_init()
-except Exception as e:
-    print(f"⚠️ 连不上 DBus session bus（{e}）")
+# ---- 1) 连 bus + 取默认集合（统一走公共 helper）----
+coll, err = keyring_common.open_collection()
+if coll is None:
+    print(f"⚠️ 连不上钥匙环（{err}）")
     print("  原因：此脚本必须在桌面终端跑；或登录会话的 DBus 没起来。")
     print("  若你是 SSH/远程终端，无法访问桌面 keyring。")
     sys.exit(1)
 
-# ---- 2) 默认集合 + 解锁 ----
-coll = secretstorage.get_default_collection(bus)
-if coll is None:
-    die("无法访问默认钥匙环集合（gnome-keyring 未启动？）")
-
-if coll.is_locked():
+# ---- 2) 解锁并复核 ----
+# 旧代码 `ok = coll.unlock(); if ok: 判成功` 与 tray 的「True=取消」完全相反。
+# 改成 unlock_and_verify()：忽略返回值，只用 is_locked() 复核判定成败（P0-3）。
+try:
+    locked = coll.is_locked()
+except Exception:
+    locked = True
+if locked:
     print("🔒 默认钥匙环处于【锁定】状态 —— 这通常就是托盘读不到 key 的原因。")
     print("   正在尝试解锁（若设置了登录自动解锁，将无感成功）…")
-    try:
-        ok = coll.unlock()
-        if ok:
-            print("✅ 解锁成功")
-        else:
-            print("❌ 解锁被取消/失败 —— 需要在桌面的密钥弹窗输入钥匙环密码。")
-            print("   提示：可在 Seahorse(密钥) 里把默认钥匙环密码设为「空/与登录一致」实现开机自动解锁。")
-    except Exception as e:
-        print(f"❌ 解锁异常：{e}")
-        print("   若频繁要求密码，建议：seahorse → 右键默认钥匙环 → 更改密码 → 设为与登录密码相同（自动解锁）。")
-else:
+ok, msg = keyring_common.unlock_and_verify(coll)
+if ok:
     print("✅ 默认钥匙环已解锁")
+else:
+    print(f"❌ 解锁未成功：{msg} —— 需要在桌面的密钥弹窗输入钥匙环密码。")
+    print("   提示：可在 Seahorse(密钥) 里把默认钥匙环密码设为「空/与登录一致」实现开机自动解锁。")
+    print("   若频繁要求密码，建议：seahorse → 右键默认钥匙环 → 更改密码 → 设为与登录密码相同（自动解锁）。")
 
 # ---- 3) 逐个列出 key ----
 print("\n已配置的 Token Eye 密钥：")

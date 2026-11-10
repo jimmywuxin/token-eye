@@ -18,6 +18,9 @@ import getpass
 import os
 import sys
 
+# 解锁语义统一：解锁后用 is_locked() 复核，不猜 unlock() 返回值（见 keyring_common）
+import keyring_common
+
 SERVICES = [
     ("DEEPSEEK_API_KEY", "DeepSeek 余额监控（Bearer key）"),
     ("MINIMAX_CN_API_KEY", "MiniMax 用量监控（Bearer key）"),
@@ -27,18 +30,23 @@ SERVICES = [
 
 
 def get_collection():
-    import secretstorage
-    bus = secretstorage.dbus_init()
-    coll = secretstorage.get_default_collection(bus)
+    # 连 D-Bus / 取默认集合 / 解锁复核统一走公共 helper：
+    # 旧代码 `ok = coll.unlock(); if not ok: 退出` 会按「False=失败」解读，
+    # 与 tray 的「False=成功」相反，解锁成功也会被误判为失败（P0-3）。
+    coll, err = keyring_common.open_collection()
     if coll is None:
-        print("❌ 无法访问 gnome-keyring 默认集合（是否未启动/未解锁？）")
+        print(f"❌ {err or '无法访问 gnome-keyring 默认集合（是否未启动/未解锁？）'}")
         sys.exit(1)
-    if coll.is_locked():
+    try:
+        locked = coll.is_locked()
+    except Exception:
+        locked = True
+    if locked:
         print("🔒 钥匙环已锁定，尝试解锁…")
-        ok = coll.unlock()
-        if not ok:
-            print("❌ 解锁失败")
-            sys.exit(1)
+    ok, msg = keyring_common.unlock_and_verify(coll)
+    if not ok:
+        print(f"❌ 解锁失败：{msg}")
+        sys.exit(1)
     return coll
 
 

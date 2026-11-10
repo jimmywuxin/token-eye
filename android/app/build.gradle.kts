@@ -77,3 +77,22 @@ dependencies {
 
     testImplementation("junit:junit:4.13.2")
 }
+
+// 构建期把根目录 providers.json / holidays 同步进 assets，替代手工拷贝。
+// 只按 scripts/sync-android-assets.py 的显式白名单剔除移动端不支持的平台；
+// 内容无变化时脚本不写文件，避免每次构建把工作区弄脏。
+// make validate / CI 另有 `--check`（只读）校验提交副本是否最新。
+val syncAndroidAssets = tasks.register<Exec>("syncAndroidAssets") {
+    description = "Sync root providers.json / holidays into Android assets"
+    group = "token-eye"
+    val repoRoot = rootProject.projectDir.parentFile
+    workingDir(repoRoot)
+    commandLine("python3", "scripts/sync-android-assets.py")
+    inputs.file(repoRoot.resolve("providers.json"))
+    inputs.dir(repoRoot.resolve("holidays"))
+    outputs.file(file("src/main/assets/providers.json"))
+    outputs.dir(file("src/main/assets/holidays"))
+}
+tasks.matching { it.name == "preBuild" }.configureEach {
+    dependsOn(syncAndroidAssets)
+}

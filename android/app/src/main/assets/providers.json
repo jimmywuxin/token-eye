@@ -17,11 +17,7 @@
         "fields": {
           "model": "model_name",
           "intervalPct": "current_interval_remaining_percent",
-          "intervalStatus": "current_interval_status",
-          "intervalTotal": "current_interval_total_count",
           "weeklyPct": "current_weekly_remaining_percent",
-          "weeklyStatus": "current_weekly_status",
-          "weeklyTotal": "current_weekly_total_count",
           "intervalBoost": "interval_boost_permille",
           "weeklyBoost": "weekly_boost_permille",
           "resetMs": "remains_time"
@@ -40,15 +36,9 @@
           "interval": "5h",
           "weekly": "7d"
         },
-        "statusMap": {
-          "1": "可用",
-          "2": "耗尽临近",
-          "3": "耗尽"
-        },
         "barLength": 20
       },
       "display": {
-        "unit": "%",
         "label": "剩余",
         "nameColor": {
           "dark": "#1D9E75",
@@ -101,7 +91,6 @@
         }
       },
       "display": {
-        "unit": "¥",
         "label": "余额",
         "nameColor": {
           "dark": "#FF375F",
@@ -170,15 +159,9 @@
   },
   "cache": {
     "balance": 300,
-    "plan_usage": 30,
-    "status": 60
+    "plan_usage": 30
   },
   "menuBar": {
     "showSummary": false
-  },
-  "alerts": {
-    "deepseek": {
-      "minBalance": 5.0
-    }
   }
 }

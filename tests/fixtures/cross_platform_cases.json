@@ -1,0 +1,110 @@
+{
+  "schema": 1,
+  "description": "三端口径契约真源（2026-11-10）。Mac/Linux 由 tests/test_contract.py 消费，Android 由 app/src/test/.../ContractTest.kt 消费。新增/修改判定规则时先改这份 fixture，三端一起跑；只改某一端代码会被 CI 抓住。status_class 只有 ok / error 两档：Mac 用 status=error、Android 用 Status.ERR，都表示『不得假绿』。",
+  "balance_fields": {
+    "balance": "balance_infos.0.total_balance",
+    "currency": "balance_infos.0.currency"
+  },
+  "cases": [
+    {
+      "id": "business_code_401",
+      "kind": "business_code",
+      "consumers": ["python", "android"],
+      "data": {"code": 401, "msg": "令牌已过期"},
+      "expect": {"fetch_ok": false}
+    },
+    {
+      "id": "business_code_errcode",
+      "kind": "business_code",
+      "consumers": ["python", "android"],
+      "data": {"errcode": 401, "data": {"balance": 9.9}},
+      "expect": {"fetch_ok": false}
+    },
+    {
+      "id": "business_code_retcode",
+      "kind": "business_code",
+      "consumers": ["python", "android"],
+      "data": {"retcode": 500},
+      "expect": {"fetch_ok": false}
+    },
+    {
+      "id": "business_code_string_error",
+      "kind": "business_code",
+      "consumers": ["python", "android"],
+      "data": {"code": "TOKEN_EXPIRED", "message": "登录过期"},
+      "expect": {"fetch_ok": false}
+    },
+    {
+      "id": "business_code_ok_zero",
+      "kind": "business_code",
+      "consumers": ["python", "android"],
+      "data": {"code": 0, "data": {"balance": 9.9}},
+      "expect": {"fetch_ok": true}
+    },
+    {
+      "id": "business_code_ok_200",
+      "kind": "business_code",
+      "consumers": ["python", "android"],
+      "data": {"code": 200, "data": {"balance": 9.9}},
+      "expect": {"fetch_ok": true}
+    },
+    {
+      "id": "business_code_ok_string",
+      "kind": "business_code",
+      "consumers": ["python", "android"],
+      "data": {"code": "SUCCESS"},
+      "expect": {"fetch_ok": true}
+    },
+    {
+      "id": "business_code_399_allowed",
+      "kind": "business_code",
+      "consumers": ["python", "android"],
+      "data": {"code": 399, "data": {"balance": 1}},
+      "expect": {"fetch_ok": true}
+    },
+    {
+      "id": "business_code_normal_response",
+      "kind": "business_code",
+      "consumers": ["python", "android"],
+      "data": {"balance_infos": [{"total_balance": 13.5, "currency": "CNY"}]},
+      "expect": {"fetch_ok": true}
+    },
+    {
+      "id": "envelope_configured_401",
+      "kind": "business_code",
+      "consumers": ["python", "android"],
+      "envelope": {"codePath": "code", "okCodes": ["200"], "msgPath": "msg"},
+      "data": {"code": 401, "msg": "bad key"},
+      "expect": {"fetch_ok": false}
+    },
+    {
+      "id": "envelope_configured_200",
+      "kind": "business_code",
+      "consumers": ["python", "android"],
+      "envelope": {"codePath": "code", "okCodes": ["200"], "msgPath": "msg"},
+      "data": {"code": 200, "data": {"balance": 9.9}},
+      "expect": {"fetch_ok": true}
+    },
+    {
+      "id": "balance_ok",
+      "kind": "balance_parse",
+      "consumers": ["python", "android"],
+      "data": {"balance_infos": [{"total_balance": 13.5, "currency": "CNY"}]},
+      "expect": {"status_class": "ok"}
+    },
+    {
+      "id": "balance_missing_field",
+      "kind": "balance_parse",
+      "consumers": ["python", "android"],
+      "data": {"balance_infos": [{"currency": "CNY"}]},
+      "expect": {"status_class": "error"}
+    },
+    {
+      "id": "balance_unparsable",
+      "kind": "balance_parse",
+      "consumers": ["python", "android"],
+      "data": {"balance_infos": [{"total_balance": "N/A", "currency": "CNY"}]},
+      "expect": {"status_class": "error"}
+    }
+  ]
+}

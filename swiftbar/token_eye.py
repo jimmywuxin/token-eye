@@ -13,16 +13,20 @@ Token Eye — SwiftBar 插件核心逻辑（由 token-eye.sh 调用）。
   CONFIG_FILE=... PROJECT_DIR=... python3 token_eye.py          # 正常渲染
   python3 token_eye.py --validate                               # 仅校验配置
 """
+import fcntl
 import json
 import os
 import re
 import subprocess
 import sys
+import tempfile
+import threading
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import (ThreadPoolExecutor, TimeoutError as FuturesTimeoutError,
+                                as_completed)
 from datetime import datetime as _dt
 
-VERSION = "0.23.17"
+VERSION = "0.24.0"
 
 # 按 parser 类型的默认缓存 TTL（秒）
 DEFAULT_CACHE_TTL = {"balance": 300, "plan_usage": 30, "status": 60, "command": 300}
@@ -50,6 +54,72 @@ CONFIG_COLOR_KEYS = {
 }
 VALID_PARSER_TYPES = ("balance", "plan_usage", "status", "command")
 
+# ---------------------------------------------------------------------------
+# 菜单文本净化 / 业务码兜底
+# ---------------------------------------------------------------------------
+
+def sanitize_menu_text(value):
+    """净化 API/配置文本：防止 `|` 注入 SwiftBar 参数、换行伪造菜单行。
+
+    API 返回的金额、错误原文、CLI stderr 与配置里的平台名都可能含控制字符；
+    统一在渲染出口替换，不改静态菜单参数的分隔符。
+    """
+    text = str(value)
+    for ch, repl in (("|", "¦"), ("\r", " "), ("\n", " ")):
+        text = text.replace(ch, repl)
+    return text
+
+
+def sanitize_param_value(value):
+    """param*/href 取值：额外去掉引号，避免破坏 SwiftBar 参数解析。"""
+    return sanitize_menu_text(value).replace("'", "’").replace('"', "’")
+
+
+def safe_href(url):
+    """只放行 http(s) 与 macOS 设置页，杜绝 href=javascript: 之类注入。"""
+    text = sanitize_param_value(url)
+    return text if text.startswith(("https://", "http://",
+                                    "x-apple.systempreferences:")) else ""
+
+
+# 未配 api.envelope 的平台也做保守业务码检查：国内平台常用
+# HTTP 200 + {"code":401,...} 表达鉴权失败，只按 HTTP 判会渲染成「✅ ¥?」。
+# 只认明确的错误值（>=400 的数字、常见错误关键词），正常响应零影响。
+_OK_BUSINESS_CODES = {"0", "200", "ok", "success", "true", "none", "null"}
+_BUSINESS_CODE_KEYS = ("code", "errcode", "error_code", "retcode")
+_BAD_CODE_TOKENS = ("ERROR", "EXPIRED", "INVALID", "UNAUTHORIZED", "FORBIDDEN", "FAIL")
+
+
+def default_business_code_check(result):
+    """HTTP 200 但 body 带明确业务错误码 → 转 client 错误；否则原样返回。"""
+    if not result.get("ok") or not isinstance(result.get("data"), dict):
+        return result
+    data = result["data"]
+    for key in _BUSINESS_CODE_KEYS:
+        if key not in data:
+            continue
+        code = data[key]
+        if code is None or isinstance(code, bool):
+            continue
+        text = str(code).strip()
+        if not text or text.lower() in _OK_BUSINESS_CODES:
+            continue
+        try:
+            bad = float(text) >= 400 or float(text) < 0
+        except ValueError:
+            upper = text.upper()
+            bad = any(tok in upper for tok in _BAD_CODE_TOKENS)
+        if not bad:
+            continue
+        msg = data.get("msg") or data.get("message") or data.get("error") or f"业务码 {text}"
+        if isinstance(msg, dict):
+            msg = msg.get("message") or msg.get("code") or text
+        return {"ok": False, "status": result.get("status"), "data": None,
+                "error_kind": "client",
+                "message": sanitize_menu_text(str(msg))[:80]}
+    return result
+
+
 # 把项目根加入 sys.path，以便 import parsers.* 子模块
 # （PROJECT_DIR 由 token-eye.sh 通过环境变量传入；缺省取本文件父目录的父目录）
 _PROJECT_ROOT = os.environ.get("PROJECT_DIR")
@@ -70,8 +140,8 @@ except ImportError:  # pragma: no cover — parsers 不存在时静默降级（�
     _classify_peak = None  # type: ignore
     _format_peak_countdown = None  # type: ignore
     _load_holidays = None  # type: ignore
-# peakWindow 默认时区（与 parsers.peak_window.DEFAULT_TZ 保持一致；tz 名称非法时兜底）
-_PEAK_DEFAULT_TZ = "Asia/Shanghai"
+# peakWindow 的默认时区由 parsers.peak_window.DEFAULT_TZ 单点维护，
+# 配置里的 parser.peakWindow.tz 可覆盖，本模块不再重复定义。
 
 
 def peak_holidays(cfg):
@@ -120,29 +190,62 @@ def _as_int(v):
 
 
 def schema_validate(config):
-    """轻量 schema 校验，返回错误列表（空 = 通过）。"""
+    """轻量 schema 校验，返回错误列表（空 = 通过）。
+
+    校验器自身绝不抛异常：run() 没有包 try，一旦这里崩掉 SwiftBar 只拿到空
+    stdout（菜单全白），比配置错误本身更难排查。
+    """
     errors = []
-    for idx, p in enumerate(config.get("providers", [])):
+    providers = config.get("providers", []) if isinstance(config, dict) else []
+    if not isinstance(providers, list):
+        return ["providers 不是数组"]
+    for idx, p in enumerate(providers):
         if not isinstance(p, dict):
             errors.append(f"providers[{idx}] 不是对象")
             continue
         pid = p.get("id", "?")
-        ptype = (p.get("parser") or {}).get("type")
+        parser = p.get("parser")
+        if not isinstance(parser, dict):
+            # 记一条错误但继续校验其余字段，别让「缺 name/keychainService」也一起消失
+            errors.append(f"providers[{idx}]（{pid}）parser 不是对象")
+            parser = {}
+        api = p.get("api") or {}
+        if not isinstance(api, dict):
+            errors.append(f"providers[{idx}]（{pid}）api 不是对象")
+            api = {}
+        if parser.get("fields") is not None and not isinstance(parser["fields"], dict):
+            errors.append(f"providers[{idx}]（{pid}）parser.fields 不是对象")
+        ptype = parser.get("type")
         if ptype not in VALID_PARSER_TYPES:
             errors.append(f"providers[{idx}]（{pid}）parser.type 无效: {ptype!r}")
+        # id / name 对所有 parser 类型都必填（command 型原先漏检 → 运行时 KeyError）
+        for f in ("id", "name"):
+            if not p.get(f):
+                errors.append(f"providers[{idx}]（{pid}）缺字段 {f}")
         if ptype == "command":
             # 命令型：无 api / keychain（凭证由外部 CLI 自己管），必须给 command
-            if not (p.get("parser") or {}).get("command"):
+            if not parser.get("command"):
                 errors.append(f"providers[{idx}]（{pid}）command 型缺 parser.command")
+            # timeout 会被直接传给 subprocess.run，脏值会抛 TypeError / 阻塞渲染
+            tmo = _as_int(parser.get("timeout", 10))
+            if tmo is None or not 1 <= tmo <= 30:
+                errors.append(f"providers[{idx}]（{pid}）parser.timeout 应为 1-30 秒整数")
+            if not isinstance(parser.get("args") or [], (list, tuple)):
+                errors.append(f"providers[{idx}]（{pid}）parser.args 应为数组")
+            if not isinstance(parser.get("env") or {}, dict):
+                errors.append(f"providers[{idx}]（{pid}）parser.env 应为对象")
+            # recovery / refreshParam 会被拼进 scripts/<name>.py，防路径穿越
+            for key, val in (("recovery", parser.get("recovery")),
+                             ("refreshParam", p.get("refreshParam"))):
+                if val and not re.fullmatch(r"[A-Za-z0-9_-]+", str(val)):
+                    errors.append(f"providers[{idx}]（{pid}）{key} 含非法字符: {val!r}")
         else:
-            for f in ("id", "name", "keychainService"):
-                if not p.get(f):
-                    errors.append(f"providers[{idx}]（{pid}）缺字段 {f}")
-            api = p.get("api") or {}
+            if not p.get("keychainService"):
+                errors.append(f"providers[{idx}]（{pid}）缺字段 keychainService")
             if not api.get("url"):
                 errors.append(f"providers[{idx}]（{pid}）api 缺字段 url")
         # peakWindow 轻量校验（与 parsers/peak_window.py 的规则一致）
-        pw_cfg = (p.get("parser") or {}).get("peakWindow")
+        pw_cfg = parser.get("peakWindow")
         if pw_cfg is not None:
             if not isinstance(pw_cfg, dict):
                 errors.append(f"providers[{idx}]（{pid}）parser.peakWindow 不是对象")
@@ -180,7 +283,18 @@ def get_key(service):
         return ""
 
 
-def classify_response(output, returncode):
+# curl 退出码 → 错误分类。旧实现把超时(28)也归为「网络失败」，
+# render_error 里的「请求超时」分支永远不可达。
+_CURL_ERRORS = {
+    28: ("timeout", "请求超时"),
+    6: ("network", "无法解析域名"),
+    7: ("network", "无法连接服务器"),
+    35: ("network", "TLS 握手失败"),
+    60: ("network", "证书校验失败"),
+}
+
+
+def classify_response(output, returncode, stderr=""):
     """纯函数：把 curl 原始输出分类成 fetch_result。
 
     curl 以 `\\n__TE_HTTP__%{http_code}` 结尾输出状态码；无分隔符时退回
@@ -188,8 +302,9 @@ def classify_response(output, returncode):
     """
     marker = "__TE_HTTP__"
     if returncode != 0:
+        kind, msg = _CURL_ERRORS.get(returncode, ("network", "curl 退出非零"))
         return {"ok": False, "status": None, "data": None,
-                "error_kind": "network", "message": "curl 退出非零"}
+                "error_kind": kind, "message": msg}
     output = output.rstrip("\n")
     if marker in output:
         body, _, code_part = output.rpartition(marker)
@@ -226,25 +341,31 @@ def classify_response(output, returncode):
             "error_kind": None, "message": ""}
 
 
-def apply_envelope(result, api):
+def apply_envelope(result, api, default_check=False):
     """业务码校验：把「HTTP 200 但 body.code 非成功」转成 client 错误。
 
     国内平台（智谱、百炼等）普遍用 `{"code":401,"msg":"..."}` + HTTP 200 表达
     鉴权失败。只按 HTTP 码判定会把无效 Key 渲染成「✅ ¥?」假绿。配置
     `api.envelope = {"codePath":"code","okCodes":[200],"msgPath":"msg"}` 后，
     非 okCodes 的响应改走 render_error，显示真实原因（如「令牌已过期」）。
-    未配置 envelope 的 provider 行为完全不变。
+
+    default_check=True 时（网络拉取路径）对未配 envelope 的平台也做保守的
+    通用业务码检查；直接调用本纯函数仍保持旧语义，便于单测断言。
+    `codePath` 配错导致 code=None 时仍放行，由 parse_provider 的「关键字段缺失」
+    兜底判错，避免误伤不含业务码字段的正常响应。
     """
-    env = (api or {}).get("envelope")
-    if not env or not result.get("ok"):
+    if not result.get("ok"):
         return result
+    env = (api or {}).get("envelope")
+    if not env:
+        return default_business_code_check(result) if default_check else result
     code = resolve_field(result.get("data"), env.get("codePath", "code"))
     ok_codes = [str(c) for c in (env.get("okCodes") or [200])]
     if code is None or str(code) in ok_codes:
         return result
     msg = resolve_field(result.get("data"), env.get("msgPath", "msg")) or f"业务码 {code}"
     return {"ok": False, "status": result.get("status"), "data": None,
-            "error_kind": "client", "message": str(msg)[:80]}
+            "error_kind": "client", "message": sanitize_menu_text(str(msg))[:80]}
 
 
 def fetch_with_envelope(api, key):
@@ -255,7 +376,7 @@ def fetch_with_envelope(api, key):
         api.get("authPrefix", "Bearer "), key,
         api.get("headers")
     )
-    return apply_envelope(result, api)
+    return apply_envelope(result, api, default_check=True)
 
 
 def _cli_error_detail(stdout, stderr, code):
@@ -303,7 +424,9 @@ def fetch_command(parser):
         return {"ok": False, "status": None, "data": None,
                 "error_kind": "client", "message": "未配置 parser.command"}
     args = [os.path.expanduser(str(a)) for a in (parser.get("args") or [])]
-    timeout = parser.get("timeout", 10)
+    # schema_validate 已校验范围；这里再兜一层，避免直接调本函数时
+    # 字符串 timeout 触发 TypeError 被宽泛 except 吞成「执行失败」
+    timeout = _as_int(parser.get("timeout", 10)) or 10
     # SwiftBar 的 PATH 只有 /usr/bin:/bin:/usr/sbin:/sbin，npm 装的 CLI 多是
     # `#!/usr/bin/env node`，找不到 node 就直接 "env: node: No such file or directory"。
     # 默认把命令所在目录提到 PATH 最前（~/.local/bin/qianwen 旁边通常就有 node），
@@ -338,36 +461,65 @@ def fetch_command(parser):
     return {"ok": True, "status": None, "data": data, "error_kind": None, "message": ""}
 
 
+# 凭证绝不进 argv：curl 用 `--config -` 从 stdin 读 header 行，
+# 避免同机 `ps` / 进程审计日志读到完整 API Key 或 MiMo 会话 Cookie。
+_CURL_BIN = "/usr/bin/curl" if os.path.isfile("/usr/bin/curl") else "curl"
+
+
+def _curl_header_config(headers):
+    """把 header 列表转成 curl config 文件内容（stdin 传入，不落盘）。"""
+    lines = []
+    for h in headers:
+        if h is None:
+            continue
+        text = (str(h).replace("\\", "\\\\").replace('"', '\\"')
+                .replace("\r", " ").replace("\n", " "))
+        lines.append(f'header = "{text}"')
+    return "\n".join(lines) + ("\n" if lines else "")
+
+
 def fetch_api(url, method, auth_header, auth_prefix, key, extra_headers=None,
               curl_timeout=5, proc_timeout=10):
-    """调用 curl 拉取 API，返回 classify_response 结果。"""
-    cmd = ["curl", "-s", "--max-time", str(curl_timeout),
-           "-w", "\n__TE_HTTP__%{http_code}",
-           "-H", f"{auth_header}: {auth_prefix}{key}"]
+    """调用 curl 拉取 API，返回 classify_response 结果。
+
+    签名保持不变（Linux 端包装器按 *args/**kwargs 转发）。
+    """
+    headers = [f"{auth_header}: {auth_prefix}{key}"]
     if extra_headers:
-        for k, v in extra_headers.items():
-            cmd.extend(["-H", f"{k}: {v}"])
-    cmd.extend(["-X", method, url])
+        headers += [f"{k}: {v}" for k, v in extra_headers.items()]
+    cmd = [_CURL_BIN, "-s", "--max-time", str(curl_timeout),
+           "-w", "\n__TE_HTTP__%{http_code}",
+           "--config", "-", "-X", method, url]
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=proc_timeout)
+        r = subprocess.run(cmd, input=_curl_header_config(headers),
+                           capture_output=True, text=True, timeout=proc_timeout)
     except subprocess.TimeoutExpired:
         return {"ok": False, "status": None, "data": None,
                 "error_kind": "timeout", "message": "请求超时"}
     except Exception as e:
         return {"ok": False, "status": None, "data": None,
                 "error_kind": "network", "message": f"网络失败: {e}"}
-    return classify_response(r.stdout, r.returncode)
+    return classify_response(r.stdout, r.returncode, r.stderr)
+
+
+def _as_applescript_literal(text):
+    """AppleScript 字符串字面量转义：反斜杠、双引号、换行都要处理。
+
+    旧实现只处理双引号，来自刷新脚本 stdout / CLI stderr 的消息里若带
+    反斜杠或换行，可以改变 `display notification` 语句结构。
+    """
+    text = str(text).replace("\\", "\\\\").replace('"', '\\"')
+    return text.replace("\r", " ").replace("\n", " ")
 
 
 def send_notify(title, message):
     try:
-        # 转义双引号
-        safe_msg = message.replace('"', '\\"')
-        safe_title = title.replace('"', '\\"')
+        safe_msg = _as_applescript_literal(message)
+        safe_title = _as_applescript_literal(title)
         # 系统提示音：TOKEN_EYE_SOUND 自定义声音名，设为 0 关闭（默认 Glass）
         sound = os.environ.get("TOKEN_EYE_SOUND", "Glass")
         if sound and sound != "0":
-            safe_sound = sound.replace('"', '\\"')
+            safe_sound = _as_applescript_literal(sound)
             script = (f'display notification "{safe_msg}" with title "{safe_title}" '
                       f'sound name "{safe_sound}"')
         else:
@@ -386,17 +538,44 @@ def cache_path(cache_dir, pid):
 
 
 def load_cache(cache_dir, pid):
+    """读缓存；损坏/结构非法的文件一律当 miss，避免 `ts` 是字符串时崩掉渲染。"""
     try:
-        with open(cache_path(cache_dir, pid)) as f:
-            return json.load(f)
-    except Exception:
+        with open(cache_path(cache_dir, pid), encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError, TypeError):
         return None
+    if not isinstance(data, dict):
+        return None
+    ts = data.get("ts")
+    if isinstance(ts, bool) or not isinstance(ts, (int, float)):
+        return None
+    return data
+
+
+def _atomic_write_json(path, payload):
+    """0600 + 原子替换：/tmp 时代默认 0644 全局可读、并发写会撕裂 JSON。"""
+    directory = os.path.dirname(path) or "."
+    tmp = ""
+    try:
+        os.makedirs(directory, mode=0o700, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(prefix=".token-eye-", suffix=".tmp", dir=directory)
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(payload, f)
+        os.replace(tmp, path)
+        tmp = ""
+    finally:
+        if tmp:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
 
 
 def save_cache(cache_dir, pid, payload):
+    """缓存内容是完整 API 响应明文，必须限权 + 原子写。"""
     try:
-        with open(cache_path(cache_dir, pid), "w") as f:
-            json.dump(payload, f)
+        _atomic_write_json(cache_path(cache_dir, pid), payload)
     except Exception:
         pass
 
@@ -533,25 +712,62 @@ def _ver_gt(a, b):
     return pa > pb
 
 
+def version_cache_path(hdir):
+    return os.path.join(hdir, "latest-release.json")
+
+
 def check_latest_version(hdir):
-    cache_file = os.path.join(hdir, "latest-release.json")
-    now = int(time.time())
+    """**只读**版本缓存：渲染路径零网络。
+
+    旧实现在缓存过期时同步串行打 GitHub + 3 个镜像（最多约 30s），
+    Mac 渲染与 Linux GTK 主线程都会被冻住。网络拉取改由
+    maybe_refresh_version_async() 在后台完成。
+    """
     try:
-        if os.path.exists(cache_file):
-            with open(cache_file) as f:
-                d = json.load(f)
-            if now - d.get("ts", 0) < 86400:
-                return d.get("tag_name", "")
+        with open(version_cache_path(hdir), encoding="utf-8") as f:
+            d = json.load(f)
+        if int(time.time()) - d.get("ts", 0) < 86400:
+            return d.get("tag_name", "")
     except Exception:
         pass
-    tag = _fetch_latest_tag()
-    if tag:
+    return ""
+
+
+def maybe_refresh_version_async(hdir):
+    """缓存过期时发一个 daemon 线程拉最新版本；本轮不等待、不阻塞菜单。
+
+    进程可能在线程结束前退出（SwiftBar 每 30s 起新进程），flag 冷却 10 分钟，
+    下一轮会重试 —— 版本提示晚几轮出现，但绝不拖慢渲染。
+    """
+    if check_latest_version(hdir):
+        return
+    flag = os.path.join(hdir, ".version-fetch.flag")
+    now = int(time.time())
+    try:
+        os.makedirs(hdir, mode=0o700, exist_ok=True)
         try:
-            with open(cache_file, "w") as f:
-                json.dump({"ts": now, "tag_name": tag}, f)
+            with open(flag, encoding="utf-8") as f:
+                last = int(f.read().strip() or 0)
+        except (OSError, ValueError):
+            last = 0  # 首次运行没有 flag，不能因此直接放弃刷新
+        if now - last < 600:
+            return
+        with open(flag, "w", encoding="utf-8") as f:
+            f.write(str(now))
+    except Exception:
+        return
+
+    def _worker():
+        try:
+            tag = _fetch_latest_tag()
+            if not re.fullmatch(r"v\d+\.\d+\.\d+", tag or ""):
+                return  # 镜像返回脏值不落缓存
+            _atomic_write_json(version_cache_path(hdir),
+                               {"ts": int(time.time()), "tag_name": tag})
         except Exception:
             pass
-    return tag
+
+    threading.Thread(target=_worker, daemon=True, name="token-eye-version").start()
 
 
 def _fetch_latest_tag():
@@ -654,19 +870,27 @@ def parse_provider(p, fetch_result, colors, appearance):
 
     if ptype in ("balance", "command"):
         fields = parser.get("fields", {})
-        balance = resolve_field(data, fields.get("balance", ""))
+        balance_path = fields.get("balance", "")
+        balance = resolve_field(data, balance_path)
         currency = resolve_field(data, fields.get("currency", "CNY")) or "CNY"
         symbol = currency_symbol(display, currency)
         avail = data.get("is_available", True) if isinstance(data, dict) else True
         balance_num = None
+        balance_str = "?"
         if balance is not None:
             try:
                 balance_num = float(balance)
                 balance_str = str(round(balance_num, 2))
             except (ValueError, TypeError):
-                balance_str = str(balance)
-        else:
-            balance_str = "?"
+                balance_str = sanitize_menu_text(balance)
+        # 关键字段缺失/不可解析 = 配置错误态，绝不能落到 `✅ ¥?` 假绿。
+        # 旧实现在这里无条件给 ✅ ok，API 结构变更或业务错误体会让余额监控静默失效，
+        # 还会把这份「成功」写进 300s 缓存持续误导（Android 侧同为 ERR，口径统一）。
+        if balance_num is None:
+            hint = f"余额字段缺失或不可解析: fields.balance={balance_path or '(未配置)'}"
+            return {"id": pid, "name": name, "status": "error", "error_kind": "parse",
+                    "lines": [hint], "colors": [colors["ERR"]], "menu_bar": "",
+                    "console_url": console_url, "balance_num": None, "min_balance": None}
         # 阈值解析（API 字段 > provider.alert.minBalance > parser.defaultMinBalance > None）
         min_balance = resolve_alert_threshold(p.get("alert"), parser, data)
         # 图标：余额 < 阈值 → ⚠️；不可用（avail=False）→ 🔴；其余 ✅。阈值未配默认 ✅
@@ -696,8 +920,12 @@ def parse_provider(p, fetch_result, colors, appearance):
         # 当前时段本地判定，零网络；parsers 模块不可用时静默跳过
         if parser.get("peakWindow") and _HAS_PEAK_WINDOW:
             try:
-                # 传 naive now：时区由 _classify_peak 内部统一处理（含 Py3.8 无 zoneinfo 的固定 +8 兜底）
-                _local_now = _dt.now()
+                # classify() 契约要求 aware datetime：naive 会被 replace(tzinfo=cfg.tz)
+                # 直接「重新解释」钟点，系统时区非 Asia/Shanghai 时高峰判定与倒计时
+                # 会整体偏移，且异常被下面 except 静默吞掉（2026-11-10 审计 P29）。
+                # astimezone() 先把 naive now 按机器本地时区转 aware，再由 classify
+                # 换算到 cfg.tz；Py3.8 无 zoneinfo 时模块内仍有固定 UTC+8 兜底。
+                _local_now = _dt.now().astimezone()
                 pw_info = _classify_peak(_local_now, parser["peakWindow"],
                                          peak_holidays(parser["peakWindow"]))
                 result["menu_bar"] = f"{result['menu_bar']} {pw_info['label']}"
@@ -768,8 +996,18 @@ def parse_provider(p, fetch_result, colors, appearance):
                 except (ValueError, TypeError):
                     return default
 
-            pct_raw = _int("intervalPct", 0)
-            weekly_pct_raw = _int("weeklyPct", 0)
+            def _num(v, default=0):
+                # 百分比可能是 "85.5" 这类字符串小数；旧实现 int() 失败后
+                # 吞成 0 → 已用 100% → 🔴 假红 + 误告警。整数值仍返回 int，
+                # 保持菜单上「8%」而不是「8.0%」。
+                try:
+                    val = float(resolve_field(item, fields.get(v, "")) or default)
+                except (ValueError, TypeError):
+                    return default
+                return int(val) if val.is_integer() else val
+
+            pct_raw = _num("intervalPct", 0)
+            weekly_pct_raw = _num("weeklyPct", 0)
             interval_boost = _int("intervalBoost", 1000)
             weekly_boost = _int("weeklyBoost", 1000)
             reset_ms = _int("resetMs", 0)
@@ -778,9 +1016,10 @@ def parse_provider(p, fetch_result, colors, appearance):
             pct = _to_used(pct_raw)
             weekly_pct = _to_used(weekly_pct_raw)
             label = labels.get(mname, mname)
-            filled = max(1, pct * bar_length // 100) if pct > 0 else 0
+            # pct 可能是 float（接口返回 "85.5"），进度条格数必须是 int
+            filled = max(1, int(pct * bar_length // 100)) if pct > 0 else 0
             bar = "█" * filled + "░" * (bar_length - filled)
-            wfilled = max(1, weekly_pct * bar_length // 100) if weekly_pct > 0 else 0
+            wfilled = max(1, int(weekly_pct * bar_length // 100)) if weekly_pct > 0 else 0
             wbar = "█" * wfilled + "░" * (bar_length - wfilled)
             # 已用%口径：<80 ok / 80-99 warn / >=100 over
             color = colors["OK"]
@@ -875,8 +1114,8 @@ def action_script_path():
 
 
 def _action_value(value):
-    """参数值含空白时加单引号（SwiftBar 参数解析器支持带空格的引号值）。"""
-    text = str(value)
+    """参数值含空白时加单引号；先净化掉 `|`/换行/引号，防参数注入。"""
+    text = sanitize_param_value(value)
     return f"'{text}'" if any(ch.isspace() for ch in text) else text
 
 
@@ -982,6 +1221,7 @@ def alert_check(pid, name, balance_val, alert_cfg, flags_dir, min_bal=None):
     if min_bal is None:
         return None
     try:
+        min_bal = float(min_bal)  # 配置里写成 "5.0" 也不能让 `float >= str` 抛 TypeError
         bal = float(balance_val)
     except (ValueError, TypeError):
         return None
@@ -1198,7 +1438,8 @@ def proactive_refresh_cookie(flags_dir, pid, refresh_script, interval):
 # ---------------------------------------------------------------------------
 
 def process_provider(p, config, colors, appearance, cache_dir, hdir, project_dir, force=False):
-    pid, name = p["id"], p["name"]
+    pid = p.get("id", "?")
+    name = p.get("name", pid)
     # command 型没有 api / keychainService（凭证由外部 CLI 自己管），用 .get 取
     keychain, api, parser = p.get("keychainService"), p.get("api"), p["parser"]
     ptype = parser["type"]
@@ -1213,7 +1454,8 @@ def process_provider(p, config, colors, appearance, cache_dir, hdir, project_dir
     self_heal_errs = []
 
     # Cache check
-    ttl = p.get("cacheTtl", config.get("cache", {}).get(ptype, DEFAULT_CACHE_TTL.get(ptype, 30)))
+    ttl = _as_int(p.get("cacheTtl", config.get("cache", {}).get(
+        ptype, DEFAULT_CACHE_TTL.get(ptype, 30)))) or 30
     cached = load_cache(cache_dir, pid)
     now = int(time.time())
     is_err_cache = bool(cached and cached.get("data") is None and cached.get("error"))
@@ -1224,17 +1466,28 @@ def process_provider(p, config, colors, appearance, cache_dir, hdir, project_dir
         cached = None
         is_err_cache = False
     effective_ttl = ERROR_CACHE_TTL if is_err_cache else ttl
+    fresh_fetch = False
 
     if cached and (now - cached.get("ts", 0)) < effective_ttl:
         if is_err_cache:
             log_debug(hdir, f"[{pid}] 命中错误缓存（{cached.get('error')}），跳过 API")
             return render_error(pid, name, cached.get("error"),
                                 cached.get("message", ""), console_url, colors)
-        # 命中成功缓存，跳过 API
+        # 命中成功缓存，跳过 API。缓存里存的是完整 fetch_result（旧格式只有 data，
+        # 这里兼容），命中后**重跑业务码校验**——老版本可能把错误体当成功写进缓存。
         log_debug(hdir, f"[{pid}] 命中成功缓存，跳过 API")
-        fetch_result = {"ok": True, "status": 200, "data": cached["data"],
-                        "error_kind": None, "message": ""}
+        stored = cached.get("fetch")
+        fetch_result = stored if isinstance(stored, dict) else {
+            "ok": True, "status": 200, "data": cached.get("data"),
+            "error_kind": None, "message": ""}
+        checked = apply_envelope(fetch_result, api or {}, default_check=True)
+        if not checked["ok"]:
+            clear_cache(cache_dir, pid)
+            return render_error(pid, name, checked["error_kind"],
+                                checked["message"], console_url, colors)
+        fetch_result = checked
     else:
+        fresh_fetch = True
         if ptype == "command":
             fetch_result = fetch_command(parser)
             log_debug(hdir, f"[{pid}] 命令完成: ok={fetch_result['ok']} "
@@ -1319,7 +1572,12 @@ def process_provider(p, config, colors, appearance, cache_dir, hdir, project_dir
                                         f"status={fetch_result.get('status')}")
 
         if fetch_result["ok"]:
-            save_cache(cache_dir, pid, {"ts": now, "data": fetch_result["data"]})
+            # 存完整 fetch_result：命中缓存时才能重跑业务码校验，而不是伪造一个 ok=True
+            save_cache(cache_dir, pid, {
+                "ts": now, "data": fetch_result["data"],
+                "fetch": {k: fetch_result.get(k) for k in
+                          ("ok", "status", "data", "error_kind", "message")},
+            })
         elif force:
             # 用户主动点「刷新」这一轮若仍失败：**不落错误短缓存**。
             # 否则紧随其后的 refresh=true 重渲（普通渲染、无 force）会命中刚写的
@@ -1345,6 +1603,10 @@ def process_provider(p, config, colors, appearance, cache_dir, hdir, project_dir
         return err_render
 
     render = parse_provider(p, fetch_result, colors, appearance)
+    if render.get("status") == "error" and fresh_fetch:
+        # 字段缺失等业务错误不能写进「成功缓存」，否则 300 秒内一直显示同一个
+        # 错误、也不重拉。清掉让下一轮真实重试。
+        clear_cache(cache_dir, pid)
 
     # 阈值已由 parse_provider 统一解析并写入 render["min_balance"]；此处读出来给 alert_check 用，
     # 避免两处各算各的不一致（特别是 API 字段阈值场景下）。
@@ -1354,18 +1616,23 @@ def process_provider(p, config, colors, appearance, cache_dir, hdir, project_dir
     # 余额型 provider（DeepSeek / MiMo 等）无总额上限，故不展示进度条。
     # display.showDerived=false 的 provider（如 MiMo）只显示余额，跳过派生统计行。
     if ptype in ("balance", "command") and render.get("balance_num") is not None:
-        append_history(hdir, pid, render["balance_num"])
+        # 只有真实拉取才落快照：命中成功缓存时每 30s 写一行，一个月能涨到
+        # 8 万行/provider，且 daily_spend/days_left 每轮全量读盘两次。
+        # 派生统计（今日消耗）仍照常展示，不受影响。
+        if fresh_fetch:
+            append_history(hdir, pid, render["balance_num"])
         symbol = render.get("symbol", "¥")
         # 今日消耗估算（相邻余额快照下降量之和，充值抬升余额的尖刺不受干扰）
         spend, pts = daily_spend(hdir, pid)
         render["_daily_spend"] = spend
         # 预计可用天数（按最近 24h 消耗速率外推）：**不再上菜单**（2026-10-19 用户定），
-        # 只留给 alert.daysLeft 告警用；没配该阈值时这项纯属白算，但便宜（毫秒级）。
-        days = days_left(hdir, pid, render["balance_num"])
-        render["_days_left"] = days
+        # 只留给 alert.daysLeft 告警用。旧实现每轮无条件算一次（全量读盘），
+        # 而当前 5 个 provider 都没配该阈值 —— 改成按需计算，未配置时直接跳过。
+        if (alert_cfg or {}).get("daysLeft") is not None:
+            render["_days_left"] = days_left(hdir, pid, render["balance_num"])
         # display.showDerived=false → 只显示余额，隐藏派生统计行。
-        # 快照历史与每日消耗**照常累积/计算**（append_history/daily_spend 在上面已执行）：
-        # 关掉再开回来历史不断档，alert.dailySpendMax / alert.daysLeft 也不受影响。
+        # 今日消耗每轮照常算（dailySpendMax 告警依赖它），days_left 仅按需；
+        # 只有快照落盘按 fresh_fetch 控制；关掉再开回来历史不断档。
         if p.get("display", {}).get("showDerived", True):
             # 行 1：只有今日消耗（「预计可用 ~X 天」按用户要求去掉，2026-10-19）
             if pts >= 2 and spend > 0:
@@ -1468,7 +1735,7 @@ def render(results, config, colors, refresh_map, hdir, recovery_map=None):
                 return False
 
         summary = " | ".join(
-            r["menu_bar"] for r in results
+            sanitize_menu_text(r["menu_bar"]) for r in results
             if r and want_summary(r) and r.get("status") in ("ok", "warn") and r.get("menu_bar")
         )
         # 菜单栏标题按最差状态整体着色：任一错误 → 红；任一告警/缺 Key → 橙；否则标题色
@@ -1488,16 +1755,16 @@ def render(results, config, colors, refresh_map, hdir, recovery_map=None):
         for r in results:
             if not r:
                 continue
-            name = r["name"]
-            status = r["status"]
+            name = sanitize_menu_text(r.get("name", "?"))
+            status = r.get("status", "error")
             lines = r.get("lines", [])
             if status == "no_key":
-                svc = r.get("keychainService", "")
+                svc = sanitize_param_value(r.get("keychainService", ""))
                 print(f"🔑 {name}: 未配置 Key | color={colors['WARN']}")
                 if svc:
                     print(f"  security add-generic-password -s {svc} -w your-key | font=Menlo size=11 color={colors['MUTED']}")
             elif status == "error":
-                msg = lines[0] if lines else '请求失败'
+                msg = sanitize_menu_text(lines[0] if lines else '请求失败')
                 c = (r.get("colors") or [colors["ERR"]])[0]
                 print(f"🔴 {name}: {msg} | color={c}")
                 # 错误分支原先只打印 lines[0]，把 process_provider 追加的
@@ -1505,7 +1772,8 @@ def render(results, config, colors, refresh_map, hdir, recovery_map=None):
                 # 「配置/鉴权错误」，看不到真正原因（2026-10-19 实报：MiMo 读不到
                 # 浏览器 Cookie 库，菜单却只提示重新登录，白折腾几次）。补齐即可。
                 for extra_line in lines[1:]:
-                    print(f"{extra_line} | color={colors['MUTED']} size=11")
+                    print(f"{sanitize_menu_text(extra_line)} | "
+                          f"color={colors['MUTED']} size=11")
                 rp = refresh_map.get(r.get("id"))
                 if rp:
                     act = bash_action(rp, refresh=True) or f"param1={rp} refresh=true"
@@ -1529,10 +1797,12 @@ def render(results, config, colors, refresh_map, hdir, recovery_map=None):
                     c = rcolors[i] if i < len(rcolors) else colors["DEFAULT"]
                     extra = ""
                     if i < len(line_params) and line_params[i]:
-                        extra = " " + " ".join(f"{k}={v}" for k, v in line_params[i].items())
-                    print(f"{line} | color={c}{extra}")
+                        extra = " " + " ".join(
+                            f"{k}={safe_href(v) if k == 'href' else sanitize_param_value(v)}"
+                            for k, v in line_params[i].items())
+                    print(f"{sanitize_menu_text(line)} | color={c}{extra}")
             # Console link
-            cu = r.get("console_url")
+            cu = safe_href(r.get("console_url"))
             if cu:
                 print(f"  → 打开 {name} 控制台 | href={cu} color={colors['MUTED']} size=11")
             print("---")
@@ -1560,7 +1830,7 @@ def render(results, config, colors, refresh_map, hdir, recovery_map=None):
         print("👁 | color=#e74c3c")
         print("---")
         print("Token Eye 渲染失败 | color=#e74c3c")
-        print(f"{e} | color=#888 size=11")
+        print(f"{sanitize_menu_text(e)} | color=#888 size=11")
         print("---")
         print("刷新 | refresh=true")
 
@@ -1675,19 +1945,51 @@ def validate_mode():
     return 0
 
 
+def acquire_render_lock(hdir, force=False):
+    """单实例锁：上一轮未结束时本轮不再堆一个新进程 + 并发写同一缓存。
+
+    返回：文件对象（已持锁）/ None（跳过锁）/ False（锁冲突）。
+    force 路径（用户点「刷新」）不加锁，避免点击被上一轮挡住「点了没反应」；
+    缓存写入本身已是 0600 + os.replace 原子操作，并发不会撕裂 JSON。
+    """
+    if force or os.environ.get("TOKEN_EYE_NO_LOCK") == "1":
+        return None
+    try:
+        os.makedirs(hdir, mode=0o700, exist_ok=True)
+        f = open(os.path.join(hdir, "render.lock"), "w", encoding="utf-8")
+        fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return f
+    except OSError:
+        return False
+
+
 def run(args):
-    config_path = os.environ["CONFIG_FILE"]
+    config_path = os.environ.get("CONFIG_FILE", "providers.json")
     project_dir = os.environ.get("PROJECT_DIR", "")
     # 用户主动点「刷新」/「🔄 刷新 Cookie」：跳过自愈冷却与错误短缓存
     force = "--force-refresh" in args
-    cache_dir = "/tmp"
+    # 缓存不再放 /tmp（0644 全局可读、可预测文件名）；与历史/flag 统一到 0700 私有目录
     hdir = os.path.join(os.path.expanduser("~/Library/Caches"), "token-eye")
+    cache_dir = hdir
     try:
-        os.makedirs(hdir, exist_ok=True)
+        os.makedirs(hdir, mode=0o700, exist_ok=True)
     except Exception:
         pass
+    lock = acquire_render_lock(hdir, force)
+    if lock is False:
+        print("👁 | color=#e74c3c")
+        print("---")
+        print("Token Eye 正在刷新中（上一轮未完成） | color=#888 size=11")
+        print("---")
+        print("刷新 | refresh=true")
+        return 0
+    if not force:
+        maybe_refresh_version_async(hdir)
     # 历史自动清理（每天一次，保留 30 天）
-    maybe_cleanup_history(hdir)
+    try:
+        maybe_cleanup_history(hdir)
+    except Exception:
+        pass
 
     try:
         with open(config_path) as f:
@@ -1708,10 +2010,19 @@ def run(args):
         print("刷新 | refresh=true")
         return 0
 
-    appearance, colors = load_colors(config)
-
-    # Schema 校验（与 --validate 共用同一逻辑）
-    schema_errors = schema_validate(config)
+    try:
+        appearance, colors = load_colors(config)
+        # Schema 校验（与 --validate 共用同一逻辑）
+        schema_errors = schema_validate(config)
+    except Exception as e:
+        # 脏配置/环境问题不能让 stdout 空白（SwiftBar 菜单全白且无任何提示）
+        print("👁 | color=#e74c3c")
+        print("---")
+        print("providers.json 配置读取失败 | color=#e74c3c")
+        print(f"{sanitize_menu_text(e)} | color=#888 size=11")
+        print("---")
+        print("刷新 | refresh=true")
+        return 0
     if schema_errors:
         print("👁 | color=#e74c3c")
         print("---")
@@ -1731,20 +2042,42 @@ def run(args):
                     for p in providers_list if (p.get("parser") or {}).get("recovery")}
     results = [None] * len(providers_list)
     if providers_list:
-        with ThreadPoolExecutor(max_workers=max(1, len(providers_list))) as executor:
+        executor = ThreadPoolExecutor(max_workers=max(1, len(providers_list)))
+        try:
             futures = {
                 executor.submit(process_provider, p, config, colors, appearance,
                                 cache_dir, hdir, project_dir, force): i
                 for i, p in enumerate(providers_list)
             }
-            for future in as_completed(futures):
-                idx = futures[future]
-                try:
-                    results[idx] = future.result()
-                except Exception as e:
-                    results[idx] = {"id": "_err", "name": "?", "status": "error",
-                                    "lines": [f"处理异常: {e}"], "colors": [colors["ERR"]],
-                                    "menu_bar": "", "console_url": None}
+            done = set()
+            try:
+                # 30 秒刷新周期：给整轮一个上限，超时未完成的平台合成 timeout 结果，
+                # 不再无限等 shutdown(wait=True) 造成进程堆积。
+                for future in as_completed(futures, timeout=25):
+                    done.add(future)
+                    idx = futures[future]
+                    try:
+                        results[idx] = future.result()
+                    except Exception as e:
+                        results[idx] = {"id": "_err", "name": "?", "status": "error",
+                                        "lines": [f"处理异常: {e}"], "colors": [colors["ERR"]],
+                                        "menu_bar": "", "console_url": None}
+            except (TimeoutError, FuturesTimeoutError):
+                for future, idx in futures.items():
+                    if future in done or results[idx] is not None:
+                        continue
+                    name = providers_list[idx].get("name", "?")
+                    results[idx] = {"id": providers_list[idx].get("id", "_timeout"),
+                                    "name": name, "status": "error",
+                                    "lines": ["请求超时（超过 25 秒）"],
+                                    "colors": [colors["WARN"]], "menu_bar": "",
+                                    "console_url": None}
+                    future.cancel()
+        finally:
+            try:
+                executor.shutdown(wait=False, cancel_futures=True)
+            except TypeError:  # Python < 3.9 无 cancel_futures
+                executor.shutdown(wait=False)
 
     render(results, config, colors, refresh_map, hdir, recovery_map)
     return 0

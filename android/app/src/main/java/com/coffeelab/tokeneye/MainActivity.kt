@@ -49,11 +49,14 @@ import com.coffeelab.tokeneye.core.EnabledStore
 import com.coffeelab.tokeneye.core.Provider
 import com.coffeelab.tokeneye.core.RefreshEngine
 import com.coffeelab.tokeneye.core.SecretStore
+import com.coffeelab.tokeneye.core.SecretStoreInvalidatedException
 import com.coffeelab.tokeneye.core.Snapshot
 import com.coffeelab.tokeneye.core.SnapshotStore
 import com.coffeelab.tokeneye.core.Status
 import com.coffeelab.tokeneye.work.RefreshWorker
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -78,30 +81,51 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+/** 首屏一次性加载结果（全在 IO 线程产出，组合期只读内存） */
+private data class InitData(
+    val providers: List<Provider>,
+    val snapshot: Snapshot,
+    val invalidated: Boolean,
+    val keyStates: Map<String, Boolean>,
+)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TokenEyeApp() {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val secrets = remember { SecretStore(context) }
+    // 进程级单例；构造不触发加密 prefs 打开（lazy），读写都在 IO 线程
+    val secrets = remember { SecretStore.getInstance(context) }
 
-    var snapshot by remember { mutableStateOf(SnapshotStore.load(context)) }
-    var providers by remember { mutableStateOf(ConfigRepository.load(context).providers) }
+    // 组合期只读内存：初始为空，统一在 LaunchedEffect 里切 IO 一次性加载，
+    // 避免 SnapshotStore / ConfigRepository / SecretStore 的文件 IO 落到主线程。
+    var snapshot by remember { mutableStateOf(Snapshot()) }
+    var providers by remember { mutableStateOf(emptyList<Provider>()) }
+    var keyStates by remember { mutableStateOf<Map<String, Boolean>>(emptyMap()) }
     var refreshing by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf<Provider?>(null) }
+    var editingCurrentKey by remember { mutableStateOf("") }
     var message by remember { mutableStateOf<String?>(null) }
 
     val doRefresh: (Boolean) -> Unit = { force ->
         scope.launch {
             refreshing = true
             try {
-                val outcome = RefreshEngine.refresh(context, force = force)
+                // RefreshEngine 内部仍自带 IO 切换，这里再包一层保证组合触发路径也不占主线程
+                val outcome = withContext(Dispatchers.IO) {
+                    RefreshEngine.refresh(context, force = force)
+                }
                 snapshot = outcome.snapshot
-                // 有平台没拉成功时给一句提示；小部件仍显示上次数据 + 「数据陈旧」标注
-                message = if (outcome.anyFailed) "部分平台更新失败，显示的是上次数据" else null
-                // 与 RefreshWorker 同一套自愈路径：失败就排接力任务，
-                // 否则「在 App 内手动刷新失败」这条路径不经过 Worker、永远不自愈
-                if (outcome.anyFailed) RefreshWorker.enqueueRecovery(context)
+                // 有平台没拉成功时给一句提示；小部件仍显示上次数据 + 「数据陈旧」标注。
+                // 与 RefreshWorker 同一套自愈路径：失败就排接力任务并累加连续失败计数，
+                // 成功则清零（否则「在 App 内手动刷新失败」这条路径不经过 Worker、永远不自愈）
+                if (outcome.anyFailed) {
+                    message = "部分平台更新失败，显示的是上次数据"
+                    RefreshWorker.enqueueRecovery(context)
+                } else {
+                    message = null
+                    RefreshWorker.clearFailStreak(context)
+                }
             } catch (e: Exception) {
                 message = "刷新失败：${e.message}"
                 RefreshWorker.enqueueRecovery(context)
@@ -110,9 +134,25 @@ fun TokenEyeApp() {
         }
     }
 
-    // 打开 App 时若快照已陈旧（>15 分钟）自动刷新
+    // 打开 App：一次性读入快照 / 配置 / 密钥状态（IO），再按陈旧程度决定是否自动刷新
     LaunchedEffect(Unit) {
-        if (System.currentTimeMillis() - snapshot.fetchedAt > 15 * 60 * 1000) doRefresh(false)
+        val init = withContext(Dispatchers.IO) {
+            val cfg = ConfigRepository.load(context).providers
+            val snap = SnapshotStore.load(context)
+            val (invalidated, keys) = try {
+                false to cfg.associate { it.id to secrets.get(it.id).isNotBlank() }
+            } catch (e: SecretStoreInvalidatedException) {
+                true to cfg.associate { it.id to false }
+            }
+            InitData(cfg, snap, invalidated, keys)
+        }
+        providers = init.providers
+        snapshot = init.snapshot
+        keyStates = init.keyStates
+        when {
+            init.invalidated -> message = "加密密钥已失效，请重新录入各平台 API Key"
+            System.currentTimeMillis() - init.snapshot.fetchedAt > 15 * 60 * 1000 -> doRefresh(false)
+        }
     }
 
     MaterialTheme {
@@ -149,11 +189,26 @@ fun TokenEyeApp() {
                         ProviderCard(
                             provider = p,
                             result = snapshot.results.firstOrNull { it.id == p.id },
-                            hasKey = secrets.get(p.id).isNotBlank(),
+                            hasKey = keyStates[p.id] ?: false,
                             onToggle = { enabled ->
-                                providers = toggleProvider(context, providers, p.id, enabled)
+                                scope.launch {
+                                    val (next, ok) = toggleProvider(context, providers, p.id, enabled)
+                                    if (ok) {
+                                        providers = next
+                                    } else {
+                                        message = "启用状态保存失败，已保留原状态"
+                                    }
+                                }
                             },
-                            onEditKey = { editing = p },
+                            onEditKey = {
+                                scope.launch {
+                                    // 打开对话框前在 IO 线程读一次当前密钥，避免组合期读加密 prefs
+                                    editingCurrentKey = withContext(Dispatchers.IO) {
+                                        try { secrets.get(p.id) } catch (e: SecretStoreInvalidatedException) { "" }
+                                    }
+                                    editing = p
+                                }
+                            },
                         )
                     }
                 }
@@ -182,11 +237,26 @@ fun TokenEyeApp() {
     editing?.let { p ->
         KeyEditDialog(
             provider = p,
-            current = secrets.get(p.id),
+            current = editingCurrentKey,
             onDismiss = { editing = null },
             onSave = { key ->
-                if (key.isBlank()) secrets.remove(p.id) else secrets.set(p.id, key)
-                editing = null
+                scope.launch {
+                    val ok = withContext(Dispatchers.IO) {
+                        try {
+                            if (key.isBlank()) secrets.remove(p.id) else secrets.set(p.id, key)
+                            true
+                        } catch (e: SecretStoreInvalidatedException) {
+                            false
+                        }
+                    }
+                    if (ok) {
+                        // 只更新内存 hasKey 状态，不重新读加密 prefs
+                        keyStates = keyStates + (p.id to key.isNotBlank())
+                        editing = null
+                    } else {
+                        message = "加密密钥已失效，请重新打开 App 后重试"
+                    }
+                }
             },
         )
     }
@@ -199,16 +269,20 @@ private val TIME_FMT = SimpleDateFormat("HH:mm", Locale.getDefault())
  *
  * 只把 `{"id": false}` 写进 [EnabledStore]，**不改写配置本体**（旧实现把整份 providers.json
  * 写进 filesDir，会把手机端配置永久冻结在那一刻的版本，重装 APK 也更新不了）。
- * 覆盖由 [ConfigRepository.load] 统一叠加，这里返回的列表仅用于立即刷新 UI。
+ * 覆盖由 [ConfigRepository.load] 统一叠加。返回写回是否成功，UI 层据此提示 / 回滚。
  */
-private fun toggleProvider(
+private suspend fun toggleProvider(
     context: Context,
     providers: List<Provider>,
     id: String,
     enabled: Boolean,
-): List<Provider> {
-    EnabledStore.set(context, id, enabled)
-    return providers.map { if (it.id == id) it.copy(enabled = enabled) else it }
+): Pair<List<Provider>, Boolean> {
+    val ok = withContext(Dispatchers.IO) { EnabledStore.set(context, id, enabled) }
+    return if (ok) {
+        providers.map { if (it.id == id) it.copy(enabled = enabled) else it } to true
+    } else {
+        providers to false
+    }
 }
 
 @Composable

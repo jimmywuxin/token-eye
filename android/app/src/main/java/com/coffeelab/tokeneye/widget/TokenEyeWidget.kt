@@ -167,6 +167,7 @@ class TokenEyeWidget : GlanceAppWidget() {
             r.summary.contains("网络") -> "网络错误"
             r.summary.contains("服务端") -> "服务异常"
             r.summary.contains("解析") -> "解析失败"
+            r.summary.contains("配置") -> "配置错误"
             else -> "错误"
         }
         return if (code != null) "$kind $code" else kind

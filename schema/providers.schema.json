@@ -26,7 +26,7 @@
         "plan_usage": { "type": "integer", "minimum": 1 },
         "status": { "type": "integer", "minimum": 1 }
       },
-      "additionalProperties": true
+      "additionalProperties": false
     },
     "menuBar": {
       "type": "object",
@@ -40,7 +40,7 @@
           ]
         }
       },
-      "additionalProperties": true
+      "additionalProperties": false
     },
     "alerts": {
       "type": "object",
@@ -49,11 +49,32 @@
     }
   },
   "required": ["providers"],
-  "additionalProperties": true,
+  "additionalProperties": false,
   "definitions": {
     "provider": {
       "type": "object",
       "required": ["id", "name", "parser"],
+      "description": "条件必填：parser.type=command 时必须提供 parser.command（凭证由 CLI 自管，无需 api/keychainService）；其余类型必须提供 api.url 与 keychainService。用 if/then/else 表达，零依赖校验器 scripts/validate-schema.py 实现其最小子集。",
+      "if": {
+        "properties": {
+          "parser": {
+            "properties": { "type": { "enum": ["command"] } },
+            "required": ["type"]
+          }
+        },
+        "required": ["parser"]
+      },
+      "then": {
+        "properties": {
+          "parser": { "required": ["command"] }
+        }
+      },
+      "else": {
+        "required": ["api", "keychainService"],
+        "properties": {
+          "api": { "required": ["url"] }
+        }
+      },
       "properties": {
         "id": { "type": "string", "minLength": 1 },
         "name": { "type": "string", "minLength": 1 },
@@ -78,7 +99,7 @@
         "display": { "$ref": "#/definitions/display" },
         "alert": { "$ref": "#/definitions/alert" }
       },
-      "additionalProperties": true
+      "additionalProperties": false
     },
     "api": {
       "type": "object",
@@ -94,7 +115,7 @@
         },
         "envelope": {
           "type": "object",
-          "description": "业务码校验：国内平台常用 HTTP 200 + body.code 表达错误（如智谱 code=401 表示令牌失效）。配置后非 okCodes 的响应改判为鉴权错误，避免渲染成「✅ ¥?」假绿。不配则只看 HTTP 码。",
+          "description": "业务码校验：国内平台常用 HTTP 200 + body.code 表达错误（如智谱 code=401 表示令牌失效）。配置后非 okCodes 的响应改判为鉴权错误，避免渲染成「✅ ¥?」假绿。未配置时仍会走 default_business_code_check 保守校验（code/errcode/error_code/retcode 中的明确错误值），三端同口径。",
           "properties": {
             "codePath": { "type": "string", "default": "code", "description": "业务码字段路径" },
             "okCodes": {
@@ -105,10 +126,10 @@
             },
             "msgPath": { "type": "string", "default": "msg", "description": "错误文案字段路径" }
           },
-          "additionalProperties": true
+          "additionalProperties": false
         }
       },
-      "additionalProperties": true
+      "additionalProperties": false
     },
     "parser": {
       "type": "object",
@@ -153,7 +174,8 @@
         "showModels": { "type": "array", "items": { "type": "string" } },
         "statusMap": {
           "type": "object",
-          "description": "状态码 -> 文案，默认 {1:可用, 2:耗尽临近, 3:耗尽}"
+          "deprecated": true,
+          "description": "已废弃：v0.13 起状态一律按已用% 分档，三端均不读取。项目配置已移除；此处保留键定义只为让旧配置仍能通过校验，不要接线"
         },
         "windowLabels": {
           "type": "object",
@@ -162,7 +184,7 @@
             "interval": { "type": "string" },
             "weekly": { "type": "string" }
           },
-          "additionalProperties": true
+          "additionalProperties": false
         },
         "pctDirection": {
           "type": "string",
@@ -201,20 +223,24 @@
               "description": "是否叠加中国法定节假日/调休表（holidays/<年>.json）：节假日全天空闲，调休上班的周末按工作日算；无数据文件时自动退化为纯 weekdays 判定"
             }
           },
-          "additionalProperties": true
+          "additionalProperties": false
         }
       },
-      "additionalProperties": true
+      "additionalProperties": false
     },
     "display": {
       "type": "object",
       "properties": {
-        "unit": { "type": "string" },
+        "unit": {
+          "type": "string",
+          "deprecated": true,
+          "description": "已废弃：单位由接口 fields.currency 决定（USD→$，其余 ¥），用量行的 % 写死在渲染代码。项目配置已移除，保留键定义只为兼容旧配置"
+        },
         "label": { "type": "string" },
         "showDerived": {
           "type": "boolean",
           "default": true,
-          "description": "balance 类是否显示派生统计（今日消耗/预计可用、近 7 天柱状）。false = 只显示余额；快照历史仍照常累积，dailySpendMax/daysLeft 告警不受影响"
+          "description": "balance 类是否显示派生统计（仅「今日消耗」一行，近 7 天柱状与「预计可用」已于 2026-10-19 移除）。false = 只显示余额；快照历史仍照常累积，dailySpendMax/daysLeft 告警不受影响"
         },
         "currencySymbols": {
           "type": "object",
@@ -231,12 +257,12 @@
                 "dark": { "type": "string" },
                 "light": { "type": "string" }
               },
-              "additionalProperties": true
+              "additionalProperties": false
             }
           ]
         }
       },
-      "additionalProperties": true
+      "additionalProperties": false
     },
     "alert": {
       "type": "object",
@@ -253,7 +279,7 @@
           "description": "balance：按最近 24h 消耗速率外推，预计可用天数低于该值时告警"
         }
       },
-      "additionalProperties": true
+      "additionalProperties": false
     },
     "colorSet": {
       "type": "object",
@@ -267,7 +293,7 @@
         "warn": { "type": "string" },
         "err": { "type": "string" }
       },
-      "additionalProperties": true
+      "additionalProperties": false
     }
   }
 }

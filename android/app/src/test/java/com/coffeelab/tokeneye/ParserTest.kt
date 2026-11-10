@@ -249,6 +249,85 @@ class ParserTest {
         assertFalse("空表时不应判出「节假日」，实际：$line", line.startsWith("节假日"))
     }
 
+    @Test
+    fun parseBalance_missingBalanceField_isErr() {
+        // 与 Mac 侧「balance 字段缺失判 error 态」统一：Android 现有 ERR 保持不变，
+        // 不能因为字段路径配错 / API 结构变更就渲染成绿色对勾
+        val config = ConfigLoader.parse(
+            """
+            {"providers":[{"id":"deepseek","name":"DeepSeek",
+              "api":{"url":"https://x"},
+              "parser":{"type":"balance","fields":{"balance":"data.balance"}}}]}
+            """.trimIndent()
+        )
+        val p = config.providers[0]
+        val data = JsonParser.parseString("""{"is_available":true,"data":{}}""").asJsonObject
+        val r = ResultParser.parse(p, data, config.alerts)
+        assertEquals(com.coffeelab.tokeneye.core.Status.ERR, r.status)
+        assertTrue("余额缺失应显示 ? 而非数值，实际：${r.summary}", r.summary.contains("?"))
+    }
+
+    @Test
+    fun parsePlanUsage_worstAcrossAllModels() {
+        // 多模型：主模型正常、副模型耗尽 → 整体判 ERR、usedPct 取全局最差（副模型），
+        // 与 Mac 侧 token_eye.py:759-812 遍历全部 showModels 的口径一致
+        val config = ConfigLoader.parse(
+            """
+            {"providers":[{"id":"minimax","name":"MiniMax",
+              "api":{"url":"https://x"},
+              "parser":{"type":"plan_usage","arrayPath":"model_remains",
+                "fields":{"model":"model_name","intervalPct":"ip","weeklyPct":"wp"},
+                "showModels":["general","speech"],
+                "windowLabels":{"interval":"5h","weekly":"7d"}}}]}
+            """.trimIndent()
+        )
+        val p = config.providers[0]
+        val data = JsonParser.parseString(
+            """{"model_remains":[
+                {"model_name":"general","ip":90.0,"wp":90.0},
+                {"model_name":"speech","ip":0.0,"wp":90.0}]}"""
+        ).asJsonObject
+        val r = ResultParser.parse(p, data, config.alerts)
+        assertEquals(com.coffeelab.tokeneye.core.Status.ERR, r.status)
+        assertEquals(100.0, r.usedPct!!, 0.001)
+    }
+
+    @Test
+    fun configLoader_excludes_by_explicit_id_whitelist() {
+        // 与 scripts/check-config-sync.py 的 ANDROID_EXCLUDED={"mimo","qwen"} 对齐：
+        // 即使字段看起来「可移植」（无 refreshParam、balance 型、有 api 段），
+        // 只要 id 落在显式白名单里就剔除，不靠字段动态判断。
+        val config = ConfigLoader.parse(
+            """
+            {"providers":[
+              {"id":"mimo","name":"MiMo","api":{"url":"https://x"},
+               "parser":{"type":"balance","fields":{"balance":"b"}}},
+              {"id":"qwen","name":"Qwen","api":{"url":"https://x"},
+               "parser":{"type":"balance","fields":{"balance":"b"}}},
+              {"id":"deepseek","name":"DeepSeek","api":{"url":"https://x"},
+               "parser":{"type":"balance","fields":{"balance":"b"}}}
+            ]}
+            """.trimIndent()
+        )
+        assertEquals(listOf("deepseek"), config.providers.map { it.id })
+    }
+
+    @Test
+    fun configLoader_drops_command_type_by_runtime_guard() {
+        // 运行时防御层：白名单外的 command 型也要显式剔除并留日志（不靠缺 api 段静默跳过）
+        val config = ConfigLoader.parse(
+            """
+            {"providers":[
+              {"id":"newcli","name":"NewCLI","api":{"url":"https://x"},
+               "parser":{"type":"command","fields":{"balance":"b"}}},
+              {"id":"deepseek","name":"DeepSeek","api":{"url":"https://x"},
+               "parser":{"type":"balance","fields":{"balance":"b"}}}
+            ]}
+            """.trimIndent()
+        )
+        assertEquals(listOf("deepseek"), config.providers.map { it.id })
+    }
+
     companion object {
         /**
          * 造一张「今天起连续放假、其中 3 天后那个工作日调休上班」的表。

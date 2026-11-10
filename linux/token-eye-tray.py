@@ -42,9 +42,37 @@ APP_ID = "token-eye"
 sys.path.insert(0, SWIFTBAR_DIR)
 import token_eye  # 上游核心（只读 import）
 
+# 让同级 helper 在「直接运行」和「被测试以合成模块名加载」两种情况下都能导入
+if LINUX_DIR not in sys.path:
+    sys.path.insert(0, LINUX_DIR)
+import keyring_common  # 解锁语义统一（P0-3）
+
 # ---------------------------------------------------------------------------
 # Linux 平台后端（patch 上游模块级函数）
 # ---------------------------------------------------------------------------
+
+# 版本自检结果（后台线程写、经 GLib.idle_add 回主线程；rebuild_menu 只读）
+_version_info = {"latest": ""}
+
+
+def _log_debug(msg):
+    """调试留痕：复用上游 log_debug（TOKEN_EYE_DEBUG=1 时写 ~/.cache/token-eye/debug.log）。"""
+    try:
+        token_eye.log_debug(CACHE_ROOT, msg)
+    except Exception:
+        pass
+
+
+def _import_appindicator():
+    """返回 AppIndicator 模块：优先 AyatanaAppIndicator3（部分麒麟只有它），回退 AppIndicator3。"""
+    import gi
+    try:
+        gi.require_version("AyatanaAppIndicator3", "0.1")
+        from gi.repository import AyatanaAppIndicator3 as AppIndicator
+    except (ValueError, ImportError):
+        gi.require_version("AppIndicator3", "0.1")
+        from gi.repository import AppIndicator3 as AppIndicator
+    return AppIndicator
 
 KEYRING_LOCKED = "__TOKEN_EYE_KEYRING_LOCKED__"  # 哨兵：collect() 用，不经过 get_key
 
@@ -100,34 +128,24 @@ def probe_keyring_state():
 def ensure_keyring_unlocked(timeout=60.0):
     """带超时的解锁尝试（用户点击菜单项时调用，返回 (ok, msg)）。
 
-    B1：secretstorage 2.3.x 的 Collection.unlock() 返回「是否被用户取消」
-    （True=取消，False=解锁成功）——旧代码把 False 当失败，锁定态下输对
-    密码也会静默返回空。升级 secretstorage 后需复核语义（见其 util.py
-    unlock_objects 实现）。超时后底层线程可能仍挂着（等提示框关闭），
-    属已接受的取舍：解锁是用户主动触发、低频路径。
+    P0-3：secretstorage 各版本 Collection.unlock() 返回值语义相反（True 可能
+    是「已取消」也可能是「成功」），故这里不再解读返回值——统一交给
+    keyring_common.unlock_and_verify() 在解锁后复核 coll.is_locked() 判定成败，
+    对两种语义都正确。超时线程与 (ok, msg) 返回契约保持不变。
 
-    2026-10-19 超时从 10s 放宽到 60s：gcr-prompter 首次经 D-Bus 激活本身
-    就要几秒，加上用户输密码的时间，10s 经常在密码框刚出现时就被放弃，
-    表现为「点了没反应」。
+    超时后底层线程可能仍挂着（等提示框关闭），属已接受的取舍：解锁是用户
+    主动触发、低频路径。2026-10-19 超时从 10s 放宽到 60s：gcr-prompter 首次
+    经 D-Bus 激活本身就要几秒，加上用户输密码的时间，10s 经常在密码框刚
+    出现时就被放弃，表现为「点了没反应」。
     """
     def _try():
+        # 解锁判定统一走 keyring_common：忽略 unlock() 返回值，只用 is_locked()
+        # 复核（P0-3）。超时线程与 (ok, msg) 返回契约保持不变。
         try:
-            import secretstorage
-            bus = secretstorage.dbus_init()
-            coll = secretstorage.get_default_collection(bus)
+            coll, err = keyring_common.open_collection()
             if coll is None:
-                return False, "密钥服务不可用"
-            if not coll.is_locked():
-                return True, ""
-            try:
-                dismissed = coll.unlock()   # True = 用户取消
-            except Exception as e:
-                return False, f"解锁调用失败: {e}"
-            if dismissed:
-                return False, "已取消"
-            if coll.is_locked():
-                return False, "仍未解锁（密码不对？）"
-            return True, ""
+                return False, err or "密钥服务不可用"
+            return keyring_common.unlock_and_verify(coll)
         except Exception as e:
             return False, str(e)
 
@@ -141,13 +159,16 @@ def ensure_keyring_unlocked(timeout=60.0):
 
 
 def linux_send_notify(title, message, sound=None):
-    """notify-send 发通知（UKUI 走 D-Bus 通知）。"""
+    """notify-send 发通知（UKUI 走 D-Bus 通知）；失败写 debug 日志留痕，不静默吞掉。"""
     try:
         cmd = ["notify-send", "-a", APP_ID, "-i",
                os.path.join(ICON_DIR, "token-eye-ok_22.png"), title, message]
-        subprocess.run(cmd, timeout=5, capture_output=True)
-    except Exception:
-        pass
+        r = subprocess.run(cmd, timeout=5, capture_output=True)
+        if r.returncode != 0:
+            detail = (r.stderr or b"").decode("utf-8", "replace").strip()[:120]
+            _log_debug(f"notify-send 返回 {r.returncode}: {detail}")
+    except Exception as e:
+        _log_debug(f"notify-send 调用失败: {e}")
 
 
 # ---------------------------------------------------------------------------
@@ -219,6 +240,8 @@ token_eye.send_notify = linux_send_notify
 
 # _open_login_page 内部调用 "open" 命令 —— 换成 Chromium 优先的等价实现
 def _linux_open_login(flags_dir, pid, login_url, cooldown=1800):
+    """打开登录页；**成功后才写冷却 flag**（旧代码先写 flag 再打开且吞失败，
+    打不开也会留下 30 分钟冷却并发「已打开」假通知，P2 错误处理）。"""
     if not login_url:
         return False
     flag = os.path.join(flags_dir, f"token-eye-loginopened-{pid}.flag")
@@ -231,25 +254,37 @@ def _linux_open_login(flags_dir, pid, login_url, cooldown=1800):
                 return False
     except Exception:
         pass
+    ok, label = open_in_browser(login_url)
+    if not ok:
+        _log_debug(f"打开登录页失败（不写冷却 flag，下轮可重试）: {pid}")
+        token_eye.send_notify("Token Eye: 登录已过期",
+                              f"{pid} 会话失效，自动打开登录页失败，请手动打开控制台重新登录")
+        return False
+    # 发起浏览器成功之后才写冷却 flag；写失败留痕但不影响本次结论
     try:
         with open(flag, "w") as f:
             f.write(str(now))
-    except Exception:
-        pass
-    ok, label = open_in_browser(login_url)
+    except Exception as e:
+        _log_debug(f"写登录冷却 flag 失败: {e}")
     token_eye.send_notify("Token Eye: 登录已过期",
                           f"{pid} 会话失效，已用{label or '浏览器'}打开登录页，登录后自动续期")
-    return ok
+    return True
 
 token_eye._open_login_page = _linux_open_login
 
 # 单位机网络偏慢（信创机直连各平台 API 偶发超时），放宽 curl/进程超时
 _orig_fetch = token_eye.fetch_api
 
-def _fetch_api_relaxed(url, method, auth_header, auth_prefix, key, extra_headers=None,
-                        curl_timeout=20, proc_timeout=35):
-    return _orig_fetch(url, method, auth_header, auth_prefix, key, extra_headers,
-                       curl_timeout=curl_timeout, proc_timeout=proc_timeout)
+def _fetch_api_relaxed(*args, **kwargs):
+    """透传上游 fetch_api，仅把单位机偏慢场景的 curl/进程超时放宽。
+
+    用 *args/**kwargs 而非固定 6 个位置参数转发：上游一旦增删参数或调整签名，
+    这里不会立刻崩，只是把新参数原样带过去（P1-4）。两个超时用 setdefault，
+    调用方显式指定时以其为准。
+    """
+    kwargs.setdefault("curl_timeout", 20)
+    kwargs.setdefault("proc_timeout", 35)
+    return _orig_fetch(*args, **kwargs)
 
 token_eye.fetch_api = _fetch_api_relaxed
 
@@ -272,28 +307,67 @@ def _notify_keyring_locked_once():
         pass
 
 
+def _config_error_result(colors, lines):
+    """合成一条配置错误结果，让菜单显示错误横幅而不是整轮崩溃。"""
+    return {"id": "_config", "name": "配置", "status": "error",
+            "lines": lines, "colors": [colors.get("ERR", "#e74c3c")],
+            "menu_bar": "", "console_url": None}
+
+
 def collect(config_path, project_dir):
     """与上游 run() 相同的并行收集，返回 (results, config, colors, appearance)。
 
-    锁定态快捷路径（B2-b/B3）：钥匙环锁定时所有 key 都读不出，拉网络毫无意义，
-    直接合成 no_key 结果并给出解锁入口；由 rebuild_menu 渲染横幅替代逐行
-    「未配置 Key」。
+    配置读取与 schema 校验都带兜底（上游 run() 有，Linux 版曾完全跳过
+    schema_validate 且读配置无 try —— 脏配置会让后台线程异常、菜单一直停在
+    「启动中」）。锁定/不可用态快捷路径（B2-b/B3）：钥匙环锁定或密钥服务不可用时
+    所有 key 都读不出，拉网络毫无意义，直接合成结果并给解锁入口；用独立 status
+    与「真·未配置 Key」(no_key) 区分，避免把服务故障误导成「去加 Key」。
     """
     global _last_keyring_state
-    os.makedirs(CACHE_ROOT, exist_ok=True)
-    # 历史保留期清理（上游 run() 里有，Linux 版曾漏掉 → history-*.jsonl 无限增长）
-    token_eye.maybe_cleanup_history(CACHE_ROOT)
-    with open(config_path) as f:
-        config = json.load(f)
+    try:
+        # 缓存含完整 API 响应明文：目录仅属主可访问（0700）。
+        # exist_ok=True 时 makedirs 不收紧已有目录权限，故再显式 chmod 一次。
+        os.makedirs(CACHE_ROOT, mode=0o700, exist_ok=True)
+        try:
+            os.chmod(CACHE_ROOT, 0o700)
+        except OSError as e:
+            _log_debug(f"收紧缓存目录权限失败: {e}")
+        # 历史保留期清理（上游 run() 里有，Linux 版曾漏掉 → history-*.jsonl 无限增长）
+        token_eye.maybe_cleanup_history(CACHE_ROOT)
+    except Exception as e:
+        _log_debug(f"缓存目录/历史清理失败: {e}")
+
+    config = {}
+    try:
+        with open(config_path) as f:
+            config = json.load(f)
+    except Exception as e:
+        appearance, colors = token_eye.load_colors({})
+        return ([_config_error_result(colors, [f"配置读取失败: {e}"])],
+                config, colors, appearance)
+
     appearance, colors = token_eye.load_colors(config)
+    try:
+        schema_errors = token_eye.schema_validate(config)
+    except Exception as e:
+        schema_errors = [f"schema_validate 异常: {e}"]
+    if schema_errors:
+        lines = ["providers.json 配置错误"] + [f"  {e}" for e in schema_errors[:8]]
+        return ([_config_error_result(colors, lines)], config, colors, appearance)
+
     providers_list = [p for p in config.get("providers", []) if p.get("enabled", True)]
 
     _last_keyring_state = probe_keyring_state()
-    if _last_keyring_state == "locked":
-        _notify_keyring_locked_once()
+    if _last_keyring_state in ("locked", "unavailable"):
+        if _last_keyring_state == "locked":
+            _notify_keyring_locked_once()
+        # 独立 status：worst_status 会把它当未知态落 warn，rebuild_menu 按
+        # _last_keyring_state 渲染对应横幅；不再复用 no_key 以免与缺 Key 混淆。
+        state_status = ("keyring_locked" if _last_keyring_state == "locked"
+                        else "keyring_unavailable")
         results = [{
             "id": p.get("id", "?"), "name": p.get("name", "?"),
-            "status": "no_key", "lines": [],
+            "status": state_status, "lines": [],
             "colors": [colors.get("WARN", "#e67e22")],
             "menu_bar": "", "console_url": p.get("console_url"),
         } for p in providers_list]
@@ -303,8 +377,11 @@ def collect(config_path, project_dir):
     if providers_list:
         with ThreadPoolExecutor(max_workers=max(1, len(providers_list))) as executor:
             futures = {
-                executor.submit(token_eye.process_provider, p, config, colors,
-                                appearance, CACHE_ROOT, CACHE_ROOT, project_dir): i
+                executor.submit(
+                    token_eye.process_provider,
+                    p=p, config=config, colors=colors, appearance=appearance,
+                    cache_dir=CACHE_ROOT, hdir=CACHE_ROOT, project_dir=project_dir,
+                    force=False): i
                 for i, p in enumerate(providers_list)
             }
             for future in as_completed(futures):
@@ -319,10 +396,23 @@ def collect(config_path, project_dir):
 
 
 def worst_status(results):
-    """最差状态：error=3 / warn|no_key=2 / ok=0。"""
-    return max((3 if r.get("status") == "error"
-                else 2 if r.get("status") in ("warn", "no_key") else 0
-                for r in results if r), default=0)
+    """最差状态：error=3 / warn|no_key=2 / ok=0；未知状态按 warn(2) 处理并留痕。
+
+    旧实现把任何非 error/warn/no_key 的状态静默映射成 0(ok) —— 上游新增状态
+    或本端自定义状态（如 keyring_unavailable）会被当成「一切正常」显示绿勾，
+    属假绿。未知态一律降级为 warn 并写 debug 日志，便于发现口径漂移。
+    """
+    def _rank(r):
+        s = r.get("status")
+        if s == "error":
+            return 3
+        if s in ("warn", "no_key"):
+            return 2
+        if s == "ok":
+            return 0
+        _log_debug(f"worst_status: 未知状态 {s!r} 按 warn 处理")
+        return 2
+    return max((_rank(r) for r in results if r), default=0)
 
 
 def summary_text(results):
@@ -339,7 +429,7 @@ def summary_text(results):
 def build_ui():
     import gi
     gi.require_version("Gtk", "3.0")
-    gi.require_version("AppIndicator3", "0.1")
+    _import_appindicator()   # 校验/选定 AppIndicator 命名空间（Ayatana 优先）
     from gi.repository import Gtk, GLib, Gdk
     return Gtk, GLib, Gdk
 
@@ -418,6 +508,13 @@ def rebuild_menu(results, config, colors, appearance):
                        on_activate=unlock_and_refresh)
         menu_add_label(menu, "（解锁前无法读取任何 Key，数据不可用）",
                        color=colors["MUTED"], size="small")
+    elif _last_keyring_state == "unavailable":
+        # 与「未配置 Key」/「已锁定」都区分开：这是密钥服务本身没起来，
+        # 让用户去加 Key 或输密码都是误导，只提示确认会话后刷新。
+        menu_add_label(menu, "⚠️ 密钥服务不可用", color=colors["WARN"], bold=True)
+        menu_add_label(menu, "（D-Bus / gnome-keyring 未就绪，数据不可用；"
+                       "确认已登录桌面会话后点「立即刷新」重试）",
+                       color=colors["MUTED"], size="small")
     else:
         for r in results:
             if not r:
@@ -464,14 +561,14 @@ def rebuild_menu(results, config, colors, appearance):
                    on_activate=request_refresh)
     menu_add_label(menu, f"上次更新: {time.strftime('%H:%M:%S')}",
                    color=colors["MUTED"], size="small")
-    try:
-        latest = token_eye.check_latest_version(CACHE_ROOT)
-        if latest and token_eye._ver_gt(latest, "v" + token_eye.VERSION):
-            menu_add_label(menu, f"⬆ 新版本 {latest} 可用", color=colors["HEADER"],
-                           size="small", on_activate=lambda: open_url(
-                               "https://github.com/jimmywuxin/token-eye/releases/latest"))
-    except Exception:
-        pass
+    # 版本检查不再在 GTK 主线程同步跑（旧实现 check_latest_version 冷启动最多
+    # 约 24s 的 curl，会冻结菜单）；结果由后台线程经 GLib.idle_add 写入全局，
+    # 这里只读缓存值，零阻塞。
+    latest = _version_info.get("latest", "")
+    if latest:
+        menu_add_label(menu, f"⬆ 新版本 {latest} 可用", color=colors["HEADER"],
+                       size="small", on_activate=lambda: open_url(
+                           "https://github.com/jimmywuxin/token-eye/releases/latest"))
     menu_add_label(menu, f"v{token_eye.VERSION} (linux)", color=colors["MUTED"],
                    size="small")
     menu_add_sep(menu)
@@ -541,6 +638,29 @@ def refresh_once():
 def request_refresh():
     refresh_once()
     return True  # 供 GLib timeout 复用
+
+
+def _check_version_async():
+    """后台线程跑版本自检，冷启动的多次 curl 不再阻塞 GTK 主线程。
+
+    结果经 GLib.idle_add 回主线程写入 _version_info，rebuild_menu 只读全局。
+    check_latest_version 自带 86400s 文件缓存，故只在托盘启动时跑一次即可。
+    """
+    def _work():
+        try:
+            latest = token_eye.check_latest_version(CACHE_ROOT)
+            if latest and token_eye._ver_gt(latest, "v" + token_eye.VERSION):
+                if GLib is not None:
+                    GLib.idle_add(_apply_version_result, latest)
+        except Exception as e:
+            _log_debug(f"版本检查失败: {e}")
+    threading.Thread(target=_work, daemon=True).start()
+
+
+def _apply_version_result(latest):
+    """GLib 主线程回调：只记下新版本号（菜单由下一次常规刷新渲染）。"""
+    _version_info["latest"] = latest
+    return False  # idle_add 单次执行
 
 
 def unlock_and_refresh():
@@ -613,7 +733,8 @@ _menu = None
 def main_tray():
     _init_gtk()
     global _indicator, _menu
-    from gi.repository import Gtk, GLib, AppIndicator3 as AppIndicator
+    from gi.repository import Gtk, GLib
+    AppIndicator = _import_appindicator()
 
     _indicator = AppIndicator.Indicator.new(
         APP_ID, "token-eye-ok", AppIndicator.IndicatorCategory.SYSTEM_SERVICES)
@@ -629,6 +750,15 @@ def main_tray():
     _indicator.set_menu(_menu)
 
     refresh_once()
+    _check_version_async()   # 版本自检移出主线程，结果经 idle_add 回传
+    # 上游 check_latest_version 现仅读 24h 缓存、永不联网：需在启动时另起后台
+    # 刷新把新版本写进缓存，后续刷新/启动才能读到（本调用只发线程、不等待）。
+    try:
+        kick = getattr(token_eye, "maybe_refresh_version_async", None)
+        if callable(kick):
+            kick(CACHE_ROOT)
+    except Exception as e:
+        _log_debug(f"触发版本后台刷新失败: {e}")
     GLib.timeout_add_seconds(REFRESH_SECONDS, request_refresh)
     try:
         Gtk.main()
@@ -658,6 +788,7 @@ def main_once():
 def main_check():
     """--check：自检 key / 配置 / 网络。"""
     cfg_ok = True
+    config = {}   # 读取失败时下方遍历不会 UnboundLocalError
     try:
         with open(CONFIG_FILE) as f:
             config = json.load(f)

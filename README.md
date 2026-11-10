@@ -16,13 +16,15 @@
 
 ## 支持平台
 
-| 平台 | 展示内容 | API | 控制台 |
-|------|---------|-----|--------|
-| DeepSeek | 余额 ¥13.5 | `/user/balance` | platform.deepseek.com/usage |
+| 平台 | 展示内容 | 数据源 | 控制台 |
+|------|---------|--------|--------|
 | MiniMax | M2.7/M3 92% · 周窗 100% · 🔥x2.0 加成中 | `/v1/token_plan/remains` | platform.minimaxi.com |
+| DeepSeek | 余额 ¥13.5 | `/user/balance` | platform.deepseek.com/usage |
 | MiMo | 余额 ¥5.0（Cookie 鉴权） | `/api/v1/balance` | platform.xiaomimimo.com |
+| 智谱 GLM | 余额 ¥x.xx（含 `api.envelope` 业务码校验） | `/api/biz/account/query-customer-account-report` | bigmodel.cn/console/overview |
+| 千问 | 余额 ¥x.xx（qianwen CLI） | `qianwen billing balance summary --format json` | platform.qianwenai.com/home |
 
-> **平台支持范围**：macOS / Linux 版支持上表全部三平台；**Android 版支持 DeepSeek 与 MiniMax**，MiMo 因依赖浏览器 Cookie 会话鉴权、无法在 Android 移植，已主动移除（详见 [android/README.md](android/README.md) 的「已知差异」）。
+> **平台支持范围**：macOS / Linux 版支持上表全部 **5 个平台**（minimax / deepseek / mimo / zhipu / qwen）；**Android 版支持 3 个**（MiniMax / DeepSeek / 智谱 GLM）。`mimo` 依赖浏览器会话 Cookie 鉴权（`refreshParam` 刷新脚本无法移植）、`qwen` 是 `parser.type=command`（需执行 `qianwen` CLI，手机不能运行外部命令），二者在 Android 侧被显式剔除——`scripts/check-config-sync.py` 用显式白名单 `ANDROID_EXCLUDED = {"mimo","qwen"}` 固化这一口径，**白名单外新增平台必须同步进 assets，否则 `make check` / CI 直接报错**（详见 [android/README.md](android/README.md) 的「已知差异」）。
 
 ## 🍎 macOS 版（SwiftBar 菜单栏）
 
@@ -159,7 +161,7 @@ SDK 路径写在 `android/local.properties`（本机 `/opt/homebrew/share/androi
 
 ## 添加新平台
 
-**推荐用向导**：`python3 scripts/add-provider.py`。内置 **8 个平台模板**（OpenAI / DeepSeek / Anthropic / Kimi / 智谱 GLM / 阿里云百炼 / 硅基流动 / MiniMax），选模板即得完整配置；也可以手动填写。向导自动校验并提示 Keychain 命令。
+**推荐用向导**：`python3 scripts/add-provider.py`。内置 **8 个平台模板**（OpenAI / DeepSeek / Anthropic / Kimi / 智谱 GLM / 千问（qianwen CLI） / 硅基流动 / MiniMax），选模板即得完整配置；也可以手动填写。向导自动校验并提示 Keychain 命令。注意「千问（qianwen CLI）」走的是 `parser.type=command` 的 CLI 链路，与**阿里云百炼**（按量计费、余额在阿里云账号层面、需 BSS AccessKey 签名接口）是两条完全不同的链路，勿混用。
 
 也可以手动编辑**项目根目录**的 `providers.json`（`~/dev/token-eye/providers.json`），在 `providers` 数组中追加配置，无需改脚本，无需复制文件。脚本下次刷新时自动加载。
 
@@ -193,7 +195,7 @@ SDK 路径写在 `android/local.properties`（本机 `/opt/homebrew/share/androi
       "currency": "currency"
     }
   },
-  "display": { "unit": "$", "label": "余额" }
+  "display": { "label": "余额" }
 }
 ```
 
@@ -216,9 +218,7 @@ SDK 路径写在 `android/local.properties`（本机 `/opt/homebrew/share/androi
     "fields": {
       "model": "model_name",
       "intervalPct": "current_interval_remaining_percent",
-      "intervalStatus": "current_interval_status",
       "weeklyPct": "current_weekly_remaining_percent",
-      "weeklyStatus": "current_weekly_status",
       "intervalBoost": "interval_boost_permille",
       "weeklyBoost": "weekly_boost_permille",
       "resetMs": "remains_time"
@@ -226,7 +226,7 @@ SDK 路径写在 `android/local.properties`（本机 `/opt/homebrew/share/androi
     "modelLabels": { "general": "M2.7/M3 通用" },
     "showModels": ["general", "video"]
   },
-  "display": { "unit": "%", "label": "剩余" }
+  "display": { "label": "剩余" }
 }
 ```
 
@@ -259,7 +259,7 @@ SDK 路径写在 `android/local.properties`（本机 `/opt/homebrew/share/androi
 
 ## 配置字段速查
 
-三端（macOS / Linux / Android）读同一份 `providers.json`；用 VS Code 等编辑器打开时，`schema/providers.schema.json` 会自动补全与校验。
+Mac / Linux 读**项目根目录**的 `providers.json`，Android 读 `android/app/src/main/assets/providers.json`（**不是同一份文件**）。该副本由 `scripts/sync-android-assets.py` 在 Gradle `preBuild` 时自动生成（也可手工跑），不再需要手工拷贝；`make validate` / CI 用 `--check` 确认提交副本最新，`check-config-sync.py` 逐字段比对两份（白名单口径见「支持平台」）。改完根配置仍要重打 APK 重装，手机端才生效。用 VS Code 等编辑器打开时，`schema/providers.schema.json` 会自动补全与校验。
 
 ### 配置 → 界面位置
 
@@ -289,14 +289,14 @@ SDK 路径写在 `android/local.properties`（本机 `/opt/homebrew/share/androi
 | `enabled` | | `false` 临时禁用该平台，不删配置 |
 | `consoleUrl` | | 详情菜单末尾「→ 打开 X 控制台」跳转链接 |
 | `cacheTtl` | | 覆盖全局 `cache` 段的 TTL（秒） |
-| `refreshParam` | | 401 自愈脚本名（如 `refresh-mimo-cookie`），菜单出现「🔄 刷新 X Cookie」；**Android 版加载时剔除带此字段的平台**（Cookie 刷新无法移植） |
+| `refreshParam` | | 401 自愈脚本名（如 `refresh-mimo-cookie`），菜单出现「🔄 刷新 X Cookie」；Android 侧由 `scripts/check-config-sync.py` 的**显式白名单 `ANDROID_EXCLUDED = {"mimo","qwen"}` 按 id 剔除**（Cookie 刷新无法移植，不再按字段动态豁免），`ConfigLoader` 另保留一层按 `refreshParam` 字段的运行时防御过滤 |
 | `refreshInterval` | | 主动续期周期（秒，≥60），仅对配了 `refreshParam` 的平台生效 |
 | `alert` | | 告警阈值，见下方「余额告警」 |
 | `display.nameColor` | | 平台名称色，见上表 |
 | `display.currencySymbols` | | 货币代码 → 符号映射，如 `{"USD":"$","EUR":"€"}`；未配置时 USD→`$`、其余→`¥` |
 | `display.label` | | 仅 `status` parser 用：菜单栏显示的标签文字（如「免费」） |
 | `display.showDerived` | | `balance` 类是否显示派生统计（今日消耗，当日无消耗则不显示该行）。`false` = 只显示余额；快照历史仍照常累积，`dailySpendMax` / `daysLeft` 告警不受影响（`daysLeft` 只发通知，菜单不再展示「预计可用 ~N 天」） |
-| ~~`display.unit`~~ | | ⚠️ 当前版本**未读取**，保留仅为兼容旧配置 |
+| ~~`display.unit`~~ | | 已于 2026-11-10 从配置移除：单位由 `fields.currency` 决定（USD→`$`，其余→`¥`），用量行的 `%` 写死在渲染代码。Schema 保留键定义仅为兼容旧配置，三端代码均不读取 |
 
 ### parser 字段
 
@@ -315,7 +315,7 @@ SDK 路径写在 `android/local.properties`（本机 `/opt/homebrew/share/androi
 | | `windowLabels` | 窗口显示名，默认 `{"interval":"5h","weekly":"7d"}` |
 | | `pctDirection` | `remaining`（默认，源字段是剩余%，内部翻成已用%）或 `used`（源字段已是已用%） |
 | | `barLength` | 进度条格数，默认 20 |
-| | ~~`statusMap`~~ / ~~`fields.intervalStatus`~~ / ~~`weeklyStatus`~~ / ~~`intervalTotal`~~ / ~~`weeklyTotal`~~ | ⚠️ 当前版本**未读取**：状态一律按已用% 分档（<80% 正常 / 80–99% 临近耗尽 / ≥100% 耗尽），字段仅为兼容旧配置保留 |
+| | ~~`statusMap`~~ / ~~`fields.*Status`~~ / ~~`fields.*Total`~~ | 已于 2026-11-10 从配置与模板移除：状态一律按已用% 分档（<80 正常 / 80–99 临近 / ≥100 耗尽）。Schema 保留键定义仅为兼容旧配置，三端代码均不读取 |
 | `status` | `okField` / `okValue` | 判断 Key 有效性的字段路径与期望值；两者都留空则只看响应是否存在 |
 | `command` | `command` / `args` / `timeout` | 执行外部 CLI 并解析其 **stdout JSON**（见下方「命令型（command）」），`timeout` 默认 10 秒 |
 | | `fields.balance` / `fields.currency` | 与 `balance` 同口径，从 CLI 输出的 JSON 里取余额与货币 |
@@ -460,7 +460,7 @@ provider 配置 `consoleUrl`，详情菜单末尾出现「→ 打开 X 控制台
 | 错误分类 | 非零退出 → 先解 stderr/stdout JSON 的 `error.message`（千问的 `TOKEN_EXPIRED` 就在这里），取不到才用末行；非 JSON → 解析失败；超时 → 超时；命令不存在 → 「命令不存在」 |
 | 登录自愈 | `parser.recovery` 指向 `scripts/<名字>.py`，命令失败时自动运行：退出码 `0`=已恢复并当轮重跑命令 / `3`=已发起登录、等浏览器授权 / 其他=失败。冷却 ok 5 分钟、waiting 2 分钟、fail 15 分钟，点菜单「🔑 重新登录 X」或底部「刷新」可跳过 |
 | 缓存 | 默认 300 秒（同 `balance`）。CLI 有 2–3 秒启动开销，别把 `cacheTtl` 调太低 |
-| Android | **不支持**，加载配置时剔除该类型（同 `refreshParam`） |
+| Android | **不支持**：`scripts/check-config-sync.py` 用显式白名单 `ANDROID_EXCLUDED = {"mimo","qwen"}` 按 id 剔除（不按字段动态豁免），`ConfigLoader` 另保留 `parser.type == "command"` 的运行时防御过滤；**白名单外新增平台必须同步进 assets，否则 `make check` / CI 直接报错** |
 
 #### 千问登录自愈（`scripts/qwen-login.py`）
 
@@ -529,23 +529,20 @@ provider 配置 `consoleUrl`，详情菜单末尾出现「→ 打开 X 控制台
 
 脚本会从浏览器 Cookie 数据库提取并解密 4 个 Cookie（api-platform_ph / serviceToken / slh / userId），拼好更新到 Keychain `MIMO_PLATFORM_TOKEN`，并自动验证；鉴权错误时 Token Eye 也会自动触发该刷新（401 自愈）。
 
-### plan_usage 状态映射（parser.statusMap）
+### plan_usage 状态判定（已用% 口径）
 
-自定义状态码到文案的映射，默认 `{1: 可用, 2: 耗尽临近, 3: 耗尽}`：
+状态**不**由 `statusMap` 或接口状态码决定，三端统一按**已用%** 分档：
 
-```json
-{
-  "parser": {
-    "statusMap": {
-      "1": "可用",
-      "2": "耗尽临近",
-      "3": "耗尽"
-    }
-  }
-}
-```
+| 已用% | 状态 | 图标 |
+|---|---|---|
+| < 80 | 正常 | ✅ |
+| 80–99 | 临近耗尽 | ⚠️ |
+| ≥ 100 | 耗尽 | 🔴 |
 
-> ⚠️ **状态推导规则**：接口返回百分比字段（`intervalPct` / `weeklyPct`）时**优先按百分比推断状态**（≥20% 可用 / 10–20% 耗尽临近 / <10% 耗尽，与图标阈值一致）；`statusMap` 仅在无百分比字段的旧接口生效，此时 `total=0` 显示「无套餐」。MiniMax 新接口的 `total_count` 字段已废弃（恒为 0），不能用于判断有无套餐。
+源字段是「剩余%」时由 `parser.pctDirection`（默认 `remaining`）翻转为已用%；配 `used` 则直接用。
+多模型时取**全部模型的最差值**（`maxByOrNull { it.ordinal }`，别写 `minBy`）。
+
+`parser.statusMap` / `fields.intervalStatus` / `weeklyStatus` / `intervalTotal` / `weeklyTotal` 已于 2026-11-10 从 `providers.json`、Android assets 副本与 `provider-templates.json` 移除；JSON Schema 仅保留键定义（标 `deprecated`）以兼容旧配置，三端代码均不读取。
 
 ### 进度条长度（parser.barLength）
 
@@ -623,7 +620,7 @@ DeepSeek: ¥13.5
 - 数据文件：`holidays/2025.json`、`holidays/2026.json`，源自 [NateScarlet/holiday-cn](https://github.com/NateScarlet/holiday-cn)（逐条对照 gov.cn 公告，含调休上班日），随仓库分发、运行时不联网
 - 更新：每年公告后跑一次 `make holidays`（等价 `python3 scripts/update-holidays.py`，默认拉当年 + 次年，直连 GitHub + 国内镜像兜底）；只更新指定年份直接 `python3 scripts/update-holidays.py 2027`
 - 降级：数据文件缺失/损坏、或年份尚未公告 → 自动退回「周一至周五 + 时段」判定，不会报错、不影响余额显示
-- Android 版同源：把 `holidays/` 下的 `.json` 拷到 `android/app/src/main/assets/holidays/` 即可（Android 端只读 assets，不联网）。**`make check` 会校验两份是否一致，漏拷会直接报错**（`scripts/check-config-sync.py`）
+- Android 版同源：`make holidays` 更新根目录后，Gradle `preBuild` 会自动把 `holidays/*.json` 同步到 `android/app/src/main/assets/holidays/`（也可手工跑 `python3 scripts/sync-android-assets.py`；Android 端只读 assets，不联网）。**`make check` / CI 用 `--check` 校验副本是否最新，落后会直接报错**
 
 ### 货币符号（display.currencySymbols）
 
@@ -679,7 +676,7 @@ token-eye/
 ├── linux/                 ← 🐧 Linux (UKUI/麒麟) 托盘移植层（见 linux/README.md）
 ├── android/               ← 🤖 Android 版：Glance 小部件 + 告警（Kotlin + Compose，见 android/README.md）
 ├── Makefile               ← make install / test / check
-├── .github/workflows/     ← CI（语法/测试/Schema/配色/版本一致性）
+├── .github/workflows/     ← CI（bash 语法/ShellCheck/Python 编译/单元测试/Schema/跨端配置同步/配色/版本一致性/Android 单测）
 ├── AGENTS.md
 ├── DESIGN.md
 ├── CHANGELOG.md
@@ -693,14 +690,14 @@ token-eye/
 ```bash
 make install    # 安装/更新插件到 ~/SwiftBar/
 make test       # 单元测试（unittest，零依赖）
-make check      # 全部检查：语法 + 测试 + Schema + 跨端配置同步 + 配色对比度
+make check      # 全部检查：语法/版本号 + 单元测试 + Schema + 跨端配置同步 + 配色 + 节假日表覆盖当年
 make holidays   # 更新中国法定节假日/调休表（holidays/<年>.json，每年公告后跑一次）
 ```
 
-- **单元测试**：`swiftbar/token_eye.py` 的解析/告警/错误分类/缓存等核心函数全部可测，`tests/` 覆盖 197 个用例，`python3 -m unittest discover -s tests` 即可运行
+- **单元测试**：`swiftbar/token_eye.py` 的解析/告警/错误分类/缓存等核心函数全部可测，`tests/` 覆盖 290 个用例（2026-11-10 实测），`python3 -m unittest discover -s tests` 即可运行；Android 侧另有 73 个 Kotlin 单测（`cd android && ./gradlew :app:testDebugUnitTest`），已进 CI
 - **JSON Schema**：`schema/providers.schema.json` 描述配置结构；VS Code 等编辑器打开 `providers.json` 时自动补全与校验；`python3 scripts/validate-schema.py` 提供零依赖的运行时校验（脚本内置的轻量校验用于菜单栏提示）
-- **跨端配置同步**：`scripts/check-config-sync.py` 比对根 `providers.json` / `holidays/` 与 Android 的手工副本 `android/app/src/main/assets/`，**改根配置忘了同步会让 `make check` 与 CI 直接失败**（允许的差异：带 `refreshParam` 的平台——Cookie 刷新无法移植——与 `parser.type=command` 的平台——手机不能执行 CLI——在 Android 侧被剔除）
-- **CI**：GitHub Actions（`.github/workflows/ci.yml`）自动执行 bash 语法 + ShellCheck、Python 编译、单元测试、Schema 校验、跨端配置同步、配色对比度、版本一致性检查
+- **跨端配置同步**：`scripts/sync-android-assets.py` 由 Gradle `preBuild` 自动从根配置生成 Android assets 副本（`--check` 只读校验提交副本是否最新），`scripts/check-config-sync.py` 另做逐字段比对；**两份护栏都在 `make check` / CI 里，副本落后会直接失败**。剔除用显式白名单 `ANDROID_EXCLUDED = {"mimo","qwen"}` 按 id 列出（mimo＝Cookie 会话鉴权、qwen＝command CLI，手机无法移植），**不再按 `refreshParam` / `parser.type=command` 字段动态豁免**——白名单外新增平台必须同步进 assets，否则直接报「缺少 provider」；成功信息打印「已同步 M / 剔除 K」并断言 `根 N - 剔除 K == 已同步 M`。Android `ConfigLoader` 另保留一层按字段的运行时防御过滤，两层互补
+- **CI**：GitHub Actions（`.github/workflows/ci.yml`）两个 job —— `check` 执行 bash 语法（含 `linux/install.sh`） + ShellCheck（覆盖 SwiftBar 启动器与 Linux 安装脚本）、Python 编译（含 `linux/*.py` / `linux/scripts/*.py`）、单元测试、Schema 校验、**跨端配置同步**、配色对比度、版本号 / CHANGELOG / Android 派生一致性、节假日表覆盖当年；`android-test` 独立跑 Android Kotlin 单元测试（`./gradlew :app:testDebugUnitTest`）
 - **配色回归**：`scripts/check-colors.py` 保证全部颜色 WCAG AA ≥4.5:1
 - **排查**：`TOKEN_EYE_DEBUG=1` 输出调试日志到 `~/Library/Caches/token-eye/debug.log`
 

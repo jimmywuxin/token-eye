@@ -30,7 +30,7 @@ sys.path = [p for p in sys.path if not any(x in p for x in (".hermes", ".opencla
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-import sqlite3, subprocess, shutil, hashlib, pathlib, errno
+import sqlite3, subprocess, shutil, hashlib, pathlib, errno, json
 
 KEYCHAIN_SERVICE = "MIMO_PLATFORM_TOKEN"
 # 读不到库时要区分「权限不足」与「会话过期」：后者重登有效，前者重登多少次都没用。
@@ -227,16 +227,53 @@ BALANCE_UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.3
 
 
 def check_cookie(cookie_str):
-    """用给定 Cookie 调 balance API，返回 (http_code_str, body)。"""
+    """用给定 Cookie 调 balance API，返回 (http_code_str, body)。
+
+    凭证走 curl `--config -` 的 stdin，不进 argv —— 完整会话 Cookie 出现在
+    `ps` / 进程审计日志里等于把账号交出去。
+    """
+    headers = ("Cookie: " + cookie_str, "Accept: application/json",
+               "User-Agent: " + BALANCE_UA)
+    cfg = "\n".join(
+        'header = "' + str(h).replace("\\", "\\\\").replace('"', '\\"')
+        .replace("\n", " ").replace("\r", " ") + '"'
+        for h in headers) + "\n"
     r = subprocess.run(
         ["curl", "-s", "--max-time", "5", "-w", "|HTTP:%{http_code}",
-         "-H", "Cookie: " + cookie_str,
-         "-H", "Accept: application/json",
-         "-H", "User-Agent: " + BALANCE_UA,
-         BALANCE_URL],
-        capture_output=True, text=True)
+         "--config", "-", BALANCE_URL],
+        input=cfg, capture_output=True, text=True, timeout=12)
     body = r.stdout.rsplit("|HTTP:", 1)
     return (body[1] if len(body) > 1 else "?"), (body[0] if len(body) > 1 else "")
+
+
+# 与 token_eye.default_business_code_check / Linux 版 balance_body_ok 同口径：
+# 三个端口都不能让「HTTP 200 + 业务错误体」的 Cookie 被判有效。
+_OK_BUSINESS_CODES = ("0", "200", "ok", "success", "true", "none", "null")
+_BUSINESS_CODE_KEYS = ("code", "errcode", "error_code", "retcode")
+
+
+def cookie_is_valid(code, body):
+    """HTTP 200 ≠ 会话有效：还要有真实余额字段且没有业务错误码。
+
+    旧实现只判 HTTP 200，一个「HTTP 200 + {code:401}」的过期 Cookie 会被
+    写进 Keychain 并让自愈标记成功（30 分钟冷却），余额持续假绿。
+    """
+    if code != "200":
+        return False
+    try:
+        data = json.loads(body)
+    except (ValueError, TypeError):
+        return False
+    if not isinstance(data, dict):
+        return False
+    for key in _BUSINESS_CODE_KEYS:
+        val = data.get(key)
+        if val is not None and str(val).strip().lower() not in _OK_BUSINESS_CODES:
+            return False
+    if data.get("success") is False:
+        return False
+    payload = data.get("data")
+    return isinstance(payload, dict) and payload.get("balance") is not None
 
 
 def main():
@@ -254,9 +291,13 @@ def main():
         # 「在 A 浏览器重新登录 MiMo，但 B 浏览器还留着过期的完整 Cookie」
         # 时，脚本拿 B 的旧 Cookie 去验 → 401 → 报刷新失败，永远不会试到
         # A 的新 Cookie（2026-10-18 用户实报）。
-        code, _ = check_cookie(cookie_str)
-        if code != "200":
-            stale.append(f"{name}(HTTP {code})")
+        try:
+            code, body = check_cookie(cookie_str)
+        except Exception:
+            stale.append(f"{name}(校验异常)")
+            continue
+        if not cookie_is_valid(code, body):
+            stale.append(f"{name}(HTTP {code} 或业务失败)")
             continue
         found = (name, cookie_str)
         break
@@ -272,17 +313,21 @@ def main():
     browser_name, cookie_str = found
     print(f"提取成功（来源: {browser_name}）: 完整 Cookie 串 {len(cookie_str)} 字符")
 
+    # 残留风险：`security` CLI 只支持 -w <password> 从 argv 传值，无法走 stdin。
+    # 这是低频手动/自愈操作（不是每 30 秒的网络请求），且进程存活仅毫秒级；
+    # 若未来要彻底消除，需改用 Security.framework 的 SecItemAdd（pyobjc）。
     r = subprocess.run(
         ["security", "add-generic-password", "-U", "-s", KEYCHAIN_SERVICE, "-a", "", "-w", cookie_str],
-        capture_output=True, text=True)
+        capture_output=True, text=True, timeout=10)
     if r.returncode != 0:
         fail(f"错误: Keychain 更新失败: {r.stderr[:200]}")
     print(f"已更新 Keychain: {KEYCHAIN_SERVICE}")
     print("balance API: HTTP=200")
-    # 刷新成功 → 清掉 Token Eye 的错误短缓存（路径约定见 swiftbar/token_eye.py cache_path），
-    # 让下一次渲染（菜单点击自带的 refresh=true）立即重拉余额，不用等 10s 错误缓存过期
+    # 刷新成功 → 清掉 Token Eye 的错误短缓存（路径约定见 swiftbar/token_eye.py
+    # cache_path / run() 的 cache_dir）。缓存已从 /tmp 迁到 0700 私有目录。
     try:
-        os.unlink("/tmp/token-eye-cache-mimo.json")
+        os.unlink(os.path.expanduser(
+            "~/Library/Caches/token-eye/token-eye-cache-mimo.json"))
     except OSError:
         pass
     print("✅ Cookie 有效，Token Eye 余额显示已可用")

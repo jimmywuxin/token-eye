@@ -62,10 +62,14 @@ def main():
                 if r < 4.5:
                     failures.append(f"{p.get('id')}.nameColor[{mode}] {val} ({r:.2f}:1)")
         else:
-            # 旧版字符串写法：两种背景下都必须达标（保守检查）
+            # 旧版字符串写法：两种背景下都必须达标（保守检查）。
+            # 与深浅双套分支保持同一口径：每处检查都要计入 total 并打印明细，
+            # 否则「共检查 N 处」与明细行数对不上（历史计数 bug）。
             for mode, bg in BGS.items():
                 total += 1
                 r = contrast(nc, bg)
+                ok = "OK" if r >= 4.5 else "FAIL"
+                print(f"  {p.get('id'):9s} nameColor[{mode}] {nc}  = {r:5.2f}:1  {ok}")
                 if r < 4.5:
                     failures.append(f"{p.get('id')}.nameColor {nc} vs {bg} ({r:.2f}:1)")
 

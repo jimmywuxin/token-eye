@@ -1,5 +1,7 @@
 # 智谱 / 千问 费用与额度查询入口调研
 
+> ✅ **状态：已于 v0.23.16 落实**（智谱 `zhipu` → `balance` 型 + `api.envelope` 业务码校验；千问 `qwen` → `command` 型 parser 走 `qianwen` CLI）。下文「模板库里那两个 `status` 型都应升级」的结论已落地，保留作调研记录；实现与发版说明见 [CHANGELOG.md](../CHANGELOG.md) 的 0.23.16 段。
+>
 > 调研日期：2026-10-07　目的：为 token-eye 增加 `zhipu`、`qwen` 两个 provider 找到可用的数据源。
 > 结论先行：**两家都分成「按量付费余额」和「Coding Plan 订阅额度」两条完全不同的链路**，token-eye 现在模板库里那两个 `status` 型（只验 API 通不通）都应该升级。
 

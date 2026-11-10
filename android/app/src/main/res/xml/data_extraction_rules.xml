@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 纵深防御：allowBackup=false 已关闭备份/转移；此规则进一步显式排除加密密钥相关文件，
+     避免系统级云备份 / 设备迁移把已加密或已失效的 keyset 带走。 -->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="sharedpref" path="token_eye_secrets.xml" />
+        <exclude domain="sharedpref" path="__androidx_security_master_key_preference_set_.xml" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="sharedpref" path="token_eye_secrets.xml" />
+        <exclude domain="sharedpref" path="__androidx_security_master_key_preference_set_.xml" />
+    </device-transfer>
+</data-extraction-rules>

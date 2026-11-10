@@ -1,8 +1,10 @@
 package com.coffeelab.tokeneye.core
 
 import android.content.Context
+import android.util.Log
 import com.google.gson.Gson
 import java.io.File
+import java.io.IOException
 
 /**
  * 配置来源：**只有** `assets/providers.json`（随 APK 打包，版本与提交一一对应）。
@@ -81,15 +83,15 @@ object EnabledStore {
         }
     }
 
-    fun set(context: Context, id: String, enabled: Boolean) {
+    /**
+     * 写回覆盖表，返回是否成功。UI 层据此提示 / 回滚，不再静默吞掉写失败
+     * （旧实现吞异常后开关显示已关闭、重启又回退，用户完全无感知）。
+     */
+    fun set(context: Context, id: String, enabled: Boolean): Boolean {
         val map = load(context).toMutableMap()
         // 值为 true 时删掉条目，让「默认值 = 配置里的 enabled」这条规则保持唯一真源
         if (enabled) map.remove(id) else map[id] = false
-        try {
-            file(context).writeText(Gson().toJson(map))
-        } catch (_: Exception) {
-            // 写不进去也不影响刷新：本次内存状态已生效，下次启动回到配置默认值
-        }
+        return atomicWrite(file(context), Gson().toJson(map))
     }
 }
 
@@ -99,8 +101,14 @@ object SnapshotStore {
     private const val FILE = "snapshot.json"
     private val gson = Gson()
 
-    fun load(context: Context): Snapshot {
-        val f = File(context.filesDir, FILE)
+    fun load(context: Context): Snapshot = loadFromDir(context.filesDir)
+
+    fun save(context: Context, snapshot: Snapshot): Boolean =
+        saveToDir(context.filesDir, snapshot)
+
+    /** 纯文件 IO，可脱离 Context 单测 */
+    internal fun loadFromDir(dir: File): Snapshot {
+        val f = File(dir, FILE)
         if (!f.exists()) return Snapshot()
         return try {
             gson.fromJson(f.readText(), Snapshot::class.java) ?: Snapshot()
@@ -109,7 +117,30 @@ object SnapshotStore {
         }
     }
 
-    fun save(context: Context, snapshot: Snapshot) {
-        File(context.filesDir, FILE).writeText(gson.toJson(snapshot))
+    /** 原子写：临时文件 + renameTo，失败保留旧快照并返回 false */
+    internal fun saveToDir(dir: File, snapshot: Snapshot): Boolean =
+        atomicWrite(File(dir, FILE), gson.toJson(snapshot))
+}
+
+/**
+ * 原子写：先写同目录临时文件，再 renameTo 覆盖目标（POSIX 同目录 rename 为原子操作）。
+ * 捕获 IOException，失败时删除临时文件、保留旧文件，返回 false —— 不会留下半截 JSON
+ * 导致 load() 静默返回空快照、告警去重状态全丢。
+ */
+private fun atomicWrite(target: File, json: String): Boolean {
+    val tmp = File(target.parentFile, "${target.name}.tmp")
+    return try {
+        tmp.writeText(json)
+        if (tmp.renameTo(target)) {
+            true
+        } else {
+            tmp.delete()
+            runCatching { Log.w("TokenEye", "atomicWrite renameTo failed") }
+            false
+        }
+    } catch (e: IOException) {
+        tmp.delete()
+        runCatching { Log.w("TokenEye", "atomicWrite failed: ${e.javaClass.simpleName}") }
+        false
     }
 }

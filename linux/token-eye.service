@@ -4,12 +4,16 @@ After=graphical-session.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/python3 %h/dev/token-eye/linux/token-eye-tray.py
+# 模板快照（与 token-eye.service.in 一致）。install.sh 从 .in 用 sed 注入实际
+# PYTHON / LINUX_DIR 后写到 ~/.config/systemd/user/token-eye.service。
+# 请勿直接 cp 本文件：@PYTHON@ / @TRAY@ 未替换会明确起不来，不会像旧版
+# 硬编码路径那样在自定义 venv / 仓库位置时静默指向错误位置。
+ExecStart=@PYTHON@ @TRAY@
 Restart=on-failure
 RestartSec=5
-Environment=DISPLAY=:0
-Environment=WAYLAND_DISPLAY=wayland-0
-Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/%U/bus
+# 不覆盖 DISPLAY / WAYLAND_DISPLAY：由用户会话环境继承，硬编码会与实际会话不符。
+# %t 是 systemd 运行时目录（$XDG_RUNTIME_DIR = /run/user/UID）。
+Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=%t/bus
 
 [Install]
 WantedBy=graphical-session.target

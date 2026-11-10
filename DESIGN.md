@@ -43,8 +43,8 @@ LLM 余额/用量实时监控工具，覆盖三端：**macOS**（SwiftBar 菜单
         swiftbar/token_eye.py（单进程，并发）
    ┌──────────┬──────────┬──────────┬───────────┐
    │ 缓存读取  │ Keychain │ 并发 API │ 渲染输出   │
-   │ /tmp     │ security │ Thread- │ SwiftBar  │
-   │ cache    │ CLI      │ Pool    │ 格式菜单   │
+   │ 0700缓存 │ security │ Thread- │ SwiftBar  │
+   │ Caches/  │ CLI      │ Pool    │ 格式菜单   │
    └────┬─────┴────┬─────┴────┬────┴─────┬─────┘
         │          │          │          │
    providers.json  Keychain  各平台 API  历史/趋势
@@ -55,7 +55,7 @@ LLM 余额/用量实时监控工具，覆盖三端：**macOS**（SwiftBar 菜单
 **一次刷新周期**：
 
 1. 读取 `providers.json`，做运行时 schema 校验（配置错误给出中文菜单提示）
-2. 逐 provider 检查 `/tmp/token-eye-cache-{id}.json` 缓存，命中（未过期）则跳过 API
+2. 逐 provider 检查 `~/Library/Caches/token-eye/token-eye-cache-{id}.json` 缓存（Linux 为 `~/.cache/token-eye/`），命中后重跑业务码校验再决定是否跳过 API
 3. 从 Keychain 读取 API Key / Cookie
 4. `ThreadPoolExecutor` 并发请求各平台 API（curl，5s 超时）
 5. HTTP 错误分类（5xx 服务端 / 4xx 配置鉴权 / 网络失败 / 超时 / 解析失败）
@@ -70,9 +70,10 @@ LLM 余额/用量实时监控工具，覆盖三端：**macOS**（SwiftBar 菜单
 
 | 类型 | 语义 | 展示 |
 |------|------|------|
-| `balance` | 有余额 API（DeepSeek、MiMo） | 余额数字 + 货币符号 + 趋势线 + 今日消耗估算 |
-| `plan_usage` | 有按模型用量 API（MiniMax） | 模型列表 + 进度条 + 双窗口（5h/周）+ 重置倒计时 + 趋势线 |
-| `status` | 只验证 Key 有效性 | 自定义标签（可用/免费/…） |
+| `balance` | 有余额 API（DeepSeek、MiMo、智谱 GLM） | 余额数字 + 货币符号 + 今日消耗估算（近 7 天柱状图与「预计可用」已移除） |
+| `plan_usage` | 有按模型用量 API（MiniMax） | 模型列表 + 进度条 + 双窗口（5h/周）+ 重置倒计时 |
+| `status` | 只验证 Key 有效性 | 自定义标签（当前 5 个 provider 均未使用，保留类型） |
+| `command` | 无 HTTP 余额接口、只有官方 CLI（千问 `qianwen`） | 同 `balance` 字段映射；凭证由 CLI 自管，Android 侧显式剔除 |
 
 **扩展方式**：新增类型只需在 `parse_provider()` 加分支 + 更新 schema + 加测试；字段路径用 `.` 分隔的嵌套/数组索引（`resolve_field`），适配任意响应结构。`fields` 映射是平台差异的收敛点——**平台响应结构差异全部参数化到配置，不在代码里硬编码**。
 
@@ -80,7 +81,7 @@ LLM 余额/用量实时监控工具，覆盖三端：**macOS**（SwiftBar 菜单
 
 - 按 parser 类型默认 TTL：balance 300s / plan_usage 30s / status 60s，`cache` 段全局覆盖，`cacheTtl` 单 provider 覆盖
 - **失败请求 10s 短缓存**：连续失败不重复打 API（错误结果也缓存，短 TTL）
-- 缓存文件在 `/tmp`（重启即清，天然无残留）；键为 provider id
+- 缓存文件在 `~/Library/Caches/token-eye/`（Linux `~/.cache/token-eye/`）：目录 0700、文件 0600、`mkstemp` + `os.replace` 原子写；键为 provider id；成功缓存存完整 `fetch_result`（含 status / 业务码判定），命中时重跑纯校验，避免把错误体当成功复用。渲染入口另有 `render.lock`（`fcntl.flock`）防 30s 周期内进程堆积
 
 ### 4.3 HTTP 错误分类
 
@@ -145,7 +146,7 @@ LLM 余额/用量实时监控工具，覆盖三端：**macOS**（SwiftBar 菜单
 ## 5. 质量保障
 
 - **纯函数化核心**：`token_eye.py` 顶层只有常量与函数，`main()` 才读环境变量——解析/告警/分类/缓存全部可独立单测（187 个用例）
-- **CI**（GitHub Actions）：bash 语法 + ShellCheck、Python 编译、单元测试、Schema 校验、配色对比度、版本一致性（`bitbar.version` vs `VERSION`）
+- **CI**（GitHub Actions）：两个 job —— `check` 跑 bash 语法（含 `linux/install.sh`） + ShellCheck、Python 编译（含 `linux/*.py` / `linux/scripts/*.py`）、单元测试、Schema 校验、**跨端配置同步**（`check-config-sync.py`）、配色对比度、版本号 / CHANGELOG / Android 派生一致性、节假日表覆盖当年；`android-test` 跑 Android Kotlin 单元测试（`./gradlew :app:testDebugUnitTest`）。`make check` 与这些主要步骤对齐
 - **部署模型不变**：无论核心逻辑如何拆分，用户始终只复制 `token-eye.sh` 一个文件
 
 ## 6. 已知权衡与边界

@@ -6,7 +6,7 @@
     android:minResizeHeight="40dp"
     android:targetCellWidth="3"
     android:targetCellHeight="1"
-    android:updatePeriodMillis="1800000"
+    android:updatePeriodMillis="0"
     android:resizeMode="horizontal|vertical"
     android:previewImage="@drawable/ic_widget_logo"
     android:initialLayout="@layout/glance_default_loading_layout"

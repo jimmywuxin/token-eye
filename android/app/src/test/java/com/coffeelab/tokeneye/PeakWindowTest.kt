@@ -169,11 +169,14 @@ class PeakWindowTest {
 
     @Test
     fun result_keys() {
-        val info = PeakWindow.classify(at(10, 30), spec)
-        for (k in listOf("isPeak", "label", "windowStr", "secondsToSwitch", "tz")) {
-            // 通过 toString() 验证所有字段都被序列化（Info 是 data class）
-            assertTrue(info.toString().isNotEmpty())
-        }
+        // 逐字段断言（原实现循环变量未使用、只断言 toString().isNotEmpty() 永真，是空壳测试）
+        val info = PeakWindow.classify(at(10, 30), spec)  // 周一 10:30，落在 [9,12) 高峰
+        assertTrue(info.isPeak)
+        assertEquals("⚡高峰", info.label)
+        assertEquals("高峰", info.windowStr)
+        assertEquals(90 * 60, info.secondsToSwitch)      // 10:30 → 12:00 = 90min
+        assertEquals("Asia/Shanghai", info.tz)
+        assertFalse(info.isHoliday)
     }
 
     // ------------------------------------------------------------------

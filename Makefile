@@ -2,14 +2,17 @@
 #
 #   make install   安装/更新插件到 ~/SwiftBar/（只需复制 token-eye.sh）
 #   make test      单元测试
-#   make lint      bash 语法 + Python 编译检查
-#   make validate  JSON Schema + 跨端配置同步 + 配色对比度检查
-#   make check     全部检查（lint + test + validate）
+#   make lint      bash 语法 + Python 编译检查 + 版本号一致性 + ShellCheck（可用时）
+#   make validate  JSON Schema + 跨端配置同步 + 配色对比度 + 节假日表覆盖当年
+#   make check     全部检查（lint + test + validate），与 CI 主要步骤对齐
 #   make holidays  更新中国法定节假日/调休表（holidays/<年>.json，每年公告后跑一次）
 
 PYTHON ?= python3
 SWIFTBAR_DIR ?= $(HOME)/SwiftBar
-PY_FILES := swiftbar/token_eye.py scripts/check-colors.py scripts/check-config-sync.py scripts/refresh-mimo-cookie.py scripts/qwen-login.py scripts/validate-schema.py scripts/update-holidays.py
+# 覆盖 Mac / Linux / scripts 全部 Python 源文件（含 linux/*.py、linux/scripts/*.py、add-provider.py）
+PY_FILES := $(wildcard swiftbar/*.py scripts/*.py linux/*.py linux/scripts/*.py)
+# bash 语法检查覆盖启动器、Linux 安装脚本与版本号校验脚本
+SH_FILES := swiftbar/token-eye.sh linux/install.sh scripts/check-version.sh
 
 .PHONY: install test lint validate check all holidays
 
@@ -26,13 +29,22 @@ test:
 	$(PYTHON) -m unittest discover -s tests -v
 
 lint:
-	bash -n swiftbar/token-eye.sh
+	@for f in $(SH_FILES); do bash -n "$$f" || exit 1; done
 	$(PYTHON) -m py_compile $(PY_FILES)
+	@bash scripts/check-version.sh
+	@if command -v shellcheck >/dev/null 2>&1; then \
+		shellcheck -S warning swiftbar/token-eye.sh; \
+		shellcheck -S error linux/install.sh; \
+	else \
+		echo "⚠️  shellcheck 未安装，跳过 ShellCheck（CI 会执行）"; \
+	fi
 
 validate:
 	$(PYTHON) scripts/validate-schema.py
 	$(PYTHON) scripts/check-config-sync.py
+	$(PYTHON) scripts/sync-android-assets.py --check
 	$(PYTHON) scripts/check-colors.py
+	@$(PYTHON) -c 'import datetime, json, os; y = datetime.date.today().year; p = "holidays/%d.json" % y; assert os.path.isfile(p) and json.load(open(p, encoding="utf-8")).get("days"), "缺少当年节假日表 " + p; print("✅ holidays/%d.json 覆盖当年" % y)'
 
 check: lint test validate
 	@echo "✅ 全部检查通过"

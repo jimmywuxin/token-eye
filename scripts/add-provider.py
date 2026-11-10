@@ -73,15 +73,15 @@ def build_balance(display_name, keychain):
     balance = ask("余额字段路径", "balance")
     currency = ask("货币字段路径", "currency")
     label = ask("展示标签", "余额")
-    unit = ask("货币符号（如 ¥ $ €）", "¥")
     min_balance = ask("告警阈值 minBalance（回车跳过）", None)
+    # 货币符号由 fields.currency 决定（USD→$，其余 ¥），不再生成已废弃的 display.unit
     provider = {
         "id": "", "name": display_name, "keychainService": keychain,
         "api": {"url": url, "method": method,
                 "authHeader": auth_header, "authPrefix": auth_prefix},
         "parser": {"type": "balance",
                    "fields": {"balance": balance, "currency": currency}},
-        "display": {"unit": unit, "label": label},
+        "display": {"label": label},
     }
     if min_balance:
         provider["alert"] = {"minBalance": float(min_balance)}
@@ -100,13 +100,11 @@ def build_plan_usage(display_name, keychain):
     array_path = ask("模型数组字段路径", "model_remains")
     model = ask("模型名字段路径", "model_name")
     interval_pct = ask("5小时窗口剩余百分比字段", "current_interval_remaining_percent")
-    interval_status = ask("5小时窗口状态码字段", "current_interval_status")
     weekly_pct = ask("周窗口剩余百分比字段", "current_weekly_remaining_percent")
-    weekly_status = ask("周窗口状态码字段", "current_weekly_status")
     reset_ms = ask("重置倒计时字段（毫秒）", "remains_time")
     label = ask("展示标签", "剩余")
-    unit = ask("单位", "%")
     min_pct = ask("告警阈值 minPct（回车跳过）", None)
+    # 状态一律按已用% 分档：不再生成 statusMap / *Status 字段（2026-11-10 清理）
     provider = {
         "id": "", "name": display_name, "keychainService": keychain,
         "api": {"url": url, "method": method,
@@ -117,15 +115,12 @@ def build_plan_usage(display_name, keychain):
             "fields": {
                 "model": model,
                 "intervalPct": interval_pct,
-                "intervalStatus": interval_status,
                 "weeklyPct": weekly_pct,
-                "weeklyStatus": weekly_status,
                 "resetMs": reset_ms,
             },
-            "statusMap": {"1": "可用", "2": "耗尽临近", "3": "耗尽"},
             "barLength": 20,
         },
-        "display": {"unit": unit, "label": label},
+        "display": {"label": label},
     }
     if min_pct:
         provider["alert"] = {"minPct": int(min_pct)}

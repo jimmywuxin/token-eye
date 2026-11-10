@@ -44,7 +44,7 @@ object ResultParser {
         val available = (resolveField(data, "is_available")).asBoolOrNull() ?: true
         val balanceNum = rawBalance.asDoubleOrNull()
         val balanceStr = balanceNum?.let { String.format("%.2f", it) } ?: rawBalance.asStringOrNull() ?: "?"
-        val minBalance = resolveMinBalance(p, globalAlerts)
+        val minBalance = resolveMinBalance(p, globalAlerts, data)
 
         val status = when {
             !available -> Status.WARN
@@ -137,9 +137,11 @@ object ResultParser {
             return ProviderResult(p.id, p.name, Status.ERR, "无可用模型", consoleUrl = p.consoleUrl)
         }
 
-        // 取主模型（showModels 第一个或首个）作为小部件摘要
+        // 摘要仍以主模型为准（小部件只展示一行），但状态/告警基准必须遍历全部模型取最差，
+        // 与 Mac 侧 token_eye.py:759-812 一致：多模型平台任一个耗尽都要整体判红，
+        // 否则「主模型正常、副模型已耗尽」会漏报、告警基准偏低。
         val mainModel = showModels?.firstOrNull { it in byModel } ?: byModel.keys.first()
-        val (mainLabel, mainWindows) = byModel[mainModel]!!
+        val (_, mainWindows) = byModel[mainModel]!!
         val (interval, weekly) = mainWindows
         val intervalUsed = interval.rawPct?.let(toUsed)
         val weeklyUsed = weekly.rawPct?.let(toUsed)
@@ -153,10 +155,12 @@ object ResultParser {
             else -> Status.OK
         }
 
-        // 取最差：Status 枚举序为 OK<WARN<ERR< NOKEY，ordinal 越大越差 → 必须 maxBy
-        // （曾误用 minBy，等于取最好：interval 正常 + weekly 无数据时整体判 OK 显示绿色）
-        val worst = listOf(usedStatus(intervalUsed), usedStatus(weeklyUsed))
-            .maxByOrNull { it.ordinal } ?: Status.ERR
+        // 全局最差：遍历 byModel 每个模型的两个窗口，取 ordinal 最大的状态
+        // （Status 序 OK<WARN<ERR<NOKEY，ordinal 越大越差 → maxByOrNull）
+        val worst = byModel.values.flatMap { (_, windows) ->
+            val (iv, wk) = windows
+            listOf(usedStatus(iv.rawPct?.let(toUsed)), usedStatus(wk.rawPct?.let(toUsed)))
+        }.maxByOrNull { it.ordinal } ?: Status.ERR
 
         val summaryParts = mutableListOf<String>()
         intervalUsed?.let { summaryParts.add("$intervalLabel 剩${formatPct(100 - it)}%") }
@@ -174,8 +178,12 @@ object ResultParser {
             }
         }
 
-        // 告警基准：与 Mac 侧一致取「已用 %」，主模型 interval 为准（无数据按 0 已用 → 必然触发告警）
-        val usedForAlert = intervalUsed ?: 0.0
+        // 告警基准：所有模型、所有窗口里「已用 %」最大者（全局最差），与 worst 同源，
+        // 不再只看主模型的 interval —— 否则副模型耗尽时 usedPct 偏低、阈值告警不触发。
+        val usedForAlert = byModel.values.maxOf { (_, windows) ->
+            val (iv, wk) = windows
+            maxOf(iv.rawPct?.let(toUsed) ?: 0.0, wk.rawPct?.let(toUsed) ?: 0.0)
+        }
         val minPct = p.alert?.minPct ?: resolveMinPct(p, globalAlerts)
         val status = if (minPct != null && usedForAlert >= minPct) Status.WARN else worst
 
@@ -201,9 +209,29 @@ object ResultParser {
         )
     }
 
-    /** 阈值链：provider.alert.minBalance > 全局 alerts.{id}.minBalance > parser.defaultMinBalance */
-    private fun resolveMinBalance(p: Provider, globalAlerts: Map<String, AlertSpec>): Double? =
-        p.alert?.minBalance ?: globalAlerts[p.id]?.minBalance ?: p.parser.defaultMinBalance
+    /**
+     * 余额阈值优先级链（解析与告警共用的唯一真源，对齐 Mac 侧 resolve_alert_threshold）：
+     *  1. parser.fields.alertThreshold 指向的 API 响应字段（非空数值，自动跟随平台规则）
+     *  2. provider.alert.minBalance
+     *  3. 全局 alerts.{id}.minBalance（Android 侧独有的一层）
+     *  4. provider.parser.defaultMinBalance
+     * 全都不配 → null（不告警）。
+     *
+     * [data] 为本轮 API 响应；告警判定阶段同样传入，保证解析与告警两处口径一致。
+     */
+    fun resolveMinBalance(
+        p: Provider,
+        globalAlerts: Map<String, AlertSpec>,
+        data: JsonObject?,
+    ): Double? {
+        val thresholdPath = p.parser.fields["alertThreshold"]
+        if (!thresholdPath.isNullOrBlank() && data != null) {
+            resolveField(data, thresholdPath).asDoubleOrNull()?.let { return it }
+        }
+        return p.alert?.minBalance
+            ?: globalAlerts[p.id]?.minBalance
+            ?: p.parser.defaultMinBalance
+    }
 
     private fun resolveMinPct(p: Provider, globalAlerts: Map<String, AlertSpec>): Double? =
         p.alert?.minPct ?: globalAlerts[p.id]?.minPct

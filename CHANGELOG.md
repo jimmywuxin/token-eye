@@ -1,5 +1,76 @@
 # Changelog
 
+## [Unreleased]
+
+> 下次改动攒在这里；发版时把本节固化成版本章节（格式见下方 0.24.0）。
+
+## [0.24.0] - 2026-11-10
+
+> 全项目审查整改批次（覆盖代码质量、架构、安全、性能、错误处理、测试覆盖与文档）。三端 P0 全部闭环 + 护栏/文档校准 + 死配置清理。
+> 属行为分界且手机端需重装 APK，按 AGENTS.md「两种必须升版本的情形」升 minor，不再攒在 Unreleased。
+
+### 正确性：三端假绿闭环（P0-1）
+- **Mac/Linux `swiftbar/token_eye.py`**：`parse_provider` 的 balance/关键字段缺失或不可解析 → error 态并清成功缓存（旧实现固定 `✅ ¥?` 假绿）；新增 `default_business_code_check` 对**未配 `api.envelope`** 的平台也做保守业务码校验（`code`/`errcode`/`error_code`/`retcode`）；成功缓存改存完整 `fetch_result`，命中时重跑校验；`plan_usage` 百分比支持浮点字符串（`"85.5"` 不再被 `int()` 吞成 0 → 假红）
+- **Android `ApiClient.kt`**：补 `defaultBusinessCodeCheck`（if/else 分流，避免 Elvis 在 envelope 通过时误跑）；畸形 code / 空 msg / 非 JsonObject 响应判失败；URL 非法归新增 `ErrorKind.CONFIG`；对外文案脱敏。`ResultParser.kt` balance 缺失保持 ERR、plan_usage 取全部模型最差、阈值链抽 `resolveMinBalance` 并补 `parser.fields.alertThreshold` 级
+- **两份 `refresh-mimo-cookie.py`**：统一「HTTP 200 + body 无业务错误码 + `data.balance` 存在」才写凭证并打成功标记；失败结论走 stdout（含重新登录指引）
+
+### 安全：凭证与缓存（P0-2）
+- `fetch_api` 与两份刷新脚本改 `curl --config -` 从 stdin 传 header，API Key / MiMo 会话 Cookie **不再进 argv**；`security -w` 残留已在代码注明（CLI 不支持 stdin，低频路径）
+- 缓存迁 `~/Library/Caches/token-eye`（Linux `~/.cache/token-eye`）：0700 目录 + 0600 `mkstemp` + `os.replace` 原子写 + 脏值当 miss；`load_cache` 校验结构
+- 新增 `sanitize_menu_text` / `sanitize_param_value` / `safe_href` 拦截菜单参数注入；`_as_applescript_literal` 与启动器 `notify()` 完整转义；`recover` 脚本名过 `^[A-Za-z0-9_-]+$`；Linux `setup-keys.py` 密钥输入改 `getpass`
+
+### Linux / Android 平台修复（P0-3 / P0-7 / P0-8）
+- 新建 `linux/keyring_common.py`：`unlock_and_verify()` 一律用 `is_locked()` 复核、刻意忽略 `unlock()` 返回值，消除三个脚本对返回值语义的相反解读（不再依赖真机版本）
+- `linux/install.sh`：备份带时分秒 + `cp -n`、删除前打印清单、只删两个已知 autostart 模板、systemctl 失败逐条告警；新建 `token-eye.service.in` 由 sed 注入 `@PYTHON@`/`@TRAY@`，删 DISPLAY/WAYLAND 硬编码、DBUS 改 `%t/bus`；补依赖检查与 `linux/requirements.txt`
+- Android：`MainActivity` 初始加载全切 IO、`RefreshEngine` 真并发 + 密钥失效可见错误行、`RefreshWorker` 异常轮也刷小部件 + 连续失败 1→2→4→8→15 分钟递增退避、`SecretStore` 单例 + 失效重建、`SnapshotStore`/`EnabledStore` 原子写；proguard 收窄并保留 Signature、dataExtractionRules、`updatePeriodMillis=0`
+
+### 性能与渲染（P0-9 / P1 / P2）
+- `run()` 加 `fcntl.flock` 单实例锁（force 跳过）、`as_completed(timeout=25)` 总上限；`check_latest_version()` 改只读 24h 缓存，网络刷新走后台线程 + 版本号正则白名单（Mac/Linux 菜单主线程零网络阻塞）
+- 命中成功缓存不再写历史；`days_left`/`minBalance`/`ttl` 脏值容错；curl 退出码 28/6/7/35/60 分类；`parse_provider` 改传 aware datetime（修非北京时间系统峰谷判定错位）
+- 修既存 flaky：`test_days_left` / `test_days_left_alert` 历史首点写死 `-86400`，内部重取时间跨 1 秒即排除边界点，改 `-86000`
+
+### 配置清理（推翻 2026-10-05「死配置不动」拍板）
+- 从 `providers.json`、Android assets 副本、`provider-templates.json`、`add-provider.py` 向导、README 示例与测试 fixture 中移除 `display.unit` / `parser.statusMap` / `fields.*Status` / `fields.*Total` 六类死键，以及空转的 `cache.status` 与永不生效的根 `alerts` 段
+- Schema 仅把这些键标 `deprecated` 保留定义以兼容旧配置；**`barLength` 保留**（`token_eye.py` 仍在读）
+
+### 护栏：跨端配置同步（P0-6）
+- **`scripts/check-config-sync.py` 白名单改显式常量 `ANDROID_EXCLUDED = {"mimo","qwen"}`**：旧实现按 `refreshParam` / `parser.type=command` 字段动态剔除，任何新增的这两类平台（或既有平台被误改成这两类）会被静默视为「Android 理应没有」而绕过比对、CI 全绿。现在白名单外一律逐字段比对；白名单内平台误入 assets 也会报错
+- **成功信息改用真实计数**：打印「已同步 M / 剔除 K」并断言 `根 N - 剔除 K == 已同步 M`（旧版取根目录全量计数，实测打印「5 个 provider」但 assets 只有 3 个）。`check()` 之外新增 `sync_counts()` 供 `main()` 取数
+- `tests/test_config_sync.py` 把原「动态豁免」两个用例改为覆盖显式白名单，补「白名单外新增 provider 未同步必须报错」「白名单内平台误入 assets / 根节点误删报错」「计数不变式」等用例（17 例）
+- **新增 2027 节假日表**：`holidays/2027.json` 与 `android/app/src/main/assets/holidays/2027.json` 逐字节一致（上游已公告，34 条 / 放假 29 / 调休 5，未伪造数据）
+
+### 节假日护栏（P0-5）
+- **`scripts/update-holidays.py` 不再「失败也 exit 0」**：区分「上游尚未公告（`days` 为空，打印 `未生成 <年>.json（未公告）` 警告、可 exit 0）」与「下载全部失败 / 数据校验失败（必须非 0）」；必需年份既无上游数据又无本地文件也返回非 0
+- `validate()` 补 `data["year"] == year` 与所有 `date` 前缀属于该年，拒绝错年份 / 投毒数据写入；`main()` 结束打印 `holidays/` 实际生成 / 已存在文件清单
+- `tests/test_peak_window.py` 补「当年节假日表存在且 `days` 非空」断言（不硬断言次年，可能尚未公告）
+
+### CI / Makefile 覆盖（P0-4）
+- **`.github/workflows/ci.yml` 新增独立 `android-test` job**：`setup-java@v4`（temurin 21）+ `setup-android@v3` + `setup-gradle@v4`，运行前生成 `android/local.properties`（`sdk.dir=$ANDROID_HOME`），跑 `./gradlew :app:testDebugUnitTest --no-daemon`——Android 51 例 Kotlin 单测从此进 CI
+- 现有 job 扩到 `python3 -m py_compile swiftbar/*.py scripts/*.py linux/*.py linux/scripts/*.py`、`bash -n linux/install.sh`；ShellCheck 覆盖 `swiftbar/token-eye.sh` 与 `linux/install.sh`（后者 `-S error` 容忍历史风格问题，避免 CI 必红）
+- 新增「版本号一致性 / CHANGELOG / Android 派生」与「节假日表覆盖当年」两步校验
+
+### Makefile 与 CI 对齐
+- `PY_FILES` 改 `$(wildcard swiftbar/*.py scripts/*.py linux/*.py linux/scripts/*.py)`（补齐 `linux/*.py`、`linux/scripts/*.py`、`scripts/add-provider.py`）
+- `make lint` 增加 `linux/install.sh` / `scripts/check-version.sh` 的 `bash -n` 与可用时 ShellCheck（缺失则跳过）
+- **新增 `scripts/check-version.sh`**：校验 `token_eye.py` VERSION ↔ `token-eye.sh` bitbar.version ↔ `CHANGELOG.md` 条目，并静态确认 Android `build.gradle.kts` 仍从 `token_eye.py` 读取 VERSION；挂到 `make lint` 与 CI
+- `make check` 现在覆盖当年节假日表；`make -n check` 与 CI 主要步骤对齐
+
+### Schema 收紧 / 计数修复（P1-3）
+- `schema/providers.schema.json` 全部 13 处 `additionalProperties: true` 收紧为 `false`（含 `provider` / `api` / `parser` / `alert`），拼错字段不再静默进生产；`provider` 用 `if/then/else` 表达「`parser.type == "command"` 必填 `parser.command`，否则必填 `api.url` 与 `keychainService`」
+- `scripts/validate-schema.py` 补最小 `if/then/else` 条件必填支持（if 子模式只用于选分支、不上报错误），现有 5 个 provider 仍全部通过
+- `scripts/check-colors.py` 旧字符串 `nameColor` 分支补齐明细打印，与「共检查 N 处」计数口径一致
+
+### 文档
+- `README.md` 支持平台表补智谱 GLM / 千问（共 5 个），Android 范围改为 3 个并说明 mimo / qwen 剔除原因；模板名「阿里云百炼」→「千问（qianwen CLI）」；「三端读同一份 `providers.json`」改为根目录 / assets 手工副本 + `check-config-sync.py` 保证一致；CI 描述补跨端配置同步与 ShellCheck
+- `DESIGN.md` CI 清单补跨端配置同步；`AGENTS.md` 补跨端口径铁律（字段缺失＝错误态 / envelope 校验 / 取最差状态，以共享契约测试为准）与显式白名单口径；`docs/provider-research-20261007.md` 文首标注 0.23.16 已落实
+
+### 护栏：跨端共享契约与构建期同步（P1-1 / 推翻「手工副本」拍板）
+- 新增 `tests/fixtures/cross_platform_cases.json` 作为三端口径**唯一真源**（14 组用例：业务码放行/拦截、balance 字段缺失、不可解析值）；Mac/Linux 由 `tests/test_contract.py`、Android 由 `ContractTest.kt` 消费同一份并进 CI。AGENTS 铁律从「必须有共享契约」改为「已落地」
+- 新增 `scripts/sync-android-assets.py`：Gradle `preBuild` 自动从根配置按显式白名单生成 Android assets 副本（内容无变化不写文件，不弄脏工作区）；`--check` 只读校验进 `make validate` / CI；`tests/test_android_assets_sync.py` 钉住生成脚本与 `check-config-sync.py` 的 `ANDROID_EXCLUDED` 同值。**手工拷贝不再是必需动作**，改完根配置仍要重打 APK 重装
+- `days_left()` 改为仅在配了 `alert.daysLeft` 时计算（当前 5 个 provider 均未配，省每轮全量读盘）；修 `ContractTest.kt` 的 nullable 编译告警
+- README 支持平台表次序对齐 `providers.json` 数组（MiMo 第三、智谱 GLM 第四）；用例数校准
+- 测试规模：Python **290 例**、Android **73 例**，全绿
+
 ## [0.23.17] - 2026-11-05
 
 ### 新增（千问登录自动恢复）

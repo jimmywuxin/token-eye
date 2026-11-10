@@ -16,16 +16,21 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Bash 语法检查
-        run: bash -n swiftbar/token-eye.sh
+        run: |
+          bash -n swiftbar/token-eye.sh
+          bash -n linux/install.sh
+          bash -n scripts/check-version.sh
 
       - name: ShellCheck
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq shellcheck >/dev/null 2>&1
           shellcheck -S warning swiftbar/token-eye.sh
+          # linux/install.sh 有历史风格问题，仅把 error 级当失败，避免 CI 因遗留风格必红
+          shellcheck -S error linux/install.sh
 
       - name: Python 编译检查
-        run: python3 -m py_compile swiftbar/token_eye.py scripts/*.py
+        run: python3 -m py_compile swiftbar/*.py scripts/*.py linux/*.py linux/scripts/*.py
 
       - name: 单元测试
         run: python3 -m unittest discover -s tests -v
@@ -34,16 +39,47 @@ jobs:
         run: python3 scripts/validate-schema.py
 
       - name: 跨端配置同步（根配置 ↔ Android assets 副本）
-        run: python3 scripts/check-config-sync.py
+        run: |
+          python3 scripts/check-config-sync.py
+          python3 scripts/sync-android-assets.py --check
 
       - name: 配色对比度检查（WCAG AA ≥4.5:1）
         run: python3 scripts/check-colors.py
 
-      - name: 版本号一致性（token-eye.sh vs token_eye.py）
+      - name: 版本号一致性 / CHANGELOG / Android 派生
+        run: bash scripts/check-version.sh
+
+      - name: 节假日表覆盖当年
         run: |
-          PY_VER="$(sed -n 's/^VERSION = "\([0-9.]*\)"/\1/p' swiftbar/token_eye.py | head -1)"
-          SH_VER="$(sed -n 's/.*<bitbar.version>v\([0-9.]*\)<\/bitbar.version>.*/\1/p' swiftbar/token-eye.sh | head -1)"
-          echo "token_eye.py VERSION        = $PY_VER"
-          echo "token-eye.sh bitbar.version = $SH_VER"
-          test -n "$PY_VER"
-          test "$PY_VER" = "$SH_VER"
+          YEAR="$(python3 -c 'import datetime; from zoneinfo import ZoneInfo; print(datetime.datetime.now(ZoneInfo("Asia/Shanghai")).year)' 2>/dev/null || date +%Y)"
+          echo "当年 = $YEAR"
+          test -s "holidays/${YEAR}.json"
+          python3 -c "import json; d=json.load(open('holidays/${YEAR}.json', encoding='utf-8')); assert d.get('year') == int('${YEAR}') and d.get('days'), '当年节假日表 days 为空或 year 不符'; print('✅ holidays/${YEAR}.json 覆盖当年（%d 条）' % len(d['days']))"
+
+  android-test:
+    name: android unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      # CI 无 local.properties（本机路径，未入库），Gradle 需要它才能定位 SDK
+      - name: 生成 android/local.properties
+        run: |
+          SDK_DIR="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
+          test -n "$SDK_DIR"
+          echo "sdk.dir=$SDK_DIR" > android/local.properties
+
+      - name: Android 单元测试（51 例 Kotlin）
+        run: cd android && ./gradlew :app:testDebugUnitTest --no-daemon

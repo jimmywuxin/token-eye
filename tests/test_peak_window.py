@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """peak_window 单元测试（unittest，零依赖）。"""
+import json
 import os
 import sys
 import unittest
@@ -243,6 +244,20 @@ class TestHolidayTable(unittest.TestCase):
         # 调休上班的周末 → False（不是放假）
         self.assertIs(table.get("2026-09-20"), False, "2026-09-20 应为调休上班日")
         self.assertIs(table.get("2026-02-14"), False)
+
+    def test_current_year_table_exists_and_nonempty(self):
+        """护栏：当年节假日表必须存在且 days 非空（公告后跑 make holidays）。
+
+        不硬断言次年（如 2027）一定存在——它可能尚未公告，由 CI 的年份护栏单独兜底；
+        这里只钉住「当年不能缺表」，避免 242 个测试全绿却漏掉当年数据缺失。
+        """
+        year = datetime.now().year
+        path = os.path.join(REPO_ROOT, "holidays", f"{year}.json")
+        self.assertTrue(os.path.isfile(path), f"缺少当年节假日表 holidays/{year}.json")
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+        self.assertEqual(data.get("year"), year, f"holidays/{year}.json 的 year 字段不符")
+        self.assertTrue(data.get("days"), f"holidays/{year}.json 的 days 为空")
 
     def test_missing_dir_yields_empty_table(self):
         self.assertEqual(pw.load_holidays(["/nonexistent-token-eye-xyz"], (2026,)), {})

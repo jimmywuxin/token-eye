@@ -39,7 +39,7 @@ token-eye/
 │   └── test_peak_window.py     ← 峰/谷时段 + 节假日单测
 ├── providers.json         ← 核心配置（JSON），定义所有平台
 ├── Makefile               ← make install / test / check / holidays
-├── .github/workflows/ci.yml    ← CI（语法/测试/Schema/配色/版本一致性）
+├── .github/workflows/ci.yml    ← CI（语法/ShellCheck/编译/测试/Schema/跨端配置同步/配色/版本一致性/Android 单测）
 ├── linux/                ← Linux 版（独立实现）
 ├── android/              ← Android 版（Kotlin + Compose + Glance，详见 android/README.md）
 │   ├── app/src/main/java/com/coffeelab/tokeneye/
@@ -73,7 +73,7 @@ make install              # 或手动：cp swiftbar/token-eye.sh ~/SwiftBar/ && 
 ### 质量保障（提交前跑）
 ```bash
 make test                 # 单元测试（unittest，零依赖）
-make check                # 全部检查：语法 + 单元测试 + Schema + 跨端配置同步 + 配色对比度
+make check                # 全部检查：语法/版本号 + 单元测试 + Schema + 跨端配置同步 + 配色 + 节假日表覆盖当年
 make validate             # 仅 Schema + 跨端配置同步 + 配色
 ```
 
@@ -106,9 +106,9 @@ $HOME/dev/token-eye/swiftbar/token_eye.py（核心逻辑，单进程，并发）
 $HOME/dev/token-eye/providers.json（读取配置）
     ↓
 Python 核心逻辑：
-  1. 检查 /tmp/token-eye-cache-{id}.json 缓存，命中则跳过 API
+  1. 检查 `~/Library/Caches/token-eye/token-eye-cache-{id}.json`（Linux 为 `~/.cache/token-eye/`）缓存，命中则跳过 API；目录 0700、文件 0600、原子写
   2. 从 Keychain 读取各平台 API Key
-  3. 并发调用各平台 API（ThreadPoolExecutor）
+  3. 并发调用各平台 API（ThreadPoolExecutor，整轮 25s 上限，超时未完成的平台合成 timeout 结果）
   4. HTTP 错误分类（5xx/4xx/网络/超时）
   5. 解析响应数据，balance 类检查告警阈值并统计今日消耗
   6. 输出 SwiftBar 格式菜单（含控制台跳转链接）
@@ -126,7 +126,7 @@ Python 核心逻辑：
 - **balance** — 余额型，适用于 DeepSeek、MiMo（Cookie 鉴权）等有余额 API 的平台
 - **plan_usage** — 用量型，适用于 MiniMax 等有按模型用量 API 的平台
 - **status** — 状态型，适用于只验证 Key 有效性的平台
-- **command** — 命令型，适用于**没有 HTTP 余额接口、只有官方 CLI** 的平台（如千问 `qianwen` CLI）。`parser.command` + `parser.args` 执行命令、解析其 JSON 输出，字段映射复用 `balance` 的 `fields.balance` / `fields.currency`。**无需 `api` / `keychainService`**（凭证由 CLI 自己管）。不走 shell，参数以数组传递；`timeout` 默认 10 秒。**Android 侧无法执行外部命令，加载时剔除该类型**（同 `refreshParam` 的处理）
+- **command** — 命令型，适用于**没有 HTTP 余额接口、只有官方 CLI** 的平台（如千问 `qianwen` CLI）。`parser.command` + `parser.args` 执行命令、解析其 JSON 输出，字段映射复用 `balance` 的 `fields.balance` / `fields.currency`。**无需 `api` / `keychainService`**（凭证由 CLI 自己管）。不走 shell，参数以数组传递；`timeout` 默认 10 秒。**Android 侧无法执行外部命令**：主护栏是 `check-config-sync.py` 的显式白名单 `ANDROID_EXCLUDED = {"mimo","qwen"}`（按 id 剔除，白名单外新增平台必须同步进 assets）；`ConfigLoader` 另保留一层按 `parser.type == "command"` / `refreshParam` 字段的运行时防御过滤，两层互补，别只靠字段动态豁免（见「改配置必须同步 Android 副本」）
 
 ### 全局可选字段
 
@@ -144,7 +144,7 @@ Python 核心逻辑：
 - `api.headers` — 额外请求头（如 OpenAI Organization、User-Agent）
 - `api.envelope` — 业务码校验 `{codePath, okCodes, msgPath}`：国内平台常用 `HTTP 200 + body.code` 表达错误（智谱无效 Key 返回 `code:401`），不配就会渲染成「✅ ¥?」假绿。配了以后非 `okCodes` 的响应走鉴权错误分支，显示平台原文。三端口径一致（Mac `apply_envelope` / Android `envelopeError`）；响应缺该字段时放行
 - `parser.barLength` — 进度条长度，默认 20
-- ~~`parser.statusMap`~~ / ~~`parser.fields.intervalStatus` / `weeklyStatus`~~ / ~~`parser.fields.intervalTotal` / `weeklyTotal`~~ — **已废弃，`token_eye.py` 与 Android `ResultParser` 都不读取**：老接口的「状态码→文案映射」与「按次数算百分比」两条路径在 v0.13 统一为百分比口径时就断了，配置键与 JSON Schema 保留只为兼容旧配置，**别当功能用、也别接线**。现行口径：状态一律按**已用%** 分档（<80 正常 / 80–99 临近 / ≥100 耗尽，Mac 侧常量 `USED_WARN_PCT` / `USED_OVER_PCT`，Android 侧同值硬编码）；余额单位来自接口 `fields.currency`（USD→`$`，其余 `¥`），用量行的 `%` 写死在渲染代码里 → **`display.unit` 同样不读取**（Android 侧已从 `DisplaySpec` 删掉该字段），`display.label` 只有 `status` parser 会用
+- ~~`parser.statusMap`~~ / ~~`parser.fields.intervalStatus` / `weeklyStatus`~~ / ~~`parser.fields.intervalTotal` / `weeklyTotal`~~ / ~~`display.unit`~~ — **已从 `providers.json`、Android assets 副本、`provider-templates.json` 移除（2026-11-10）**：老接口的「状态码→文案映射」「按次数算百分比」「自定义单位」三条路径在 v0.13 统一为百分比口径时就断了，三端代码零读取。JSON Schema 仅把这些键标 `deprecated` 保留定义，让旧配置还能通过校验，**别当功能用、也别接线、别再加回配置**。现行口径：状态一律按**已用%** 分档（<80 正常 / 80–99 临近 / ≥100 耗尽，Mac `USED_WARN_PCT` / `USED_OVER_PCT`，Android 同值）；余额单位来自接口 `fields.currency`（USD→`$`，其余 `¥`），用量行的 `%` 写死在渲染代码里；`display.label` 只有 `status` parser 会用。**`parser.barLength` 不在其列**（`token_eye.py` 仍在读，进度条格数）
 - `display.nameColor` — 平台名颜色；支持深浅双套 `{"dark":"#xxx","light":"#xxx"}`，随系统外观切换（注意红绿色弱对比度）
 - `display.showDerived` — `balance` 类是否显示派生统计（今日消耗），默认 `true`；`false` 只显示余额。该行只在当天余额确实下降（spend>0）时渲染，零消耗日不占高度。**「预计可用 ~N 天」已于 2026-10-19 从菜单移除**（用户定），`days_left()` 仍为 `alert.daysLeft` 计算、只是不再展示；**MiMo 已于同日打开派生统计**（原本 `showDerived:false`），与 DeepSeek/GLM 一致。**快照历史与每日消耗仍照常累积/计算**，关掉再开回来历史不断档，`dailySpendMax` / `daysLeft` 告警也不受影响
 - `refreshParam` — 鉴权错误时自动刷新 + 菜单「🔄 刷新 Cookie」点击项（如 MiMo 的 `refresh-mimo-cookie`）
@@ -183,12 +183,13 @@ Python 核心逻辑：
 
 - 核心逻辑在 `swiftbar/token_eye.py`（可 import、可单测），`token-eye.sh` 只做环境检测与转发；两者都从项目目录读取，部署时**只需复制 token-eye.sh**
 - 提交前跑 `make check`（语法 + 单元测试 + Schema + 跨端配置同步 + 配色）；CI（`.github/workflows/ci.yml`）会在 push/PR 时自动执行同样的检查
-- **改配置必须同步 Android 副本**：Mac/Linux 读项目根目录的 `providers.json`，Android 读手工副本 `android/app/src/main/assets/providers.json`（`holidays/` 同理）。改完根配置**必须**把文件拷到 assets 同名路径并重装 APK；`scripts/check-config-sync.py`（已进 `make validate` 与 CI）会比对两份，允许的差异只有两类：带 `refreshParam` 的平台（Cookie 刷新无法移植）与 `parser.type=command` 的平台（手机不能执行外部 CLI），二者在 Android 侧被剔除
+- **改配置必须同步 Android 副本**：Mac/Linux 读项目根目录的 `providers.json`，Android 读 `android/app/src/main/assets/providers.json`（`holidays/` 同理）——**2026-11-10 起是构建期自动生成的副本**：`scripts/sync-android-assets.py` 由 Gradle `preBuild` 自动调用，也可手工跑；改完根配置不再需要手工拷贝，但仍要重打 APK 重装让手机生效。`make validate` / CI 用 `sync-android-assets.py --check` 确认提交副本是最新（只读字节比对），`check-config-sync.py` 逐字段比对两份。两份脚本的 `ANDROID_EXCLUDED` 必须同值，由 `tests/test_android_assets_sync.py` 钉住。**剔除口径是显式白名单 `ANDROID_EXCLUDED = {"mimo","qwen"}`**（mimo＝浏览器会话 Cookie 鉴权、qwen＝`parser.type=command` 需执行 CLI，手机都无法移植）——不是按 `refreshParam` / `parser.type=command` 字段动态剔除：旧版动态白名单会把任何新增的这两类平台静默视为「Android 理应没有」而绕过比对、CI 全绿。白名单外新增平台必须同步进 assets，否则 `make check` / CI 直接报「缺少 provider」；成功信息打印「已同步 M / 剔除 K」并断言 `根 N - 剔除 K == 已同步 M`。要新增不可移植平台，必须显式把 id 加进 `ANDROID_EXCLUDED`
 - **~~Android 还有第三份配置 = 手机上的 `filesDir/providers.json`~~（该机制已于 2026-10-05 整层删除，勿再恢复）**：旧实现 `ConfigRepository.load` 优先读 `filesDir/providers.json`（用户点「剪贴板导入配置」写入），一旦存在就**永久遮蔽** assets 内置版且永不过期；更坑的是**启用/停用开关的 `toggleProvider` 也往 filesDir 写整份配置**，所以「点一次开关」就足以让手机端配置冻结在旧版本、重装 APK 也更新不了。实测症状：手机缺 `peakWindow.holidays` → 读到 `false` → 国庆当天被当成工作日空闲，倒计时指向一个并不存在的高峰（`空闲 距高峰 55m`）。**现状**：配置本体只有 `assets/providers.json` 一份（`ConfigRepository.load` 只读它），App 内不再有改配置入口；运行时可改的只有 API Key（`SecretStore`/Keystore）与启用状态（`EnabledStore`，只存 `{"id": false}` 极简映射、不存配置本体，覆盖在 `ConfigRepository.load` 统一叠加）。**加任何「手机端改配置」的功能前先想清楚**：它一旦能写配置本体，就会重新引入「升级 APK 但手机规则不变」这类静默不一致
 - **峰谷/节假日类问题若「改了配置却不生效」，先查生效的是哪份配置**（排查命令：`adb shell run-as com.coffeelab.tokeneye cat files/enabled.json` 确认启用覆盖、`HolidayTable.load` 是否返回非空、`spec.holidays` 是否 true），再怀疑算法。Android 端链路是「assets 配置 → ConfigLoader → ResultParser → PeakWindow.classify」，每段都可插入 `Log.d("TokenEye", ...)` 打印关键入参，**一次日志同时打出多个环节的入参往往直接暴露矛盾点**（2026-10-05 就是靠 `spec.holidays=false incoming=72` 一击定位：表已加载成功，问题在开关没读进来）
 - **不要给 Android 写"看起来一样但会静默丢参数"的重载**：`ResultParser.parse(p, data)` 曾与 `parse(p, data, alerts, holidays)` 并存，调用方误用前者时 holidays 静默变空表、节日判定整个失效且无任何报错。已删除该重载；新增带上下文参数（alerts/holidays/密钥等）的方法**不要给默认值**，让编译期强制调用方显式传入
 - 改配置结构时：同步更新 `schema/providers.schema.json` 与 `token_eye.py` 里的 `schema_validate`（运行时轻量校验，与 JSON Schema 互补）
-- **配置字段必须「代码真的读了」才算数**：新增字段要同时落在「代码读取处 + JSON Schema + 模板/文档」三处；只写文档/只配 Schema 不接线 = 死配置（`display.unit` / `parser.statusMap` / `parser.fields.intervalTotal` / `weeklyTotal` / `intervalStatus` / `weeklyStatus` 就是这么攒出来的，已在 provider 段标注废弃）。自检一句：`grep -c '<字段名>' swiftbar/token_eye.py` 为 0 → 代码不读，要么实现要么标注废弃。**Android 侧同样按此清理**（2026-10-06 已删 `ParserSpec.barLength` / `DisplaySpec.unit` / `nameColor*`与 `intervalStatus`/`weeklyStatus` 的读取路径；配置里的键保留给 Mac 侧读，Android 忽略不影响跨端同步校验）
+- **配置字段必须「代码真的读了」才算数**：新增字段要同时落在「代码读取处 + JSON Schema + 模板/文档」三处；只写文档/只配 Schema 不接线 = 死配置。自检一句：`grep -c '<字段名>' swiftbar/token_eye.py` 为 0 → 代码不读，要么实现要么删键。2026-11-10 已按此清掉 `display.unit` / `parser.statusMap` / `parser.fields.intervalTotal` / `weeklyTotal` / `intervalStatus` / `weeklyStatus` 六类（配置 + assets 副本 + 模板一起删，Schema 只留 `deprecated` 兼容定义）。**Android 侧同样按此清理**（2026-10-06 已删 `ParserSpec.barLength` / `DisplaySpec.unit` / `nameColor*` 与 `intervalStatus`/`weeklyStatus` 的读取路径）。注意 `barLength` 是 Mac 侧仍在读的活字段，别一并删
+- **跨端口径铁律（三端必须一致，以共享契约测试为准）**：① `balance` / 关键字段缺失、`HTTP 200 + 业务错误码`、响应非 JSON 对象一律**不得判为 OK（假绿）**——字段缺失是独立的「配置/解析错误态」，既不是正常 `OK` 也不是普通业务 `ERR`；配了 `api.envelope` 就按 `okCodes` 判业务码，`codePath` 缺失 / 畸形码要判失败而非放行，缓存命中时也要重跑纯校验，不能绕过；② 聚合多个状态取最差一律取 ordinal 最大（`Status` 序 `OK<WARN<ERR<NOKEY`），永远别用 `minBy`；③ 余额阈值优先级链、已用% 分档、倒计时口径三端同源。**这些规则只靠文档守不住**：已落地 `tests/fixtures/cross_platform_cases.json` 作为唯一真源，Mac/Linux 由 `tests/test_contract.py`、Android 由 `app/src/test/.../ContractTest.kt` 消费同一组用例并进 CI（改判定规则先改 fixture，三端一起跑）。`scripts/check-config-sync.py` 只校验配置数据、**不校验逻辑口径**，别把它当成口径护栏
 - **「取最差状态」一律 `maxByOrNull { it.ordinal }`，永远别写 `minBy`**：`Status` 枚举序是 `OK(0) < WARN(1) < ERR(2) < NOKEY(3)`，ordinal 越大越差。Android `ResultParser` 曾误用 `minBy` —— 5h 正常 + 7d 无数据时整体判 OK、图标显示绿色（无报错、无日志）。三端任何聚合多个状态取最差的场景都适用（Mac 的 `render()`、Linux 的 `worst_status()`、Android 的 `worst`）
 - **告警/恢复通知的阈值判断必须用「已 resolve 的阈值」，不能回头读原始配置**：`token_eye.py` 的恢复通知曾写死 `alert_cfg["minBalance"] is not None`，而告警本身可由 `parser.defaultMinBalance` 或 API 阈值字段触发 → 告警能发、恢复通知永远发不出（静默失联）。`min_balance` 已在 `parse_provider` 里走完「API 字段 > alert.minBalance > defaultMinBalance」整条链，判定一律用它
 - **`schema_validate` 等入口层不许抛异常**：校验器的调用方（`run()` / `validate_mode()`）没有包 try，校验时一旦抛异常整轮渲染就崩 → SwiftBar 只拿到空 stdout、菜单全白且无任何提示。所有 `int()` / 下标 / 类型转换都要先判脏（见 `_as_int`）。新增校验项时用现有单测 `test_peak_window_garbage_does_not_raise` 的写法：脏值必须转成错误列表而非异常
@@ -203,7 +204,7 @@ Python 核心逻辑：
 - 脚本使用 `set -euo pipefail`，任何命令失败都会退出（注意：命令替换里放可能失败的脚本时需 `|| true` 兜底，见 refresh-mimo-cookie 分支）
 - API 超时时间：curl 5s，subprocess 10s
 - SwiftBar 刷新间隔：30 秒（脚本内 `# <bitbar.refreshTime>30</bitbar.refreshTime>` 声明）
-- 缓存文件位于 `/tmp/token-eye-cache-{id}.json`，失败请求 10s 短缓存避免连续打 API
+- 缓存文件位于 `~/Library/Caches/token-eye/token-eye-cache-{id}.json`（Linux：`~/.cache/token-eye/`，均 0700 目录 + 0600 原子写），失败请求 10s 短缓存避免连续打 API；成功缓存存完整 `fetch_result`，命中时**重跑业务码校验**（旧版只存 `data`、伪造 `ok=True`，错误体会一直假绿）；`render.lock` 用 `fcntl.flock` 做单实例保护，`--force-refresh` 跳过锁以免点击被挡
 - 告警去重/自愈防抖标记位于 `~/Library/Caches/token-eye/token-eye-{alerted|recovered|autorefresh}-{id}.flag`（持久化，重启不丢）；余额/用量恢复时发「已恢复」通知（去重）
 - 自愈冷却策略：`autorefresh` 标记内容为 `<ts> ok|fail`——**失败后 1 分钟可重试**（会话可能很快恢复），成功后 30 分钟防抖；自愈成功时同时写 `lastrefresh` 标记，避免同一轮渲染里主动续期再跑一遍脚本；自愈失败原因会显示在错误菜单（含「点菜单 🔄 刷新 Cookie 立即重试」引导）；`refresh-mimo-cookie.py` 刷新成功时会清掉错误短缓存，下次渲染立即重拉余额
 - 半自动刷新额外标记（均在 `~/Library/Caches/token-eye/`）：`token-eye-loginopened-{id}.flag` 记录自动打开登录页的时间戳（30 分钟限频）；`token-eye-lastrefresh-{id}.flag` 记录主动续期成功的时间戳（用于 `refreshInterval` 节流）

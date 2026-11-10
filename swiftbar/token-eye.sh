@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # <bitbar.title>Token Eye</bitbar.title>
-# <bitbar.version>v0.23.17</bitbar.version>
+# <bitbar.version>v0.24.0</bitbar.version>
 # <bitbar.author>wuxin</bitbar.author>
 # <bitbar.desc>LLM Token usage monitor — config-driven, with caching & alerts</bitbar.desc>
 # <bitbar.refreshTime>30</bitbar.refreshTime>
@@ -35,7 +35,10 @@ export APPEARANCE C_DEFAULT C_SECONDARY C_MUTED C_HEADER C_OK C_WARN C_ERR
 # stdout 会被丢弃（菜单看不到），所以动作结果统一走通知回显。
 # ---------------------------------------------------------------------------
 notify() {
-    local msg="${1//\"/}"
+    # 完整转义：反斜杠 / 双引号 / 换行都能改变 AppleScript 语句结构。
+    # 消息部分来自刷新脚本 stdout，旧实现只去掉双引号不够。
+    local msg
+    msg="$(printf '%s' "${1:-}" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' | tr '\n\r' '  ')"
     osascript -e "display notification \"$msg\" with title \"Token Eye\"" >/dev/null 2>&1 || true
 }
 
@@ -73,6 +76,12 @@ if ! command -v python3 >/dev/null 2>&1; then
     echo "刷新 | refresh=true"
     exit 0
 fi
+
+# 解释器只解析一次，所有动作分支与正常渲染共用。
+# 旧代码点击动作写死系统 Python 绝对路径（未装 Xcode CLT 的 Mac 上不存在），
+# 且用 || true 静默吞掉，表现为「点了没反应」。
+PY_BIN="$(command -v python3)"
+export PY_BIN
 
 # 核心模块取「较新的一个」：项目目录里改了新版而 ~/SwiftBar 存着旧拷贝时用项目那份。
 # 两处都不存在时留空，由下面的存在性检查统一报错。
@@ -112,7 +121,7 @@ if [ "${1:-}" = "refresh-mimo-cookie" ]; then
     fi
     # 注意：刷新脚本失败时退出码非零，set -e 会中断脚本，
     # 所以这里必须用 || true 吞掉退出码，由下面的分支决定展示成功还是失败。
-    OUTPUT="$(/usr/bin/python3 "$REFRESH_SCRIPT" 2>&1 || true)"
+    OUTPUT="$("$PY_BIN" "$REFRESH_SCRIPT" 2>&1 || true)"
     if echo "$OUTPUT" | grep -q "HTTP=200"; then
         # 成功不打扰：主菜单（refresh=true）会自动重渲，余额恢复即反馈
         echo "👁 | color=$C_OK"
@@ -168,6 +177,16 @@ fi
 # ---------------------------------------------------------------------------
 if [ "${1:-}" = "recover" ]; then
     REC_NAME="${2:-}"
+    # 脚本名会被拼进 $PROJECT_DIR/scripts/<name>.py，含 ../ 就能越出目录执行任意 .py
+    if [[ ! "$REC_NAME" =~ ^[A-Za-z0-9_-]+$ ]]; then
+        notify "登录脚本名非法（只允许字母、数字、下划线、连字符）"
+        echo "👁 | color=$C_ERR"
+        echo "---"
+        echo "登录脚本名非法 | color=$C_ERR"
+        echo "---"
+        echo "关闭 | refresh=true"
+        exit 0
+    fi
     REC_SCRIPT="$PROJECT_DIR/scripts/$REC_NAME.py"
     if [ -z "$REC_NAME" ] || [ ! -f "$REC_SCRIPT" ]; then
         notify "登录脚本不存在: $REC_SCRIPT"
@@ -178,7 +197,7 @@ if [ "${1:-}" = "recover" ]; then
         echo "关闭 | refresh=true"
         exit 0
     fi
-    OUTPUT="$(/usr/bin/python3 "$REC_SCRIPT" --force 2>&1 || true)"
+    OUTPUT="$("$PY_BIN" "$REC_SCRIPT" --force 2>&1 || true)"
     # 脚本三种结局：已登录 / 已发起授权等待确认 / 发起失败。
     # 前两种脚本自己会弹通知（发起授权时），所以这里只为「失败」补一条，避免重复打扰。
     echo "👁"
@@ -206,7 +225,7 @@ if [ "${1:-}" = "self-check" ]; then
     LOG_DIR="$HOME/Library/Caches/token-eye"
     LOG_FILE="$LOG_DIR/self-check.log"
     mkdir -p "$LOG_DIR" 2>/dev/null || true
-    OUT="$(CONFIG_FILE="$CONFIG_FILE" PROJECT_DIR="$PROJECT_DIR" SCRIPT_DIR="$SCRIPT_DIR" /usr/bin/python3 "$PY_MODULE" --self-check 2>&1 || true)"
+    OUT="$(CONFIG_FILE="$CONFIG_FILE" PROJECT_DIR="$PROJECT_DIR" SCRIPT_DIR="$SCRIPT_DIR" "$PY_BIN" "$PY_MODULE" --self-check 2>&1 || true)"
     printf '%s\n' "$OUT" > "$LOG_FILE" 2>/dev/null || true
     BAD="$(printf '%s\n' "$OUT" | grep -c '❌' || true)"
     WARN="$(printf '%s\n' "$OUT" | grep -c '⚠️' || true)"
@@ -240,12 +259,20 @@ fi
 # 菜单反馈由随后的 refresh=true 重渲给出（余额直接出现在主菜单）。
 # ---------------------------------------------------------------------------
 if [ "${1:-}" = "refresh-now" ]; then
-    CONFIG_FILE="$CONFIG_FILE" PROJECT_DIR="$PROJECT_DIR" SCRIPT_DIR="$SCRIPT_DIR" \
-        /usr/bin/python3 "$PY_MODULE" --force-refresh >/dev/null 2>&1 || true
+    if OUT="$(CONFIG_FILE="$CONFIG_FILE" PROJECT_DIR="$PROJECT_DIR" SCRIPT_DIR="$SCRIPT_DIR" \
+        "$PY_BIN" "$PY_MODULE" --force-refresh 2>&1)"; then
+        :  # 成功：菜单由随后的 refresh=true 重渲给出反馈
+    else
+        # 旧实现 >/dev/null + || true 把失败全吞了，用户只看到「点了没反应」
+        LOG_DIR="$HOME/Library/Caches/token-eye"
+        mkdir -p "$LOG_DIR" 2>/dev/null || true
+        printf '%s\n' "$OUT" > "$LOG_DIR/refresh-now.log" 2>/dev/null || true
+        notify "一键刷新执行失败，详见 ~/Library/Caches/token-eye/refresh-now.log"
+    fi
     exit 0
 fi
 
 # ---------------------------------------------------------------------------
 # 正常渲染：交给 Python 核心逻辑（PY_MODULE 已在文件前部解析）
 # ---------------------------------------------------------------------------
-CONFIG_FILE="$CONFIG_FILE" PROJECT_DIR="$PROJECT_DIR" SCRIPT_DIR="$SCRIPT_DIR" python3 "$PY_MODULE" "$@"
+CONFIG_FILE="$CONFIG_FILE" PROJECT_DIR="$PROJECT_DIR" SCRIPT_DIR="$SCRIPT_DIR" "$PY_BIN" "$PY_MODULE" "$@"

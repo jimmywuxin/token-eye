@@ -1,0 +1,17 @@
+[Unit]
+Description=Token Eye — LLM Token Usage Monitor (System Tray)
+After=graphical-session.target
+
+[Service]
+Type=simple
+# 下面两个占位由 install.sh 用 sed 按 PYTHON / LINUX_DIR 实际值注入，
+# 不硬编码解释器与仓库路径（自定义 venv / 路径安装同样可用）。
+ExecStart=@PYTHON@ @TRAY@
+Restart=on-failure
+RestartSec=5
+# 不再覆盖 DISPLAY / WAYLAND_DISPLAY：由用户会话环境继承，硬编码会与
+# 实际会话不符。%t 是 systemd 的运行时目录（$XDG_RUNTIME_DIR，=/run/user/UID）。
+Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=%t/bus
+
+[Install]
+WantedBy=graphical-session.target
