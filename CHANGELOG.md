@@ -4,6 +4,23 @@
 
 > 下次改动攒在这里；发版时把本节固化成版本章节（格式见下方 0.24.0）。
 
+## [0.24.1] - 2026-11-16
+
+> 千问登录自愈跨平台修复（Linux 版实测反馈：自愈从未真正跑通过）。属修复类，升 patch。
+
+### 千问自愈三处硬缺陷（Linux 版妮妮实测）
+- **`scripts/qwen-login.py` open_url 只调 macOS `open`**：Linux 上抛 FileNotFoundError 被吞掉返回 False，main() 不检查返回值，照样打印「已打开授权页」——用户根本看不到授权页。改为跨平台实现（darwin `open` / linux 优先 Chromium 系兜底 xdg-open，与 linux/token-eye-tray.py 的 open_in_browser 同口径，TOKEN_EYE_BROWSER 可覆盖）；返回值被调用方检查，失败时明确提示「请手动打开：<url>」不再谎报成功
+- **notify() 只调 osascript**：Linux 无通知。改平台分支（Linux 走 notify-send，与 linux tray 同通道）
+- **find_cli() 候选不全**：Mac 上 npm 全局在 /opt/homebrew/bin（Apple Silicon）或 /usr/local/bin，SwiftBar 窄 PATH 下 shutil.which 找不到 → 自愈直接 fail 并冷却 900 秒，表现为「永远不恢复」。候选补齐 /opt/homebrew/bin、/usr/local/bin、~/.npm-global/bin、volta、asdf；QIANWEN_CLI 显式设置但无效时不再静默回落（直接报错），找不到时错误信息含「请设置 QIANWEN_CLI=<绝对路径>」
+- **CACHE_DIR Linux 化**：Linux 上改走 XDG_CACHE_HOME（默认 ~/.cache/token-eye），与 linux tray 同口径；pending/日志不再写到不存在的 ~/Library
+
+### 主流程可见态
+- **「授权中」可见态**：run_recovery 返回 waiting 时，菜单错误行由泛泛的 🔴「配置/鉴权错误」换成 🟡「等待浏览器确认授权（已打开授权页）」，并保留「🔑 重新登录 千问」入口；命中错误缓存时同样生效
+- **到期预警**：千问 CLI token 约 2 天过期且无 refresh token。距到期 <24h 时明细行挂灰色「⏳ 登录将于 X 到期（自动续期需重新授权）」，<2h 升级告警色；`auth status` 结果缓存 30 分钟不阻塞渲染，取不到 expires_at 静默跳过
+
+### 测试
+- 新增 `tests/test_qwen_recovery.py`（16 例）：假 qianwen 脚本（按参数回固定 JSON、记录调用）覆盖退出码契约 ①已登录→0 不重复 init ②pending 未过期→3 复用 ③pending 过期→重新 init ④CLI 不存在→1 含 QIANWEN_CLI 提示，外加 find_cli 候选序、open_url 失败不谎报、run_recovery 集成（ok/fail 映射）、到期解析（秒/毫秒/ISO）与 waiting 可见态；不联网、不依赖真实 CLI、不真拉起浏览器
+
 ### CI
 - `android-test` job 去掉 `android-actions/setup-android@v3`：其内部执行 `sdkmanager tools`，runner 新版 cmdline-tools（16.0）已移除 legacy `tools` 包，导致 `Failed to find package 'tools'` 直接失败（v0.24.0 首推实测）。改为直接用 runner 预装 SDK（`ANDROID_HOME`）生成 `local.properties`，并校验 `platforms` 目录存在。同时把 job 名里硬编码的测试数（「51 例」）去掉，避免与真实用例数脱节
 

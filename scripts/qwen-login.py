@@ -27,7 +27,12 @@ import subprocess
 import sys
 import time
 
-CACHE_DIR = os.path.expanduser("~/Library/Caches/token-eye")
+if sys.platform == "darwin":
+    CACHE_DIR = os.path.expanduser("~/Library/Caches/token-eye")
+else:
+    # Linux 版与 linux/token-eye-tray.py 同口径（XDG_CACHE_HOME，默认 ~/.cache）
+    _xdg_cache = os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache")
+    CACHE_DIR = os.path.join(_xdg_cache, "token-eye")
 PENDING_FILE = os.path.join(CACHE_DIR, "qwen-login-pending.json")
 LOG_FILE = os.path.join(CACHE_DIR, "qwen-login.log")
 
@@ -50,23 +55,53 @@ def log(msg):
 
 
 def notify(msg, title="Token Eye"):
+    """平台分支发通知：darwin 走 osascript，Linux 走 notify-send（与
+    linux/token-eye-tray.py 的 linux_send_notify 同通道，UKUI 走 D-Bus）。
+    失败静默——通知只是锦上添花，菜单里的 🟡 等待态才是可靠可见面。"""
     try:
-        safe = msg.replace('"', "\\'")
-        subprocess.run(["osascript", "-e",
-                        f'display notification "{safe}" with title "{title}"'],
-                       timeout=5, capture_output=True)
+        if sys.platform == "darwin":
+            safe = msg.replace("\\", "\\\\").replace('"', '\\"')
+            subprocess.run(["osascript", "-e",
+                            f'display notification "{safe}" with title "{title}"'],
+                           timeout=5, capture_output=True)
+        elif sys.platform.startswith("linux"):
+            subprocess.run(["notify-send", "-a", "token-eye", title, msg],
+                           timeout=5, capture_output=True)
     except Exception:
         pass
 
 
-def find_cli():
-    """定位 qianwen CLI：环境变量 > npm 全局安装的常规位置 > PATH。"""
-    cands = [os.environ.get("QIANWEN_CLI", ""),
-             os.path.expanduser("~/.local/bin/qianwen")]
+def find_cli(env=None):
+    """定位 qianwen CLI：QIANWEN_CLI > 常规安装位置 > PATH。
+
+    候选覆盖（SwiftBar 的 PATH 只有 /usr/bin:/bin:…，npm 装的 CLI 靠候选兜住）：
+    - ~/.local/bin（本项目 pip --user / 手工软链的约定位置）
+    - /opt/homebrew/bin（Apple Silicon npm 全局）/ /usr/local/bin（Intel mac）
+    - ~/.npm-global/bin（npm prefix 自定义）
+    - ~/.volta/bin、~/.asdf/shims（版本管理器）
+    QIANWEN_CLI 显式设置但无效时返回 None（调用方报错），**不静默回落**——
+    指定了路径却偷偷用别的，排障时会对不上。
+    """
+    env = env if env is not None else os.environ
+    home = env.get("HOME") or os.path.expanduser("~")
+    explicit = env.get("QIANWEN_CLI", "")
+    if explicit:
+        p = os.path.join(home, explicit[1:]) if explicit.startswith("~") else explicit
+        if os.path.isfile(p) and os.access(p, os.X_OK):
+            return p
+        return None
+    cands = [
+        os.path.join(home, ".local/bin/qianwen"),
+        "/opt/homebrew/bin/qianwen",
+        "/usr/local/bin/qianwen",
+        os.path.join(home, ".npm-global/bin/qianwen"),
+        os.path.join(home, ".volta/bin/qianwen"),
+        os.path.join(home, ".asdf/shims/qianwen"),
+    ]
     for c in cands:
-        if c and os.path.isfile(c) and os.access(c, os.X_OK):
+        if os.path.isfile(c) and os.access(c, os.X_OK):
             return c
-    return shutil.which("qianwen")
+    return shutil.which("qianwen", path=env.get("PATH"))
 
 
 def cli_env(cli):
@@ -132,11 +167,56 @@ def clear_pending():
 
 
 def open_url(url):
-    try:
-        subprocess.run(["open", url], timeout=10, capture_output=True)
-        return True
-    except Exception:
-        return False
+    """跨平台打开授权页。**返回是否发起成功，调用方必须检查**——失败时提示
+    手动打开 URL，而不是像旧版那样吞掉异常谎报「已打开授权页」。
+
+    口径与 linux/token-eye-tray.py 的 open_in_browser 一致：
+    TOKEN_EYE_BROWSER 覆盖（=default 强制平台默认）> darwin `open` >
+    linux 优先 Chromium 系（与 MiMo cookie 提取同源，避免登录进提取不到
+    cookie 的浏览器）> xdg-open。
+    """
+    pref = (os.environ.get("TOKEN_EYE_BROWSER") or "").strip()
+    if pref:
+        if pref.lower() not in ("default", "system", "xdg-open"):
+            exe = shutil.which(pref) or (pref if os.path.isabs(pref)
+                                         and os.access(pref, os.X_OK) else "")
+            if exe:
+                try:
+                    subprocess.Popen([exe, url], stdout=subprocess.DEVNULL,
+                                     stderr=subprocess.DEVNULL)
+                    return True
+                except Exception as e:  # noqa: BLE001
+                    log(f"打开浏览器失败（TOKEN_EYE_BROWSER={pref}）: {e}")
+                    return False
+            # 显式指定的浏览器不存在：不回落（用户意图明确），报 False 由调用方提示手动打开
+            log(f"TOKEN_EYE_BROWSER={pref} 不可执行")
+            return False
+    if sys.platform == "darwin":
+        try:
+            subprocess.Popen(["open", url], stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL)
+            return True
+        except Exception as e:  # noqa: BLE001
+            log(f"open 失败: {e}")
+            return False
+    if sys.platform.startswith("linux"):
+        for name in ("chromium-browser", "chromium", "chromium-browser-stable"):
+            exe = shutil.which(name)
+            if exe:
+                try:
+                    subprocess.Popen([exe, "--new-window", url],
+                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    return True
+                except Exception:  # noqa: BLE001
+                    continue
+        try:
+            subprocess.Popen(["xdg-open", url], stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL)
+            return True
+        except Exception as e:  # noqa: BLE001
+            log(f"xdg-open 失败: {e}")
+            return False
+    return False
 
 
 def poller_alive(pid):
@@ -189,14 +269,18 @@ def main(argv):
             timeout_s = POLL_TIMEOUT
         cli = find_cli()
         if not cli:
-            log("找不到 qianwen CLI")
+            log("找不到 qianwen CLI（可设 QIANWEN_CLI=<绝对路径>）")
             return EXIT_FAIL
         return do_poll(cli, timeout_s)
 
     force = "--force" in argv
     cli = find_cli()
     if not cli:
-        print("错误: 找不到 qianwen CLI（可设 QIANWEN_CLI 指定路径）")
+        explicit = os.environ.get("QIANWEN_CLI", "")
+        if explicit:
+            print(f"错误: QIANWEN_CLI={explicit} 指定的路径不存在或不可执行（请改为有效的绝对路径）")
+        else:
+            print("错误: 找不到 qianwen CLI（请设置 QIANWEN_CLI=<绝对路径>，或将其加入 PATH）")
         return EXIT_FAIL
 
     # 1. 已登录 → 让主流程直接重拉余额
@@ -213,9 +297,11 @@ def main(argv):
             pending["poller_pid"] = spawn_poller(cli, max(120, int(pending["expires_at"] - now)))
             save_pending(pending)
         if pending.get("url"):
-            open_url(pending["url"])
-        print("等待浏览器授权（已打开授权页，确认后自动恢复）")
-        return EXIT_WAITING
+            if open_url(pending["url"]):
+                print("等待浏览器授权（已打开授权页，确认后自动恢复）")
+            else:
+                print(f"等待浏览器授权。未能自动打开，请手动打开：{pending['url']}")
+            return EXIT_WAITING
 
     # 3. 发起新授权会话
     code, out, err = run_cli(cli, ["login", "--init-only", "--format", "json"], timeout=15)
@@ -235,12 +321,15 @@ def main(argv):
         print(f"错误: 发起授权失败{('：' + tail[-1][:80]) if tail else f'（退出码 {code}）'}")
         return EXIT_FAIL
 
-    open_url(url)
     save_pending({"url": url, "expires_at": now + expires_in,
                   "created_at": now,
                   "poller_pid": spawn_poller(cli, expires_in)})
-    notify("千问登录已过期，已在浏览器打开授权页，确认后自动恢复")
-    print("等待浏览器授权（已打开授权页，确认后自动恢复）")
+    if open_url(url):
+        notify("千问登录已过期，已在浏览器打开授权页，确认后自动恢复")
+        print("等待浏览器授权（已打开授权页，确认后自动恢复）")
+    else:
+        notify("千问登录已过期，未能自动打开授权页，请手动打开 URL 完成授权")
+        print(f"等待浏览器授权。未能自动打开，请手动打开：{url}")
     return EXIT_WAITING
 
 

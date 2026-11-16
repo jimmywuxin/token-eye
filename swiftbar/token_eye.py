@@ -26,7 +26,7 @@ from concurrent.futures import (ThreadPoolExecutor, TimeoutError as FuturesTimeo
                                 as_completed)
 from datetime import datetime as _dt
 
-VERSION = "0.24.0"
+VERSION = "0.24.1"
 
 # 按 parser 类型的默认缓存 TTL（秒）
 DEFAULT_CACHE_TTL = {"balance": 300, "plan_usage": 30, "status": 60, "command": 300}
@@ -1295,6 +1295,113 @@ RECOVERY_WAITING = 3   # 自愈脚本：已发起登录，等待用户浏览器�
 RECOVERY_COOLDOWN = {"ok": 300, "waiting": 120, "fail": 900}
 
 
+def _recovery_state(flags_dir, pid):
+    """读自愈标记的状态段（ok/waiting/fail）；无标记返回 None。"""
+    try:
+        f = _flag_path(flags_dir, pid, "recovery")
+        if os.path.exists(f):
+            with open(f) as fh:
+                parts = fh.read().strip().split(maxsplit=2)
+            if len(parts) > 1:
+                return parts[1]
+    except Exception:
+        pass
+    return None
+
+
+def _apply_waiting_style(err_render, colors):
+    """自愈 waiting（已发起登录、等浏览器授权）时的可见态。
+
+    泛泛的 🔴「配置/鉴权错误」换成 🟡「等待浏览器确认授权」——用户才知道
+    菜单红着不是坏了，而是正等他在浏览器里点一下「确认」（2026-11-16
+    Linux 版反馈：waiting 态此前与失败长得一模一样）。
+    「🔑 重新登录」入口由 render() 的 recovery_map 分支保留。
+    """
+    err_render["icon"] = "🟡"
+    err_render["colors"][0] = colors["WARN"]
+    err_render["lines"][0] = "等待浏览器确认授权（已打开授权页）"
+    return err_render
+
+
+def _parse_expiry_epoch(value):
+    """登录态到期时间 → epoch 秒。兼容秒/毫秒时间戳与 ISO 8601 字符串；
+    无时区的 naive 时间按本地时区（CLI 打印的多是本地时间）。失败返回 None。"""
+    try:
+        if isinstance(value, (int, float)):
+            v = float(value)
+        else:
+            s = str(value).strip()
+            if s.replace(".", "", 1).isdigit():
+                v = float(s)
+            else:
+                from datetime import datetime
+                dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+                return int(dt.timestamp())
+        if v > 1e12:  # 毫秒时间戳
+            v /= 1000.0
+        return int(v)
+    except Exception:
+        return None
+
+
+def command_token_expiry(flags_dir, pid, parser, check_interval=1800):
+    """command 型 provider 的登录态到期检查（千问 `auth status` 的 token.expires_at）。
+
+    结果缓存 check_interval 秒（默认 30 分钟），避免每 30 秒渲染都多跑一次 CLI；
+    CLI 不存在 / 超时 / 字段取不到 → 返回 None 静默跳过，绝不阻塞渲染。
+    仅对配置了 parser.recovery 的 command 型 provider 调用（auth status 是
+    千问 CLI 的接口，别家 command 型没有）。
+    """
+    flag = _flag_path(flags_dir, pid, "expiry")
+    now = int(time.time())
+    try:
+        if os.path.exists(flag):
+            with open(flag) as f:
+                parts = f.read().split()
+            if len(parts) >= 2 and now - int(parts[0]) < check_interval:
+                return _parse_expiry_epoch(parts[1])
+    except Exception:
+        pass
+    cmd = os.path.expanduser(str(parser.get("command") or ""))
+    if not cmd:
+        return None
+    env = dict(os.environ)
+    cmd_dir = os.path.dirname(cmd)
+    if cmd_dir:
+        env["PATH"] = cmd_dir + os.pathsep + env.get("PATH", "/usr/bin:/bin")
+    for k, v in (parser.get("env") or {}).items():
+        env[str(k)] = os.path.expanduser(str(v))
+    try:
+        r = subprocess.run([cmd, "auth", "status", "--format", "json"],
+                           capture_output=True, text=True, timeout=8, env=env)
+    except Exception:  # noqa: BLE001
+        return None
+    data = None
+    # CLI 可能先打印提示行再输出 JSON（与 fetch_command 的 parse 场景相同）
+    for text in (r.stdout or "", r.stderr or ""):
+        i = text.find("{")
+        if i < 0:
+            continue
+        try:
+            data = json.loads(text[i:])
+            break
+        except json.JSONDecodeError:
+            continue
+    exp = None
+    if isinstance(data, dict):
+        tok = data.get("token")
+        exp = tok.get("expires_at") if isinstance(tok, dict) else None
+        if exp is None:
+            exp = data.get("expires_at")
+    exp = _parse_expiry_epoch(exp) if exp is not None else None
+    if exp:
+        try:
+            _write_flag(flag, f"{now} {exp}")
+        except Exception:
+            pass
+    return exp
+
+
 def run_recovery(flags_dir, pid, recovery_script, force=False):
     """command 型（CLI 型）provider 的登录自愈：跑 scripts/<recovery>.py 并解释退出码。
 
@@ -1452,6 +1559,8 @@ def process_provider(p, config, colors, appearance, cache_dir, hdir, project_dir
     # 初始化放在函数开头：命中缓存的早退分支不会经过 fetch 段，
     # 若只在 fetch 段里赋值，后面读它会NameError（既存隐患，本次一并修）。
     self_heal_errs = []
+    # 登录自愈状态（仅 command 型赋值）：waiting 时错误行换 🟡 可见态
+    recovery_state = None
 
     # Cache check
     ttl = _as_int(p.get("cacheTtl", config.get("cache", {}).get(
@@ -1471,8 +1580,13 @@ def process_provider(p, config, colors, appearance, cache_dir, hdir, project_dir
     if cached and (now - cached.get("ts", 0)) < effective_ttl:
         if is_err_cache:
             log_debug(hdir, f"[{pid}] 命中错误缓存（{cached.get('error')}），跳过 API")
-            return render_error(pid, name, cached.get("error"),
-                                cached.get("message", ""), console_url, colors)
+            err = render_error(pid, name, cached.get("error"),
+                               cached.get("message", ""), console_url, colors)
+            # 错误缓存命中也检查 waiting 可见态：自愈已发起登录（标记仍在冷却期）
+            # 时，10s 错误缓存命中同样要显示 🟡 而不是退回 🔴
+            if _recovery_state(hdir, pid) == "waiting":
+                _apply_waiting_style(err, colors)
+            return err
         # 命中成功缓存，跳过 API。缓存里存的是完整 fetch_result（旧格式只有 data，
         # 这里兼容），命中后**重跑业务码校验**——老版本可能把错误体当成功写进缓存。
         log_debug(hdir, f"[{pid}] 命中成功缓存，跳过 API")
@@ -1502,12 +1616,17 @@ def process_provider(p, config, colors, appearance, cache_dir, hdir, project_dir
                 rec_script = os.path.join(project_dir, "scripts", f"{recovery}.py")
                 if os.path.exists(rec_script):
                     state, msg = run_recovery(hdir, pid, rec_script, force=force)
+                    recovery_state = state
                     log_debug(hdir, f"[{pid}] 登录自愈: state={state} {msg}")
                     if state == "ok":
                         fetch_result = fetch_command(parser)
                         log_debug(hdir, f"[{pid}] 自愈后重拉: ok={fetch_result['ok']}")
+                    elif state == "waiting":
+                        # 等待授权的可见态由下方错误渲染统一换成 🟡（
+                        # _apply_waiting_style），这里不再贴重复提示
+                        pass
                     elif msg:
-                        self_heal_errs.append(f"{'🔑' if state == 'waiting' else '⚠️'} {msg}")
+                        self_heal_errs.append(f"⚠️ {msg}")
                 else:
                     log_debug(hdir, f"[{pid}] 自愈脚本缺失: {rec_script}")
         else:
@@ -1594,6 +1713,10 @@ def process_provider(p, config, colors, appearance, cache_dir, hdir, project_dir
     if not fetch_result["ok"]:
         err_render = render_error(pid, name, fetch_result["error_kind"],
                                   fetch_result["message"], console_url, colors)
+        # 自愈 waiting（已发起登录、等浏览器授权）→ 🟡 可见态，不显示泛泛的 🔴。
+        # fresh_fetch 路径 recovery_state 刚写入标记；命中缓存路径直接读标记。
+        if recovery_state == "waiting" or _recovery_state(hdir, pid) == "waiting":
+            _apply_waiting_style(err_render, colors)
         # 自愈/续期原因逐行展示：用户才知道「为什么刷新也没用」（或「已经替你在浏览器
         # 打开授权页了」），而不是只看到一句泛泛的「配置/鉴权错误」四处乱试
         # （2026-10-19 实报）。前缀由追加方给出，这里不要再套统一文案。
@@ -1641,6 +1764,20 @@ def process_provider(p, config, colors, appearance, cache_dir, hdir, project_dir
                 # 点这一行打开控制台（充值/账单）
                 render.setdefault("line_params", []).append(
                     {"href": console_url} if console_url else None)
+
+    # 登录态到期预警（千问 CLI token 约 2 天过期且无 refresh token，过期只能
+    # 重走 device flow）。距到期 <24h 挂灰色提示、<2h 升级告警色；取不到
+    # expires_at / 已过期（命令本来就会失败走自愈）→ 静默跳过不占行。
+    if ptype == "command" and parser.get("recovery"):
+        exp = command_token_expiry(hdir, pid, parser)
+        if exp:
+            remain = exp - now
+            if 0 < remain < 24 * 3600:
+                when = time.strftime("%m-%d %H:%M", time.localtime(exp))
+                render.setdefault("lines", []).append(
+                    f"  ⏳ 登录将于 {when} 到期（自动续期需重新授权）")
+                render.setdefault("colors", []).append(
+                    colors["WARN"] if remain < 2 * 3600 else colors["MUTED"])
 
     # Alert check (balance 余额 / plan_usage 用量百分比) + 恢复通知
     if os.environ.get("TOKEN_EYE_NOTIFY", "1") != "0":
@@ -1766,7 +1903,8 @@ def render(results, config, colors, refresh_map, hdir, recovery_map=None):
             elif status == "error":
                 msg = sanitize_menu_text(lines[0] if lines else '请求失败')
                 c = (r.get("colors") or [colors["ERR"]])[0]
-                print(f"🔴 {name}: {msg} | color={c}")
+                # icon 可由 process_provider 覆盖（自愈 waiting → 🟡）；默认 🔴
+                print(f"{r.get('icon', '🔴')} {name}: {msg} | color={c}")
                 # 错误分支原先只打印 lines[0]，把 process_provider 追加的
                 # 「↻ 自动刷新未生效: <原因>」整行吞掉了 —— 用户只看到泛泛的
                 # 「配置/鉴权错误」，看不到真正原因（2026-10-19 实报：MiMo 读不到
