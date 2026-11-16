@@ -4,6 +4,24 @@
 
 > 下次改动攒在这里；发版时把本节固化成版本章节（格式见下方 0.24.0）。
 
+## [0.24.2] - 2026-11-16
+
+> 复核 v0.24.1 时发现的真实断点：**Linux 端自动自愈根本没被调用**（v0.24.1 在单位机等于没修）。修复类，升 patch。
+
+### 正确性（P0）
+- **`swiftbar/token_eye.py` 新增 `recovery_script_path(project_dir, recovery)`**：先找 `project_dir/scripts/<name>.py`，不存在时按 `__file__` 回退到仓库根 `scripts/`。Linux 端 `linux/token-eye-tray.py` 把 `project_dir` 传成 `linux/`（refresh 脚本在 `linux/scripts/`），而登录自愈脚本按「三端复用同一份」只在根 `scripts/` 有一份 → 旧实现拼出的 `linux/scripts/qwen-login.py` 永远不存在，`os.path.exists` 为假直接跳过自愈。现 Linux 端自动自愈真能调到根脚本；带 `^[A-Za-z0-9_-]+$` 防路径穿越，与 schema_validate / token-eye.sh 同口径
+- 到期预警补 `line_params` 占位：`lines` / `colors` / `line_params` 三数组保持等长，避免后续行 href 错一位（parse_provider 的峰谷行即此约定）
+- `_recovery_state` 加 300 秒新鲜度：重启后残留的旧 waiting 标记不再让菜单一直显示「等待授权」
+
+### 加固
+- `scripts/qwen-login.py` `notify()` 的 AppleScript 转义补 `\n` / `\r`（消息含换行不再破坏语句结构）
+- `tests/test_qwen_recovery.py` 增 6 例：Linux 路径回退（含 process_provider 端到端接线验证）、flag 新鲜度；find_cli 候选测试改为 mock `os.path.isfile` / `os.access` / `shutil.which`，不再依赖本机是否装过真实 CLI（本机与 CI 口径一致）；test_3 收掉后台 poller 消除 clear_pending 竞态。全量 312 例
+- `linux/README.md` 已知限制更新：原文「Linux 端缺 qwen-login.py、静默不可用」已失效；补记 UKUI 无 emoji 字形（等待态显示为橙色文字）与 Linux 错误菜单只显示首行时详细提示的查看路径
+
+### 未改动（约束）
+- `linux/token-eye-tray.py` 及其中 `[本机补丁 2026-11-12]` 菜单「🔑 重新登录」入口段保持不动；Linux 端接线修复全部收敛在上游 `token_eye.py`
+- 无配置变更，`providers.json` / Android assets 副本不动
+
 ## [0.24.1] - 2026-11-16
 
 > 千问登录自愈跨平台修复（Linux 版实测反馈：自愈从未真正跑通过）。属修复类，升 patch。

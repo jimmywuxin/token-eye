@@ -26,7 +26,7 @@ from concurrent.futures import (ThreadPoolExecutor, TimeoutError as FuturesTimeo
                                 as_completed)
 from datetime import datetime as _dt
 
-VERSION = "0.24.1"
+VERSION = "0.24.2"
 
 # 按 parser 类型的默认缓存 TTL（秒）
 DEFAULT_CACHE_TTL = {"balance": 300, "plan_usage": 30, "status": 60, "command": 300}
@@ -1295,17 +1295,43 @@ RECOVERY_WAITING = 3   # 自愈脚本：已发起登录，等待用户浏览器�
 RECOVERY_COOLDOWN = {"ok": 300, "waiting": 120, "fail": 900}
 
 
-def _recovery_state(flags_dir, pid):
-    """读自愈标记的状态段（ok/waiting/fail）；无标记返回 None。"""
+def _recovery_state(flags_dir, pid, max_age=300):
+    """读自愈标记的状态段（ok/waiting/fail）；无标记或标记过期返回 None。
+
+    带新鲜度上限：重启后磁盘上可能残留很久之前的 waiting 标记，
+    不能让下一轮菜单一直显示「等待授权」（标记默认 300 秒，与
+    RECOVERY_COOLDOWN["waiting"] + 缓存窗口同量级）。
+    """
     try:
         f = _flag_path(flags_dir, pid, "recovery")
         if os.path.exists(f):
             with open(f) as fh:
                 parts = fh.read().strip().split(maxsplit=2)
-            if len(parts) > 1:
+            if len(parts) > 1 and int(time.time()) - int(parts[0]) < max_age:
                 return parts[1]
     except Exception:
         pass
+    return None
+
+
+def recovery_script_path(project_dir, recovery):
+    """定位登录自愈脚本 `scripts/<recovery>.py`，返回存在的文件路径或 None。
+
+    Mac 版 project_dir = 仓库根，直接命中根目录 scripts/。
+    **Linux 版把 project_dir 传成 linux/**（refresh 脚本在 linux/scripts/），
+    而登录自愈脚本按「三端复用同一份」只在仓库根 scripts/ 有一份 →
+    旧实现拼出 linux/scripts/qwen-login.py 永远不存在，自动自愈在 Linux 端
+    静默不触发（2026-11-16 复核发现）。故按核心模块位置回退到仓库根。
+    """
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", str(recovery or "")):
+        return None  # 防路径穿越：与 schema_validate / token-eye.sh 同口径
+    name = f"{recovery}.py"
+    root_scripts = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts")
+    for path in (os.path.join(project_dir, "scripts", name),
+                 os.path.join(root_scripts, name)):
+        if os.path.isfile(path):
+            return path
     return None
 
 
@@ -1613,8 +1639,8 @@ def process_provider(p, config, colors, appearance, cache_dir, hdir, project_dir
             # 用独立标记做冷却，避免每 30 秒都去问一次 CLI。
             recovery = parser.get("recovery")
             if not fetch_result["ok"] and recovery:
-                rec_script = os.path.join(project_dir, "scripts", f"{recovery}.py")
-                if os.path.exists(rec_script):
+                rec_script = recovery_script_path(project_dir, recovery)
+                if rec_script:
                     state, msg = run_recovery(hdir, pid, rec_script, force=force)
                     recovery_state = state
                     log_debug(hdir, f"[{pid}] 登录自愈: state={state} {msg}")
@@ -1628,7 +1654,8 @@ def process_provider(p, config, colors, appearance, cache_dir, hdir, project_dir
                     elif msg:
                         self_heal_errs.append(f"⚠️ {msg}")
                 else:
-                    log_debug(hdir, f"[{pid}] 自愈脚本缺失: {rec_script}")
+                    log_debug(hdir, f"[{pid}] 自愈脚本缺失: scripts/{recovery}.py "
+                                    f"（project_dir={project_dir} 与仓库根 scripts/ 均未找到）")
         else:
             key = get_key(keychain)
             if not key:
@@ -1778,6 +1805,9 @@ def process_provider(p, config, colors, appearance, cache_dir, hdir, project_dir
                     f"  ⏳ 登录将于 {when} 到期（自动续期需重新授权）")
                 render.setdefault("colors", []).append(
                     colors["WARN"] if remain < 2 * 3600 else colors["MUTED"])
+                # 占位保持 lines / colors / line_params 三数组索引对齐——
+                # parse_provider 的峰谷行也这么做；否则后续行的 href 会错一位
+                render.setdefault("line_params", []).append(None)
 
     # Alert check (balance 余额 / plan_usage 用量百分比) + 恢复通知
     if os.environ.get("TOKEN_EYE_NOTIFY", "1") != "0":

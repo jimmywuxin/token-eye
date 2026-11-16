@@ -145,6 +145,14 @@ class TestExitCodeContract(QwenLoginTestBase):
             pending = json.load(f)
         self.assertEqual(pending["url"], "https://example.invalid/authorize")
         self.assertGreater(pending["expires_at"], int(time.time()))
+        # 后台轮询进程会 clear_pending()，先收掉它，避免竞态与临时目录残留
+        pid = pending.get("poller_pid") or 0
+        if pid:
+            import signal
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
 
     def test_4_cli_missing_exits_1_with_hint(self):
         """④ CLI 不存在 → 退出 1，错误信息含 QIANWEN_CLI 提示（可自行设置路径）。"""
@@ -165,16 +173,29 @@ class TestExitCodeContract(QwenLoginTestBase):
 class TestFindCli(unittest.TestCase):
     """find_cli 单测：显式 QIANWEN_CLI 优先且无效即失败；候选按序命中。"""
 
-    def _find(self, env_extra, cli_path=None):
-        mod = None
+    def _load(self):
         import importlib.util
         spec = importlib.util.spec_from_file_location("qwen_login_mod", SCRIPT)
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
+        return mod
+
+    def _find(self, env_extra, isfile=None, which=None):
+        """候选路径用 mock 固定，测试不依赖本机是否装过真实 qianwen CLI。"""
+        mod = self._load()
         env = {"HOME": self.tmp, "PATH": "/usr/bin:/bin",
                "FAKE_QIANWEN_LOG": os.path.join(self.tmp, "log")}
         env.update(env_extra)
-        return mod.find_cli(env)
+        with contextlib.ExitStack() as stack:
+            if isfile is not None:
+                stack.enter_context(
+                    mock.patch.object(mod.os.path, "isfile", side_effect=isfile))
+                # find_cli 同时查 isfile + access(X_OK)；mock 掉权限检查
+                stack.enter_context(
+                    mock.patch.object(mod.os, "access", return_value=True))
+            stack.enter_context(
+                mock.patch.object(mod.shutil, "which", return_value=which))
+            return mod.find_cli(env)
 
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="te-qwen-findcli-")
@@ -185,29 +206,23 @@ class TestFindCli(unittest.TestCase):
 
     def test_explicit_valid_wins(self):
         cli = os.path.join(self.tmp, "qianwen")
-        with open(cli, "w") as f:
-            f.write("#!/bin/sh\n")
-        os.chmod(cli, 0o755)
-        self.assertEqual(self._find({"QIANWEN_CLI": cli}), cli)
+        self.assertEqual(self._find({"QIANWEN_CLI": cli},
+                                    isfile=lambda p: p == cli), cli)
 
     def test_explicit_invalid_returns_none(self):
         self.assertIsNone(
-            self._find({"QIANWEN_CLI": os.path.join(self.tmp, "nope")}))
+            self._find({"QIANWEN_CLI": os.path.join(self.tmp, "nope")},
+                       isfile=lambda p: False))
 
     def test_local_bin_candidate(self):
-        """无 QIANWEN_CLI 时按候选序命中 ~/.local/bin（排在 homebrew 之前，
+        """无 QIANWEN_CLI 时按候选序命中 ~/.local/bin（排在绝对路径候选之前，
         不依赖本机是否恰好装过真实 CLI）。"""
-        d = os.path.join(self.tmp, ".local", "bin")
-        os.makedirs(d)
-        cli = os.path.join(d, "qianwen")
-        with open(cli, "w") as f:
-            f.write("#!/bin/sh\n")
-        os.chmod(cli, 0o755)
-        self.assertEqual(self._find({}), cli)
+        cli = os.path.join(self.tmp, ".local", "bin", "qianwen")
+        self.assertEqual(self._find({}, isfile=lambda p: p == cli), cli)
 
     def test_nothing_found_returns_none(self):
-        # HOME=tmp 下候选全不命中；PATH 只有 /usr/bin:/bin（CI 无真实 CLI）
-        self.assertIsNone(self._find({}))
+        # 全部候选与 PATH 都 mock 成找不到，跨环境恒定
+        self.assertIsNone(self._find({}, isfile=lambda p: False))
 
 
 class TestRunRecoveryIntegration(unittest.TestCase):
@@ -280,6 +295,9 @@ class TestExpiryWarning(unittest.TestCase):
              mock.patch.object(te, "command_token_expiry", return_value=exp), \
              mock.patch.object(te, "send_notify"):
             r = te.process_provider(p, cfg, colors, appearance, d, d, "/tmp")
+        self.assertEqual(len(r["lines"]), len(r["colors"]))
+        # 到期行补 line_params 占位，三数组必须等长（否则后续行 href 错一位）
+        self.assertEqual(len(r["lines"]), len(r["line_params"]))
         warn_lines = [ln for ln in r["lines"] if "到期" in ln]
         self.assertEqual(len(warn_lines), 1)
         self.assertIn("重新授权", warn_lines[0])
@@ -327,6 +345,79 @@ class TestWaitingStyle(unittest.TestCase):
         with contextlib.redirect_stdout(out):
             te.render([err], {}, colors, {}, tempfile.mkdtemp())
         self.assertIn("🟡 千问", out.getvalue())
+
+
+class TestRecoveryScriptPath(unittest.TestCase):
+    """Linux 端自动自愈接线（2026-11-16 复核发现的 P0 断点）。
+
+    linux/token-eye-tray.py 把 project_dir 传成 linux/（refresh 脚本在
+    linux/scripts/），但登录自愈脚本只有仓库根 scripts/ 一份；旧实现拼出
+    linux/scripts/qwen-login.py 永远不存在 → 自愈静默不触发。
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="te-qwen-path-")
+        self.linux_dir = os.path.join(self.tmp, "linux")
+        os.makedirs(os.path.join(self.linux_dir, "scripts"))
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_mac_style_direct_hit(self):
+        self.assertEqual(te.recovery_script_path(ROOT, "qwen-login"),
+                         os.path.join(ROOT, "scripts", "qwen-login.py"))
+
+    def test_linux_style_falls_back_to_repo_root(self):
+        path = te.recovery_script_path(self.linux_dir, "qwen-login")
+        self.assertEqual(path, os.path.join(ROOT, "scripts", "qwen-login.py"))
+
+    def test_project_dir_script_wins_if_present(self):
+        local = os.path.join(self.linux_dir, "scripts", "qwen-login.py")
+        with open(local, "w") as f:
+            f.write("# placeholder\n")
+        self.assertEqual(te.recovery_script_path(self.linux_dir, "qwen-login"), local)
+
+    def test_rejects_path_traversal(self):
+        self.assertIsNone(te.recovery_script_path(self.linux_dir, "../etc/passwd"))
+        self.assertIsNone(te.recovery_script_path(self.linux_dir, ""))
+        self.assertIsNone(te.recovery_script_path(self.linux_dir, "no-such-script"))
+
+    def test_process_provider_calls_recovery_on_linux(self):
+        """端到端接线：Linux 风格 project_dir + 命令失败 → run_recovery 真被调用，
+        且拿到的是仓库根脚本（不是不存在的 linux/scripts/…）。"""
+        d = tempfile.mkdtemp()
+        p = {"id": "qwen", "name": "千问",
+             "parser": {"type": "command", "command": "/bin/echo",
+                        "args": [], "recovery": "qwen-login",
+                        "fields": {"balance": "availableAmount",
+                                   "currency": "currency"}}}
+        fail = {"ok": False, "status": None, "data": None,
+                "error_kind": "client", "message": "unauthorized"}
+        appearance, colors = te.load_colors({})
+        with mock.patch.object(te, "fetch_command", return_value=fail), \
+             mock.patch.object(te, "run_recovery",
+                               return_value=("waiting", "等待浏览器授权")) as rr, \
+             mock.patch.object(te, "send_notify"):
+            r = te.process_provider(p, {"cache": {"command": 300}}, colors,
+                                    appearance, d, d, self.linux_dir)
+        self.assertTrue(rr.called, "Linux 风格 project_dir 也必须触发自动自愈")
+        self.assertEqual(rr.call_args.args[2],
+                         os.path.join(ROOT, "scripts", "qwen-login.py"))
+        self.assertEqual(r["status"], "error")
+
+
+class TestRecoveryFlagFreshness(unittest.TestCase):
+    def test_stale_waiting_flag_ignored(self):
+        """重启后残留的旧 waiting 标记不能让菜单一直显示「等待授权」。"""
+        d = tempfile.mkdtemp()
+        flag = te._flag_path(d, "qwen", "recovery")
+        with open(flag, "w") as f:
+            f.write(f"{int(time.time()) - 3600} waiting 等待浏览器授权")
+        self.assertIsNone(te._recovery_state(d, "qwen"))
+        with open(flag, "w") as f:
+            f.write(f"{int(time.time())} waiting 等待浏览器授权")
+        self.assertEqual(te._recovery_state(d, "qwen"), "waiting")
 
 
 if __name__ == "__main__":

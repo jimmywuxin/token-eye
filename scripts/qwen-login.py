@@ -60,7 +60,8 @@ def notify(msg, title="Token Eye"):
     失败静默——通知只是锦上添花，菜单里的 🟡 等待态才是可靠可见面。"""
     try:
         if sys.platform == "darwin":
-            safe = msg.replace("\\", "\\\\").replace('"', '\\"')
+            safe = (msg.replace("\\", "\\\\").replace('"', '\\"')
+                    .replace("\n", "\\n").replace("\r", " "))
             subprocess.run(["osascript", "-e",
                             f'display notification "{safe}" with title "{title}"'],
                            timeout=5, capture_output=True)

@@ -220,9 +220,16 @@ sqlite3 /tmp/ck.db "SELECT host_key, name FROM cookies WHERE host_key LIKE '%xia
 - UKUI 托盘区只显示图标，不支持菜单栏文字汇总（SNI label 字段 UKUI 未实现）
 - MiMo 余额依赖 **Chromium** 登录态（360 浏览器加密非标准不可用），Cookie 过期后重跑刷新脚本
 - 手机热点网络不稳定时，curl 可能超时（已放宽到 20s/35s，可按需调整）
-- **千问 Qwen**：根配置为 `command` 型，依赖外部 `qianwen` CLI 与 `~/.local/bin/qianwen`；
-  Linux 端缺 `linux/scripts/qwen-login.py` 登录自愈脚本，CLI 不存在时该平台余额与
-  自动登录续期静默不可用——是否有意不支持待确认，临时方案是在本机安装 `qianwen` CLI
+- **千问 Qwen**：根配置为 `command` 型，依赖外部 `qianwen` CLI（默认 `~/.local/bin/qianwen`）。
+  登录自愈脚本**复用仓库根 `scripts/qwen-login.py`**：Linux 端 `process_provider` 传
+  `project_dir=linux/`（refresh 脚本在 `linux/scripts/`），上游会自动回退到仓库根
+  `scripts/`，**无需**在 `linux/scripts/` 放副本。CLI 未安装时错误信息给出
+  `QIANWEN_CLI=<绝对路径>` 设置指引；token 过期会自动打开授权页（Chromium 优先、
+  `TOKEN_EYE_BROWSER` 可覆盖，失败则提示手动打开 URL），浏览器确认后下一轮自动恢复。
+  注意：UKUI 无 emoji 字形，`fix_glyphs` 会剥掉 🟡/🔴，等待授权态显示为橙色文字
+  「千问: 等待浏览器确认授权（已打开授权页）」，与 Mac 端图标不同但语义一致；
+  且 Linux 菜单错误分支只显示首行，自愈失败的 `QIANWEN_CLI` 等详细提示需开
+  `TOKEN_EYE_DEBUG=1` 看 debug 日志（`登录自愈: state=fail …`）
 - 钥匙环状态分三态：`已锁定`（菜单给「解锁钥匙环」入口）、`不可用`（D-Bus / gnome-keyring
   未就绪，只提示确认桌面会话）、`正常`；`unavailable` 不会误导成「去加 Key」
 - 版本自检移到后台线程（结果经 `GLib.idle_add` 回传），新版本提示在下一轮常规刷新出现，
