@@ -385,5 +385,43 @@ class TestLinuxCheckCookie(unittest.TestCase):
         self.assertFalse(valid)
 
 
+class TestTrayRecoveryEntry(unittest.TestCase):
+    """v0.24.3：托盘 command 型 provider 的「🔑 重新登录」入口路径解析。
+
+    钉死两件事：
+      ① 必须解析到**仓库根** scripts/<name>.py；本项目 RUNTIME_DIR 传的是 linux/，
+         照 0.24.2 注释「Linux 传 linux/」字面理解会拼出 linux/scripts/<name>.py
+         ——那正是 0.24.2 修掉的 bug，不能再退回去（单位机实测自愈被静默跳过的根因）。
+      ② 未配置 / 脚本不存在 / 路径穿越一律返回空串，菜单不出入口。
+    """
+
+    def setUp(self):
+        self.coll = _FakeCollection(locked=False)
+        self.mod, self._restore = _install_fake_secretstorage(self.coll)
+        self.addCleanup(self._restore)
+
+    def test_resolves_to_repo_root_scripts(self):
+        got = self.mod._recovery_script({"parser": {"recovery": "qwen-login"}})
+        self.assertTrue(got, "qwen-login 应能在根 scripts/ 命中")
+        self.assertEqual(got, os.path.join(os.path.abspath(REPO),
+                                          "scripts", "qwen-login.py"))
+        self.assertTrue(os.path.isfile(got))
+
+    def test_never_builds_linux_scripts_path(self):
+        got = self.mod._recovery_script({"parser": {"recovery": "qwen-login"}})
+        bad = os.path.join(os.path.abspath(REPO), "linux", "scripts", "qwen-login.py")
+        self.assertNotEqual(got, bad, "RUNTIME_DIR=linux/ 时不得拼出 linux/scripts/")
+
+    def test_missing_or_unconfigured_returns_empty(self):
+        for prov in ({}, {"parser": {}}, {"parser": {"recovery": ""}},
+                     {"parser": {"recovery": "no-such-recovery-xyz"}}):
+            self.assertEqual(self.mod._recovery_script(prov), "", f"应为空: {prov}")
+
+    def test_path_traversal_rejected(self):
+        for evil in ("../evil", "a/b", "..", "qwen/../keys"):
+            self.assertEqual(self.mod._recovery_script(
+                {"parser": {"recovery": evil}}), "", f"应拒绝: {evil}")
+
+
 if __name__ == "__main__":
     unittest.main()

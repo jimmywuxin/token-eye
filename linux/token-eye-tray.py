@@ -63,6 +63,76 @@ def _log_debug(msg):
         pass
 
 
+# [本机补丁 2026-11-12 / 2026-11-16 更新] command 型（CLI 型，如千问）的登录自愈入口。
+# 上游 Mac 版在菜单里给 command 型 provider 出「🔑 重新登录」，Linux 版此前没有
+# 对应实现——只要 CLI 的登录态过期（千问约 2 天），托盘只能显示错误行、没有任何
+# 恢复入口。这里补一条：后台跑 scripts/<parser.recovery>.py（该脚本自身快速返回，
+# device flow 的轮询放在它自己起的 detached 子进程里），回主线程提示结果。
+# 0.24.2 起改调上游 token_eye.recovery_script_path()：本项目 PROJECT_DIR 是仓库根、
+# 但 RUNTIME_DIR 是 linux/，脚本只在根 scripts/ 一份，自己拼路径会拼错。
+def _recovery_script(prov):
+    """返回 provider 的 recovery 脚本绝对路径；未配置或文件不存在时返回 ""。"""
+    name = (prov.get("parser") or {}).get("recovery") or ""
+    if not name or not name.replace("_", "").replace("-", "").isalnum():
+        return ""
+    path = ""
+    try:
+        path = token_eye.recovery_script_path(RUNTIME_DIR, name) or ""
+    except Exception:
+        path = ""
+    if not path:
+        cand = os.path.join(PROJECT_DIR, "scripts", f"{name}.py")
+        path = cand if os.path.isfile(cand) else ""
+    return path
+
+
+def start_login(prov):
+    """菜单「🔑 重新登录」入口：后台发起设备码授权，回主线程弹提示。"""
+    script = _recovery_script(prov)
+    name = prov.get("name") or prov.get("id") or "?"
+    if not script:
+        token_eye.send_notify("Token Eye", f"{name}: 未找到登录脚本（scripts/<recovery>.py）")
+        return True
+
+    def _work():
+        try:
+            r = subprocess.run([sys.executable or "/usr/bin/python3", script],
+                               capture_output=True, text=True, timeout=30)
+            code = r.returncode
+            msg = ""
+            for ln in (r.stdout or "").strip().splitlines():
+                if ln.strip():
+                    msg = ln.strip()[:120]
+            if not msg:
+                for ln in (r.stderr or "").strip().splitlines():
+                    if ln.strip():
+                        msg = ln.strip()[:120]
+            if code == 0:
+                tip = "已登录，余额将在下一轮刷新后显示"
+            elif code == 3:
+                tip = msg or "已发起登录，请在浏览器完成授权"
+            else:
+                tip = msg or f"发起登录失败（退出码 {code}）"
+            _log_debug(f"{name} 登录自愈: code={code} msg={msg}")
+        except Exception as e:  # 线程内异常不能让刷新回调丢失
+            _log_debug(f"{name} 登录自愈异常: {e}")
+            tip = f"登录脚本执行失败: {e}"
+        GLib.idle_add(lambda: (_notify_msg(name, tip), request_refresh())[1])
+        return None
+
+    threading.Thread(target=_work, daemon=True).start()
+    return True
+
+
+def _notify_msg(name, tip):
+    """主线程发通知（复用上游 send_notify，Linux 侧已被 patch 成 notify-send）。"""
+    try:
+        token_eye.send_notify("Token Eye", f"{name}: {tip}")
+    except Exception as e:  # 通知失败不能影响菜单
+        _log_debug(f"登录提示通知失败: {e}")
+    return False
+
+
 def _import_appindicator():
     """返回 AppIndicator 模块：优先 AyatanaAppIndicator3（部分麒麟只有它），回退 AppIndicator3。"""
     import gi
@@ -388,6 +458,10 @@ def collect(config_path, project_dir):
                 idx = futures[future]
                 try:
                     results[idx] = future.result()
+                    # [本机补丁] 附带 provider 原对象：菜单错误分支要读 parser.recovery
+                    # 才能给 command 型平台出「重新登录」入口（结果字典本身不带配置）。
+                    if isinstance(results[idx], dict):
+                        results[idx]["_provider"] = providers_list[idx]
                 except Exception as e:
                     results[idx] = {"id": "_err", "name": "?", "status": "error",
                                     "lines": [f"处理异常: {e}"], "colors": [colors["ERR"]],
@@ -534,6 +608,17 @@ def rebuild_menu(results, config, colors, appearance):
                 msg = lines[0] if lines else "请求失败"
                 c = (r.get("colors") or [colors["ERR"]])[0]
                 menu_add_label(menu, f"🔴 {name}: {msg}", color=c)
+                # 错误原因可能被折叠在后续行（如「↻ 自动刷新未生效: 原因」），
+                # 与上游 Mac 版一致地补出来，避免只看到泛泛的「配置/鉴权错误」。
+                for extra_line in lines[1:]:
+                    menu_add_label(menu, f"  {extra_line}", color=colors["MUTED"],
+                                   size="small")
+                # command 型平台（千问等）没有 cookie 可刷，只能重走设备码授权；
+                # 出「重新登录」入口，点一下即发起（脚本内部自己弹浏览器）。
+                if _recovery_script(r.get("_provider") or {}):
+                    menu_add_label(menu, f"  🔑 重新登录 {name}", color=colors["WARN"],
+                                   size="small",
+                                   on_activate=lambda p=r.get("_provider"): start_login(p))
             else:
                 rcolors = r.get("colors", [])
                 line_params = r.get("line_params") or []

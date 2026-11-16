@@ -4,6 +4,27 @@
 
 > 下次改动攒在这里；发版时把本节固化成版本章节（格式见下方 0.24.0）。
 
+## [0.24.3] - 2026-11-16
+
+> 合入单位机（麒麟 ARM）回流的 Linux 托盘补丁：托盘此前没有 command 型平台的「🔑 重新登录」入口。新增功能 + 文档纠错，升 patch。
+> 补丁来源：妮妮在单位机 v0.24.0 → v0.24.2 升级后回吐，格式为基于 v0.24.2 的 unified diff（`git apply -p1` 实测通过，应用后与单位机文件逐字节一致）。
+
+### 新增（Linux 托盘）
+- **`linux/token-eye-tray.py` 补出 command 型（CLI 型）provider 的「🔑 重新登录」入口**（新增 `_recovery_script()` / `start_login()` / `_notify_msg()` 三个函数，纯新增 85 行、零删除）：此前只有 Mac 版菜单有这个入口，Linux 版没有——只要 CLI 登录态过期（千问约 2 天），托盘只能显示错误行、无任何恢复手段。现在按 `parser.recovery` 定位 `scripts/<name>.py`，后台跑该脚本（脚本自身快速返回，device flow 轮询在它自己起的 detached 子进程里），退出码 0/3/其它分别对应「已登录」「已发起登录，请在浏览器完成授权」「发起登录失败」，结果经 `GLib.idle_add` 回主线程发通知并触发刷新
+- **`_recovery_script()` 走 0.24.2 新增的 `recovery_script_path(RUNTIME_DIR, name)`**：本项目 `PROJECT_DIR` 是仓库根、但 `RUNTIME_DIR` 是 `linux/`，照「Linux 传 linux/」字面理解会拼出 `linux/scripts/qwen-login.py`——那正是 0.24.2 修掉的 bug。上游返回值仍为空时再回退 `PROJECT_DIR/scripts/`，且自带 `[A-Za-z0-9_-]` 预检
+- `collect()` 把 provider 原对象挂到结果字典的 `_provider`：菜单错误分支要读 `parser.recovery` 才能决定是否出「重新登录」入口，而结果字典本身不带配置。**不污染缓存**——`save_cache` 在 `process_provider` 内部就已写完，`_provider` 是之后才附加的
+- 菜单 `status == "error"` 分支展开 `lines[1:]` 后续行（如「↻ 自动刷新未生效: 原因」），与 Mac 版一致，不再只看到泛泛的一行错误
+
+### 文档纠错
+- **修正 0.24.2「未改动（约束）」里那句与仓库实际不符的描述**：原文写 `linux/token-eye-tray.py` 及其中 `[本机补丁 2026-11-12]` 菜单入口「保持不动」，但官方 `v0.24.2` 的 tray 里 `grep -c 本机补丁` = 0——该补丁从未进过上游，那句话会让人误以为 Linux 端已有重登录入口。现补丁已正式合入，该约束作废
+- `linux/README.md`：第 14 行的「Linux 端登录自愈脚本缺失」改为已支持；「已知限制」的千问段同步更新——错误分支现在会展开后续行并给「🔑 重新登录」入口，`QIANWEN_CLI` 等详细提示不必再靠 `TOKEN_EYE_DEBUG=1` 才看得到
+
+### 测试
+- `tests/test_linux_keyring.py` 增 `TestTrayRecoveryEntry`（4 例，复用既有假 secretstorage 加载器）：根 `scripts/` 命中、`RUNTIME_DIR` 传 `linux/` 时不误拼 `linux/scripts/`、未配置/不存在返回空串、路径穿越（`../evil`、`a/b`）被拒。全量 316 例
+
+### 未改动（约束）
+- 无配置变更，`providers.json` / Android assets 副本不动；`swiftbar/token_eye.py` 的核心逻辑未改（只 bump VERSION）
+
 ## [0.24.2] - 2026-11-16
 
 > 复核 v0.24.1 时发现的真实断点：**Linux 端自动自愈根本没被调用**（v0.24.1 在单位机等于没修）。修复类，升 patch。
@@ -19,7 +40,8 @@
 - `linux/README.md` 已知限制更新：原文「Linux 端缺 qwen-login.py、静默不可用」已失效；补记 UKUI 无 emoji 字形（等待态显示为橙色文字）与 Linux 错误菜单只显示首行时详细提示的查看路径
 
 ### 未改动（约束）
-- `linux/token-eye-tray.py` 及其中 `[本机补丁 2026-11-12]` 菜单「🔑 重新登录」入口段保持不动；Linux 端接线修复全部收敛在上游 `token_eye.py`
+- ~~`linux/token-eye-tray.py` 及其中 `[本机补丁 2026-11-12]` 菜单「🔑 重新登录」入口段保持不动；Linux 端接线修复全部收敛在上游 `token_eye.py`~~
+  **（2026-11-16 更正，v0.24.3）此描述与仓库实际不符**：官方 `v0.24.2` 的 `linux/token-eye-tray.py` 里 `grep -c 本机补丁` = 0，该补丁从未进过上游，Linux 端当时并没有重登录入口。补丁已于 v0.24.3 正式合入
 - 无配置变更，`providers.json` / Android assets 副本不动
 
 ## [0.24.1] - 2026-11-16

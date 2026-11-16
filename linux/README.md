@@ -11,7 +11,7 @@
 - ✅ MiniMax: 5h/7d 进度条 + 重置倒计时
 - ✅ 智谱 GLM: ¥xx.xx（余额）
 - ✅ MiMo: ¥xx.xx（Chromium 登录 Cookie 自动提取，见下文）
-- 千问 Qwen：根配置中启用，但 Linux 端登录自愈脚本缺失（见「已知限制」）
+- 千问 Qwen：根配置中启用，登录态过期后菜单给「🔑 重新登录」入口（见「已知限制」）
 
 > 💡 麒麟系统无 emoji 字体，菜单中的无字形 emoji（🔄🔴🔑🔥等）会被自动降级为纯文本（状态由行颜色表达）。
 
@@ -227,9 +227,12 @@ sqlite3 /tmp/ck.db "SELECT host_key, name FROM cookies WHERE host_key LIKE '%xia
   `QIANWEN_CLI=<绝对路径>` 设置指引；token 过期会自动打开授权页（Chromium 优先、
   `TOKEN_EYE_BROWSER` 可覆盖，失败则提示手动打开 URL），浏览器确认后下一轮自动恢复。
   注意：UKUI 无 emoji 字形，`fix_glyphs` 会剥掉 🟡/🔴，等待授权态显示为橙色文字
-  「千问: 等待浏览器确认授权（已打开授权页）」，与 Mac 端图标不同但语义一致；
-  且 Linux 菜单错误分支只显示首行，自愈失败的 `QIANWEN_CLI` 等详细提示需开
-  `TOKEN_EYE_DEBUG=1` 看 debug 日志（`登录自愈: state=fail …`）
+  「千问: 等待浏览器确认授权（已打开授权页）」，与 Mac 端图标不同但语义一致。
+  错误分支会展开 `lines[1:]` 后续行，并在 `parser.recovery` 有配置时追加
+  「🔑 重新登录 千问」入口（v0.24.3 起，此前 Linux 托盘没有 command 型的重登录入口），
+  点一下即在后台发起设备码授权，结果用 `notify-send` 提示并在下一轮刷新回填；
+  `QIANWEN_CLI` 未设置等详细提示仍可开 `TOKEN_EYE_DEBUG=1` 在 debug 日志
+  （`登录自愈: state=fail …`）里查
 - 钥匙环状态分三态：`已锁定`（菜单给「解锁钥匙环」入口）、`不可用`（D-Bus / gnome-keyring
   未就绪，只提示确认桌面会话）、`正常`；`unavailable` 不会误导成「去加 Key」
 - 版本自检移到后台线程（结果经 `GLib.idle_add` 回传），新版本提示在下一轮常规刷新出现，

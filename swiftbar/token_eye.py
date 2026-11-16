@@ -26,7 +26,7 @@ from concurrent.futures import (ThreadPoolExecutor, TimeoutError as FuturesTimeo
                                 as_completed)
 from datetime import datetime as _dt
 
-VERSION = "0.24.2"
+VERSION = "0.24.3"
 
 # 按 parser 类型的默认缓存 TTL（秒）
 DEFAULT_CACHE_TTL = {"balance": 300, "plan_usage": 30, "status": 60, "command": 300}
