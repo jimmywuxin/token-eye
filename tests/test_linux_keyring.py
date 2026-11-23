@@ -34,12 +34,19 @@ KEYRING_COMMON = os.path.join(REPO, "linux", "keyring_common.py")
 MIMO_REFRESH = os.path.join(REPO, "linux", "scripts", "refresh-mimo-cookie.py")
 
 # 托盘模块会改写的 token_eye 属性（恢复用）
-_PATCHED_ATTRS = ("get_key", "send_notify", "_open_login_page", "fetch_api")
+_PATCHED_ATTRS = ("get_key", "send_notify", "_open_login_page", "fetch_api",
+                 "RECOVERY_COOLDOWN")
 
 
-def _install_fake_secretstorage(coll):
-    """注入假 secretstorage，返回恢复函数（幂等）。"""
+def _install_fake_secretstorage(coll, env=None):
+    """注入假 secretstorage，返回恢复函数（幂等）。
+
+    env: 可选环境变量覆盖，仅在模块加载期生效，_restore() 时还原。
+    """
     saved_ss = sys.modules.get("secretstorage")
+    patcher = patch.dict(os.environ, env) if env else None
+    if patcher:
+        patcher.start()
 
     m = types.ModuleType("secretstorage")
     m.dbus_init = lambda: object()
@@ -55,6 +62,8 @@ def _install_fake_secretstorage(coll):
     spec.loader.exec_module(mod)
 
     def _restore():
+        if patcher:
+            patcher.stop()
         if saved_ss is not None:
             sys.modules["secretstorage"] = saved_ss
         else:
@@ -421,6 +430,59 @@ class TestTrayRecoveryEntry(unittest.TestCase):
         for evil in ("../evil", "a/b", "..", "qwen/../keys"):
             self.assertEqual(self.mod._recovery_script(
                 {"parser": {"recovery": evil}}), "", f"应拒绝: {evil}")
+
+
+class TestTrayWindowReuse(unittest.TestCase):
+    """2026-11-23：挂机数日不关机的 Chromium 窗口堆积治理（单位机实测）。
+
+    钉死三件事：① 打开链接必须复用标签而非 --new-window；
+    ② 登录页冷却默认 6 小时且环境变量可覆盖；③ 自愈 fail 冷却同步拉长。
+    """
+
+    def setUp(self):
+        self.coll = _FakeCollection(locked=False)
+        self.mod, self._restore = _install_fake_secretstorage(self.coll)
+        self.addCleanup(self._restore)
+
+    def test_open_in_browser_reuses_tab_not_new_window(self):
+        with patch.object(self.mod, "_detect_browser_cmd",
+                          return_value="/usr/bin/chromium"), \
+             patch.object(self.mod.subprocess, "Popen") as popen:
+            ok, label = self.mod.open_in_browser("https://example.invalid/login")
+        self.assertTrue(ok)
+        argv = popen.call_args[0][0]
+        self.assertEqual(argv, ["/usr/bin/chromium", "--new-tab",
+                                "https://example.invalid/login"])
+        self.assertNotIn("--new-window", argv)
+        self.assertIn("Chromium", label)
+
+    def test_default_cooldowns_are_six_hours(self):
+        self.assertEqual(self.mod.LOGIN_OPEN_COOLDOWN, 6 * 3600)
+        self.assertEqual(self.mod.RECOVERY_FAIL_COOLDOWN, 6 * 3600)
+        self.assertEqual(self.mod.token_eye.RECOVERY_COOLDOWN["fail"], 6 * 3600)
+
+    def test_env_override_cooldowns(self):
+        mod, restore = _install_fake_secretstorage(
+            _FakeCollection(locked=False),
+            env={"TOKEN_EYE_LOGIN_OPEN_COOLDOWN": "120",
+                 "TOKEN_EYE_RECOVERY_FAIL_COOLDOWN": "90"})
+        self.addCleanup(restore)
+        self.assertEqual(mod.LOGIN_OPEN_COOLDOWN, 120)
+        self.assertEqual(mod.RECOVERY_FAIL_COOLDOWN, 90)
+        self.assertEqual(mod.token_eye.RECOVERY_COOLDOWN["fail"], 90)
+
+    def test_login_flag_blocks_repeat_within_cooldown(self):
+        import tempfile
+        flags = tempfile.mkdtemp(prefix="te-login-flag-")
+        self.addCleanup(lambda: __import__("shutil").rmtree(flags, ignore_errors=True))
+        pid = "mimo"
+        with patch.object(self.mod, "open_in_browser", return_value=(True, "Chromium")), \
+             patch.object(self.mod.token_eye, "send_notify"):
+            self.assertTrue(self.mod._linux_open_login(flags, pid, "https://example.invalid"))
+            # 冷却内再次触发：不得再打开浏览器
+            with patch.object(self.mod, "open_in_browser") as again:
+                self.assertFalse(self.mod._linux_open_login(flags, pid, "https://example.invalid"))
+                again.assert_not_called()
 
 
 if __name__ == "__main__":

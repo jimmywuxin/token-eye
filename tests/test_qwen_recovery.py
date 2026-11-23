@@ -17,6 +17,7 @@ import json
 import os
 import subprocess
 import sys
+import importlib.util
 import tempfile
 import time
 import unittest
@@ -405,6 +406,32 @@ class TestRecoveryScriptPath(unittest.TestCase):
         self.assertEqual(rr.call_args.args[2],
                          os.path.join(ROOT, "scripts", "qwen-login.py"))
         self.assertEqual(r["status"], "error")
+
+
+class TestOpenUrlWindowReuse(unittest.TestCase):
+    """2026-11-23：Linux 下打开授权页必须复用标签，不得 --new-window。
+
+    单位机周五下班不关机、周一发现几十个 Chromium 窗口：qwen device flow
+    每次自愈都 --new-window，fail 冷却又只有 15 分钟。窗口数必须止住。
+    """
+
+    def setUp(self):
+        spec = importlib.util.spec_from_file_location("qwen_login_window_test", SCRIPT)
+        self.mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.mod)
+
+    def test_linux_chromium_uses_new_tab(self):
+        with mock.patch.dict(os.environ, {"TOKEN_EYE_BROWSER": ""}), \
+             mock.patch.object(sys, "platform", "linux"), \
+             mock.patch.object(self.mod.shutil, "which",
+                               return_value="/usr/bin/chromium"), \
+             mock.patch.object(self.mod.subprocess, "Popen") as popen:
+            ok = self.mod.open_url("https://example.invalid/authorize")
+        self.assertTrue(ok)
+        argv = popen.call_args[0][0]
+        self.assertEqual(argv, ["/usr/bin/chromium", "--new-tab",
+                                "https://example.invalid/authorize"])
+        self.assertNotIn("--new-window", argv)
 
 
 class TestRecoveryFlagFreshness(unittest.TestCase):

@@ -205,7 +205,9 @@ def open_url(url):
             exe = shutil.which(name)
             if exe:
                 try:
-                    subprocess.Popen([exe, "--new-window", url],
+                    # 与 linux/token-eye-tray.py 同口径：复用已有窗口开标签。
+                    # 旧 --new-window 在登录态反复过期时会堆出几十个窗口吃满内存。
+                    subprocess.Popen([exe, "--new-tab", url],
                                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                     return True
                 except Exception:  # noqa: BLE001

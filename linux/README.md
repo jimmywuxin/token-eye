@@ -115,6 +115,8 @@ python3 ~/dev/token-eye/linux/setup-keys.py
 | `TOKEN_EYE_REFRESH` | `30` | 托盘轮询间隔（秒） |
 | `TOKEN_EYE_SHOW_LABEL` | `0` | `1` 时图标旁显示文字汇总（UKUI 可能不实现 SNI label） |
 | `TOKEN_EYE_BROWSER` | 自动探测 | 优先浏览器：可执行名/绝对路径；`default` 强制走 `xdg-open` |
+| `TOKEN_EYE_LOGIN_OPEN_COOLDOWN` | `21600` | 自动打开登录页的冷却（秒，≥60）；默认 6 小时，防挂机时反复弹窗 |
+| `TOKEN_EYE_RECOVERY_FAIL_COOLDOWN` | `21600` | command 型自愈失败后的冷却（秒，≥60）；默认 6 小时 |
 | `TOKEN_EYE_DEBUG` | `0` | `1` 时写 `~/.cache/token-eye/debug.log`（通知失败、未知状态等留痕） |
 
 > systemd 服务里加 `Environment=...` 后需 `systemctl --user daemon-reload &&
@@ -151,6 +153,8 @@ python3 ~/dev/token-eye/linux/scripts/refresh-mimo-cookie.py
 
 > **浏览器偏好**（`linux/token-eye-tray.py` 的 `open_in_browser()`）：托盘打开任何平台链接（MiMo 登录页、菜单里的控制台跳转）都优先调 Chromium（`chromium-browser` / `chromium` / `chromium-browser-stable` 依序探测），无 Chromium 才回退 `xdg-open`。
 > 覆盖方式：环境变量 `TOKEN_EYE_BROWSER=chromium-browser`（可执行名或绝对路径）；`TOKEN_EYE_BROWSER=default` 强制走系统默认浏览器。systemd 用户服务里加 `Environment=TOKEN_EYE_BROWSER=...` 并 `systemctl --user daemon-reload && systemctl --user restart token-eye` 生效。
+>
+> **窗口堆积治理（2026-11-23）**：打开链接一律用 `--new-tab` 复用已有 Chromium 窗口（原来用 `--new-window`，周五下班不关机、周末两天能堆出几十个窗口吃满内存；`scripts/qwen-login.py` 的授权页同样改掉）。同时把登录页自动打开冷却从 30 分钟、command 型自愈失败冷却从 15 分钟统一拉到 **6 小时**，两条均可用上表环境变量覆盖。需要立即重试时点菜单「🔄 刷新 Cookie」/「🔑 重新登录」，force 路径跳过冷却。
 >
 > 注：登录 MiMo 用的是 Chromium 的**默认 profile**（`~/.config/chromium`），与 OA 取件专用 profile（`--user-data-dir=~/.workbuddy/oa-profile`）互相隔离——刷新脚本只扫默认 profile 及 `Profile *`。
 

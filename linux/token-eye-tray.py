@@ -253,6 +253,28 @@ def linux_send_notify(title, message, sound=None):
 CHROMIUM_CANDIDATES = ("chromium-browser", "chromium", "chromium-browser-stable")
 DEFAULT_BROWSER_LABEL = "系统默认浏览器"
 
+# [本机补丁 2026-11-23] 长时间挂机时 Chromium 窗口堆积治理。
+# 旧口径：每次自动打开登录页都带 --new-window；登录页冷却 30 分钟、
+# command 型自愈失败冷却 15 分钟。周五下班不关机、周末两天无人值守时，
+# 会堆出几十个独立 Chromium 窗口把内存吃满（用户实测）。
+# 新口径三条：
+#   ① 打开链接一律 --new-tab：已有 Chromium 实例时复用窗口开标签，无实例才新建；
+#   ② 登录页自动打开冷却 30 分钟 → 6 小时；
+#   ③ command 型自愈 fail 冷却 15 分钟 → 6 小时。
+# 两条冷却均可环境变量覆盖（秒，>=60）；需要立即重试时点菜单
+# 「🔄 刷新 Cookie」/「🔑 重新登录」（force 路径跳过冷却）。
+def _env_cooldown(name, default_seconds):
+    raw = (os.environ.get(name) or "").strip()
+    try:
+        val = int(raw)
+    except (TypeError, ValueError):
+        return default_seconds
+    return val if val >= 60 else default_seconds
+
+
+LOGIN_OPEN_COOLDOWN = _env_cooldown("TOKEN_EYE_LOGIN_OPEN_COOLDOWN", 6 * 3600)
+RECOVERY_FAIL_COOLDOWN = _env_cooldown("TOKEN_EYE_RECOVERY_FAIL_COOLDOWN", 6 * 3600)
+
 _browser_cmd_cache = None  # None=未探测；[]=无偏好（走默认）；[path]=Chromium 路径
 
 
@@ -293,7 +315,9 @@ def open_in_browser(url):
     browser = _detect_browser_cmd()
     attempts = []
     if browser:
-        attempts.append(([browser, "--new-window", url], f"Chromium（{os.path.basename(browser)}）"))
+        # 不用 --new-window：每轮冷却到期就新建独立窗口，挂机几天会堆几十个。
+        # --new-tab 在已有实例时复用最近窗口，没有实例时 Chromium 仍会新建窗口。
+        attempts.append(([browser, "--new-tab", url], f"Chromium（{os.path.basename(browser)}）"))
     attempts.append((["xdg-open", url], DEFAULT_BROWSER_LABEL))
     for argv, label in attempts:
         try:
@@ -309,9 +333,14 @@ token_eye.get_key = linux_get_key
 token_eye.send_notify = linux_send_notify
 
 # _open_login_page 内部调用 "open" 命令 —— 换成 Chromium 优先的等价实现
-def _linux_open_login(flags_dir, pid, login_url, cooldown=1800):
+def _linux_open_login(flags_dir, pid, login_url, cooldown=None):
     """打开登录页；**成功后才写冷却 flag**（旧代码先写 flag 再打开且吞失败，
-    打不开也会留下 30 分钟冷却并发「已打开」假通知，P2 错误处理）。"""
+    打不开也会留下冷却并发「已打开」假通知，P2 错误处理）。
+
+    冷却默认 6 小时（LOGIN_OPEN_COOLDOWN），避免无人值守时每半小时开一个窗口。
+    """
+    if cooldown is None:
+        cooldown = LOGIN_OPEN_COOLDOWN
     if not login_url:
         return False
     flag = os.path.join(flags_dir, f"token-eye-loginopened-{pid}.flag")
@@ -341,6 +370,12 @@ def _linux_open_login(flags_dir, pid, login_url, cooldown=1800):
     return True
 
 token_eye._open_login_page = _linux_open_login
+
+# command 型自愈：上游 fail 冷却仅 15 分钟，登录态过期又无人值守时会反复跑
+# qwen-login.py（每次 device flow 都开授权页）。拉到 6 小时。
+# 替换整个字典而非原地改，避免污染共享 token_eye 模块（测试要能恢复原值）。
+token_eye.RECOVERY_COOLDOWN = dict(
+    token_eye.RECOVERY_COOLDOWN, fail=RECOVERY_FAIL_COOLDOWN)
 
 # 单位机网络偏慢（信创机直连各平台 API 偶发超时），放宽 curl/进程超时
 _orig_fetch = token_eye.fetch_api

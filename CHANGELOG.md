@@ -4,6 +4,14 @@
 
 > 下次改动攒在这里；发版时把本节固化成版本章节（格式见下方 0.24.0）。
 
+## [0.24.4] - 2026-11-23
+
+> 单位机（麒麟 ARM）挂机数日不关机的资源泄漏修复：token-eye 自动打开登录页/授权页时每次新建 Chromium 窗口且冷却过短，周五下班到周一能堆出几十个窗口吃满内存。修复类，升 patch。
+
+### 修复（单位机 / Linux 托盘）
+- **挂机数日不关机会堆出几十个 Chromium 窗口、吃满内存**：`linux/token-eye-tray.py` 的 `open_in_browser()` 与 `scripts/qwen-login.py` 的 `open_url()` 一律把 `--new-window` 改为 `--new-tab`（已有实例复用窗口开标签，无实例仍新建窗口）；MiMo 登录页自动打开冷却由 30 分钟、command 型自愈 fail 冷却由 15 分钟统一拉长到 6 小时，分别可用 `TOKEN_EYE_LOGIN_OPEN_COOLDOWN` / `TOKEN_EYE_RECOVERY_FAIL_COOLDOWN` 覆盖（秒，≥60）。菜单「🔄 刷新 Cookie」/「🔑 重新登录」的 force 路径不受冷却影响。仅 Linux 托盘与共用登录脚本改动，Mac 版核心逻辑与配置不动。
+- 测试：新增 5 例（`test_linux_keyring.TestTrayWindowReuse` 4 例、`test_qwen_recovery.TestOpenUrlWindowReuse` 1 例），全量 321 例通过；`linux/README.md` 补两个环境变量与窗口治理说明。
+
 ## [0.24.3] - 2026-11-16
 
 > 合入单位机（麒麟 ARM）回流的 Linux 托盘补丁：托盘此前没有 command 型平台的「🔑 重新登录」入口。新增功能 + 文档纠错，升 patch。
